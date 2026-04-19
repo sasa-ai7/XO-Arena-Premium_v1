@@ -1,0 +1,77 @@
+DATA SAFETY FORM - READY TO PASTE
+
+===========================================
+DATA COLLECTION
+===========================================
+
+Personal Information:
+- Email address (required for account creation/sign-in)
+- Name/Display name (user-provided during account creation)
+- Age (optional, user-provided if they choose)
+
+App Activity:
+- Game statistics (wins, losses, draws, games played)
+- In-game currency (coins balance)
+- Transaction history (coin purchases/deductions)
+- Game progress (level completion status)
+
+Device/Account Identifiers:
+- Firebase Authentication UID (unique user identifier)
+
+===========================================
+DATA STORAGE & PROCESSING
+===========================================
+
+Storage Location: Firebase Cloud Firestore (Google Cloud Platform)
+Processing: Data processed on Firebase servers for account management and app functionality
+Retention: Data retained until user account is deleted
+
+===========================================
+DATA SHARING
+===========================================
+
+Third-party sharing: YES
+Service: Firebase (Google Cloud Platform)
+Purpose: Account authentication, data storage, and app functionality
+Data shared: All collected data (email, name, optional age, game stats, coins, transactions)
+
+===========================================
+DATA USAGE
+===========================================
+
+Purpose:
+- Account management (user authentication and account creation)
+- App functionality (game progress tracking, statistics, in-game currency management)
+- User experience (personalized game experience, progress saving)
+
+NO Analytics: This app does NOT use analytics services
+NO Advertising: This app does NOT use advertising services
+NO Marketing: Data is NOT used for advertising or marketing purposes
+
+===========================================
+DATA DELETION
+===========================================
+
+Account Deletion: Available in-app (Settings → Delete Account)
+Deletion Process:
+- All user data in Firestore (users/{uid} document and transactions subcollection) permanently deleted
+- Firebase Authentication account deleted
+- Deletion feedback (reason) may be collected before deletion (stored in deletion_feedback/{uid})
+Deletion Timing: Immediate upon user confirmation
+Account Deletion URL: https://sites.google.com/view/xo-game-policies/account-deletion
+
+===========================================
+SECURITY
+===========================================
+
+Data Encryption: Encrypted in transit (HTTPS) and at rest (Firebase default encryption)
+Authentication: Secure authentication via Firebase Auth (Email/Password and Google Sign-In)
+Access Control: Users can only access their own data (enforced by Firestore security rules)
+
+===========================================
+POLICY URLs
+===========================================
+
+Privacy Policy: https://sites.google.com/view/xo-game-policies/privacy-policy
+Terms of Service: https://sites.google.com/view/xo-game-policies/terms
+Account Deletion: https://sites.google.com/view/xo-game-policies/account-deletion

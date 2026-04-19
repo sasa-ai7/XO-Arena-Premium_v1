@@ -1,0 +1,17 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="200dp"
+    android:height="200dp"
+    android:viewportWidth="200"
+    android:viewportHeight="200">
+  
+  <!-- X Shape -->
+  <path
+      android:fillColor="#E91E63"
+      android:pathData="M40,40 L60,40 L100,80 L140,40 L160,40 L110,90 L160,140 L140,140 L100,100 L60,140 L40,140 L90,90 Z" />
+
+  <!-- O Shape -->
+  <path
+      android:fillColor="#00BCD4"
+      android:pathData="M100,30 A70,70 0 1,1 100,170 A70,70 0 1,1 100,30 M100,50 A50,50 0 1,0 100,150 A50,50 0 1,0 100,50" />
+      
+</vector>

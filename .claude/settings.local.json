@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(flutter pub:*)",
+      "Bash(where flutter:*)",
+      "Read(//c/flutter/**)",
+      "Read(//d/flutter/**)",
+      "Bash(cmd.exe /c \"where flutter\")",
+      "Bash(cmd.exe /c \"where flutter 2>&1\")",
+      "Bash(cmd.exe /c \"flutter --version\")",
+      "Bash(echo \"exit: $?\")",
+      "Bash(powershell.exe -Command \"flutter --version\")",
+      "Bash(powershell.exe -Command \"Get-ChildItem -Path 'C:\\\\', 'D:\\\\', 'E:\\\\' -Recurse -Filter 'flutter.bat' -ErrorAction SilentlyContinue | Select-Object -First 5 FullName\")",
+      "Bash(export FLUTTER=\"/e/Programs/flutter_windows_3.41.6-stable/flutter/bin/flutter\")",
+      "Bash(/e/Programs/flutter_windows_3.41.6-stable/flutter/bin/flutter --version)",
+      "Bash(\"/e/Programs/flutter_windows_3.41.6-stable/flutter/bin/flutter\" pub:*)",
+      "Bash(\"/e/Programs/flutter_windows_3.41.6-stable/flutter/bin/flutter\" analyze:*)",
+      "Bash(\"E:\\\\Programs\\\\flutter_windows_3.41.6-stable\\\\flutter\\\\bin\\\\flutter.bat\" analyze:*)"
+    ]
+  }
+}

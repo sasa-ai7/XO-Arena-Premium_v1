@@ -1,0 +1,69 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    function signedIn() {
+      return request.auth != null;
+    }
+    
+    function isMe(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+    
+    // User document: read only for account holder, Wallet cannot be written directly
+    // Only Cloud Functions (Admin SDK) can update Wallet (contains coins balance)
+    match /users/{uid} {
+      // Users can read their own document
+      allow read: if isMe(uid);
+
+      // Users can create their own document (initial account creation)
+      allow create: if isMe(uid);
+
+      // Users can update their own document EXCEPT Wallet
+      // Wallet can only be updated by Cloud Functions (Admin SDK)
+      allow update: if isMe(uid) &&
+        (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['Wallet']));
+
+      // Users can delete their own account document (required for account deletion flow)
+      allow delete: if isMe(uid);
+
+      // Transactions subcollection: read/write only for account holder
+      match /transactions/{txId} {
+        allow read, write: if isMe(uid);
+      }
+
+      // Purchase counts subcollection: tracks per-product purchase limits
+      match /purchase_counts/{productId} {
+        allow read, write: if isMe(uid);
+      }
+    }
+    
+    // IAP Transactions: read-only for users (write by Cloud Functions only)
+    // Users can read transactions to verify their purchase history
+    match /iap_transactions/{purchaseToken} {
+      // Users can read transactions where they are the owner
+      allow read: if signedIn() && 
+        resource.data.uid == request.auth.uid;
+      
+      // Only Cloud Functions (Admin SDK) can create/update transactions
+      allow write: if false;
+      allow delete: if false;
+    }
+    
+    // Deletion feedback: create/update only, read/delete: false
+    match /deletion_feedback/{uid} {
+      allow create, update: if isMe(uid);
+      allow read, delete: if false;
+    }
+    
+    // Audit logs: server-only — no client access (Admin SDK bypasses rules)
+    match /user_logs/{logId} {
+      allow read, write: if false;
+    }
+
+    // Default deny all other collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
