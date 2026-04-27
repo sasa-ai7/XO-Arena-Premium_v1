@@ -24,12 +24,10 @@ class _LoginScreenState extends State<LoginScreen>
   final _form = GlobalKey<FormState>();
   final _email = TextEditingController();
   final _pass = TextEditingController();
-  final _guestName = TextEditingController();
   final _auth = AuthService();
 
   Timer? _emailSaveDebounce;
   bool _loading = false;
-  bool _isAccount = true; // false = guest, true = account
   String? _errorMessage;
 
   late final AnimationController _pulseController;
@@ -56,7 +54,6 @@ class _LoginScreenState extends State<LoginScreen>
 
     _checkJustDeletedFlag();
     _loadSavedCredentials();
-    _loadGuestName();
     _email.addListener(_onEmailChanged);
   }
 
@@ -68,7 +65,6 @@ class _LoginScreenState extends State<LoginScreen>
     _fadeController.dispose();
     _email.dispose();
     _pass.dispose();
-    _guestName.dispose();
     super.dispose();
   }
 
@@ -83,19 +79,6 @@ class _LoginScreenState extends State<LoginScreen>
     _emailSaveDebounce = Timer(const Duration(milliseconds: 400), () {
       if (mounted) _saveEmail();
     });
-  }
-
-  Future<void> _loadGuestName() async {
-    final p = await SharedPreferences.getInstance();
-    final savedGuestName = p.getString(Keys.guestName);
-    if (savedGuestName != null && savedGuestName.isNotEmpty) {
-      _guestName.text = savedGuestName;
-    }
-  }
-
-  Future<void> _saveGuestName(String name) async {
-    final p = await SharedPreferences.getInstance();
-    await p.setString(Keys.guestName, name);
   }
 
   Future<void> _loadSavedCredentials() async {
@@ -214,31 +197,22 @@ class _LoginScreenState extends State<LoginScreen>
     if (mounted) setState(() => _loading = false);
   }
 
-  Future<void> _startAsGuest() async {
-    FocusScope.of(context).unfocus();
-    _setError(null);
-    final name = _guestName.text.trim();
-    if (name.isEmpty) {
-      _setError('ENTER A DISPLAY NAME FOR GUEST MODE.');
-      return;
-    }
-    if (name.length < 3 || name.length > 16) {
-      _setError('DISPLAY NAME MUST BE 3-16 CHARACTERS.');
-      return;
-    }
-
-    setState(() => _loading = true);
-    try {
-      await _saveGuestName(name);
-      if (!mounted) return;
-
-      final p = await SharedPreferences.getInstance();
-      await p.setInt(Keys.coins, 1000);
-      if (!mounted) return;
-      Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
+  void _showGuestSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _GuestEntrySheet(
+        onEnter: (name) async {
+          final p = await SharedPreferences.getInstance();
+          await p.setString(Keys.guestName, name);
+          await p.setInt(Keys.coins, 1000);
+          if (!mounted) return;
+          Navigator.of(context)
+              .pushNamedAndRemoveUntil('/home', (r) => false);
+        },
+      ),
+    );
   }
 
   @override
@@ -300,7 +274,7 @@ class _LoginScreenState extends State<LoginScreen>
                                 ),
                                 const SizedBox(height: 12),
                                 Text(
-                                  'Sign in to sync coins, cosmetics, and progression, or jump in as a guest with a quick local profile.',
+                                  'Sign in to sync coins, cosmetics, and progression across all your devices.',
                                   style: bodyFont(context).copyWith(
                                     color: AppPalette.textMuted,
                                     fontSize: 14,
@@ -324,8 +298,8 @@ class _LoginScreenState extends State<LoginScreen>
                                       color: AppPalette.accentPurple,
                                     ),
                                     _AuthSignalChip(
-                                      label: '1,000 GUEST COINS',
-                                      icon: Icons.workspace_premium_outlined,
+                                      label: 'FREE TO PLAY',
+                                      icon: Icons.stars_outlined,
                                       color: AppPalette.gold,
                                     ),
                                   ],
@@ -333,7 +307,11 @@ class _LoginScreenState extends State<LoginScreen>
                               ],
                             ),
                           ),
-                          const SizedBox(height: 18),
+                          const SizedBox(height: 12),
+                          _PlayAsGuestTopButton(
+                            onTap: () => _showGuestSheet(context),
+                          ),
+                          const SizedBox(height: 12),
                           AppGlassCard(
                             padding: const EdgeInsets.fromLTRB(20, 22, 20, 24),
                             radius: 28,
@@ -341,12 +319,8 @@ class _LoginScreenState extends State<LoginScreen>
                                 AppPalette.homeStroke.withOpacity(0.30),
                             child: Column(
                               children: [
-                                _buildTabSwitcher(),
-                                const SizedBox(height: 18),
                                 Text(
-                                  _isAccount
-                                      ? 'ACCOUNT ACCESS'
-                                      : 'QUICK GUEST ENTRY',
+                                  'ACCOUNT ACCESS',
                                   style: safeOrbitron(
                                     fontSize: 11,
                                     fontWeight: FontWeight.w700,
@@ -355,34 +329,14 @@ class _LoginScreenState extends State<LoginScreen>
                                   ),
                                 ),
                                 const SizedBox(height: 24),
-                                AnimatedSwitcher(
-                                  duration: const Duration(milliseconds: 250),
-                                  transitionBuilder: (child, anim) =>
-                                      FadeTransition(
-                                    opacity: anim,
-                                    child: child,
-                                  ),
-                                  child: _isAccount
-                                      ? _buildAccountForm(
-                                          key: const ValueKey('account'))
-                                      : _buildGuestForm(
-                                          key: const ValueKey('guest')),
-                                ),
+                                _buildAccountForm(
+                                    key: const ValueKey('account')),
                                 const SizedBox(height: 14),
                                 _buildFeedbackBanner(),
                                 const SizedBox(height: 18),
                                 _buildActions(),
                               ],
                             ),
-                          ),
-                          const SizedBox(height: 16),
-                          Text(
-                            'Guest mode keeps the same gameplay flow and starts with 1,000 coins.',
-                            style: bodyFont(context).copyWith(
-                              fontSize: 12,
-                              color: AppPalette.textSubtle,
-                            ),
-                            textAlign: TextAlign.center,
                           ),
                         ],
                       ),
@@ -394,20 +348,6 @@ class _LoginScreenState extends State<LoginScreen>
           ],
         ),
       ),
-    );
-  }
-
-  Widget _buildGuestForm({required Key key}) {
-    return Column(
-      key: key,
-      children: [
-        ArenaField(
-          controller: _guestName,
-          hint: 'DISPLAY NAME (3-16 CHARS)',
-          icon: Icons.person_outline,
-          keyboardType: TextInputType.text,
-        ),
-      ],
     );
   }
 
@@ -452,7 +392,7 @@ class _LoginScreenState extends State<LoginScreen>
       duration: const Duration(milliseconds: 200),
       child: _loading
           ? Container(
-              key: ValueKey('loading-${_isAccount ? 'account' : 'guest'}'),
+              key: const ValueKey('loading-account'),
               margin: const EdgeInsets.symmetric(horizontal: 24),
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               decoration: BoxDecoration(
@@ -474,9 +414,7 @@ class _LoginScreenState extends State<LoginScreen>
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      _isAccount
-                          ? 'CONNECTING YOUR ARENA PROFILE...'
-                          : 'PREPARING GUEST PROFILE...',
+                      'CONNECTING YOUR ARENA PROFILE...',
                       style: safeOrbitron(
                         fontSize: 10,
                         fontWeight: FontWeight.w700,
@@ -529,21 +467,13 @@ class _LoginScreenState extends State<LoginScreen>
   Widget _buildActions() {
     return Column(
       children: [
-        if (_isAccount) ...[
-          _ArenaPrimaryButton(
-            label: 'ENTER ARENA',
-            icon: Icons.login_rounded,
-            loading: _loading,
-            onTap: _loading ? null : _login,
-          ),
-          const SizedBox(height: 12),
-        ] else ...[
-          _GuestEnterButton(
-            loading: _loading,
-            onTap: _loading ? null : _startAsGuest,
-          ),
-          const SizedBox(height: 12),
-        ],
+        _ArenaPrimaryButton(
+          label: 'ENTER ARENA',
+          icon: Icons.login_rounded,
+          loading: _loading,
+          onTap: _loading ? null : _login,
+        ),
+        const SizedBox(height: 12),
         _ArenaGoogleButton(
           loading: _loading,
           onTap: _loading ? null : _signInWithGoogle,
@@ -552,102 +482,56 @@ class _LoginScreenState extends State<LoginScreen>
     );
   }
 
-  Widget _buildTabSwitcher() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      child: Container(
-        height: 48,
-        padding: const EdgeInsets.all(4),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              AppPalette.panelElevated.withOpacity(0.96),
-              AppPalette.panelDeep.withOpacity(0.94),
-            ],
-          ),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: AppPalette.homeStroke.withOpacity(0.26)),
-        ),
-        child: Row(
-          children: [
-            _tabItem(
-              label: 'GUEST',
-              icon: Icons.person_outline_rounded,
-              isActive: !_isAccount,
-              onTap: () => setState(() {
-                _isAccount = false;
-                _errorMessage = null;
-              }),
-            ),
-            _tabItem(
-              label: 'ACCOUNT',
-              icon: Icons.shield_outlined,
-              isActive: _isAccount,
-              onTap: () => setState(() {
-                _isAccount = true;
-                _errorMessage = null;
-              }),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+}
 
-  Widget _tabItem({
-    required String label,
-    required IconData icon,
-    required bool isActive,
-    required VoidCallback onTap,
-  }) {
-    return Expanded(
-      child: GestureDetector(
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeInOut,
-          decoration: BoxDecoration(
-            gradient: isActive
-                ? LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      AppPalette.homeSky,
-                      AppPalette.homeBlue,
-                    ],
-                  )
-                : null,
-            color: isActive ? null : Colors.transparent,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: isActive
-                  ? AppPalette.homeStrokeStrong.withOpacity(0.65)
-                  : Colors.transparent,
-            ),
+class _PlayAsGuestTopButton extends StatelessWidget {
+  final VoidCallback onTap;
+
+  const _PlayAsGuestTopButton({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 52,
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [AppPalette.accentPurple, AppPalette.homeBlue],
+        ),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppPalette.accentPurple.withOpacity(0.38)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x40B25CFF),
+            blurRadius: 20,
+            offset: Offset(0, 8),
           ),
-          alignment: Alignment.center,
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                icon,
-                size: 14,
-                color: isActive ? Colors.white : AppPalette.textSubtle,
-              ),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  fontFamily: 'Orbitron',
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  color: isActive ? Colors.white : AppPalette.textSubtle,
-                  letterSpacing: 1.0,
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(18),
+          child: Center(
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.sports_esports_outlined,
+                    color: Colors.white, size: 20),
+                const SizedBox(width: 10),
+                Text(
+                  'PLAY AS GUEST',
+                  style: safeOrbitron(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                    color: Colors.white,
+                    letterSpacing: 2,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -1103,6 +987,105 @@ class _AuthSignalChip extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────
+//  Guest Entry Bottom Sheet
+// ─────────────────────────────────────────
+
+class _GuestEntrySheet extends StatefulWidget {
+  final Future<void> Function(String name) onEnter;
+
+  const _GuestEntrySheet({required this.onEnter});
+
+  @override
+  State<_GuestEntrySheet> createState() => _GuestEntrySheetState();
+}
+
+class _GuestEntrySheetState extends State<_GuestEntrySheet> {
+  final _name = TextEditingController();
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final name = _name.text.trim();
+    if (name.length < 3 || name.length > 16) {
+      setState(() => _error = 'DISPLAY NAME MUST BE 3-16 CHARACTERS.');
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    await widget.onEnter(name);
+    if (mounted) setState(() => _loading = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: AppGlassCard(
+        padding: const EdgeInsets.fromLTRB(24, 28, 24, 32),
+        radius: 28,
+        borderColor: AppPalette.homeStroke.withOpacity(0.36),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'GUEST ENTRY',
+              style: safeOrbitron(
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 2.0,
+                color: AppPalette.homeCyan,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Choose a display name to play as guest.',
+              style: bodyFont(context).copyWith(
+                fontSize: 13,
+                color: AppPalette.textMuted,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 20),
+            ArenaField(
+              controller: _name,
+              hint: 'DISPLAY NAME (3-16 CHARS)',
+              icon: Icons.person_outline,
+              keyboardType: TextInputType.text,
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 10),
+              Text(
+                _error!,
+                style: safeOrbitron(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  color: AppPalette.danger,
+                  letterSpacing: 1.0,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+            const SizedBox(height: 20),
+            _GuestEnterButton(
+              loading: _loading,
+              onTap: _loading ? null : _submit,
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -23,6 +23,7 @@ import 'core/responsive_metrics.dart';
 import 'firebase_options.dart';
 import 'screens/intro_screen.dart';
 import 'screens/login_screen.dart';
+import 'screens/welcome_screen.dart';
 import 'services/audit_service.dart';
 import 'services/auth_service.dart';
 import 'services/avatar_analyzer_service.dart';
@@ -139,9 +140,12 @@ Future<String> _resolveStartupRouteName() async {
   final hasGuestName =
       (prefs.getString(Keys.guestName) ?? '').trim().isNotEmpty;
   final offlineGuest = prefs.getBool(Keys.offlineGuest) ?? false;
-  final goHome = hasUser || hasGuestName || offlineGuest;
 
-  return goHome ? '/home' : '/login';
+  if (hasUser || hasGuestName || offlineGuest) return '/home';
+
+  // First-time user: show welcome screen if not yet seen.
+  final hasSeenWelcome = prefs.getBool(Keys.hasSeenWelcomeScreen) ?? false;
+  return hasSeenWelcome ? '/login' : '/welcome';
 }
 
 Future<void> main() async {
@@ -2500,8 +2504,29 @@ int pickStrategicMove({
 /// ==========================
 void navigateToHomeHub(BuildContext context) {
   Navigator.of(context).pushAndRemoveUntil(
-    MaterialPageRoute(builder: (_) => const HomeHub()),
+    PageRouteBuilder(
+      pageBuilder: (_, __, ___) => const HomeHub(),
+      transitionDuration: const Duration(milliseconds: 200),
+      reverseTransitionDuration: const Duration(milliseconds: 180),
+      transitionsBuilder: (_, animation, __, child) => FadeTransition(
+        opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
+        child: child,
+      ),
+    ),
     (route) => false,
+  );
+}
+
+/// Top-level fade route helper for game screens — 200ms forward, 180ms reverse.
+PageRoute<T> _xoFadeRoute<T>(Widget page) {
+  return PageRouteBuilder<T>(
+    pageBuilder: (_, __, ___) => page,
+    transitionDuration: const Duration(milliseconds: 200),
+    reverseTransitionDuration: const Duration(milliseconds: 180),
+    transitionsBuilder: (_, animation, __, child) => FadeTransition(
+      opacity: CurvedAnimation(parent: animation, curve: Curves.easeOut),
+      child: child,
+    ),
   );
 }
 
@@ -2571,6 +2596,9 @@ Route<void> _buildStartupPageRoute(String routeName) {
     case '/login':
       page = const LoginScreen();
       break;
+    case '/welcome':
+      page = const WelcomeScreen();
+      break;
     default:
       if (kDebugMode) {
         debugPrint('[startup] Unknown route "$routeName", defaulting to /login');
@@ -2625,6 +2653,7 @@ class NewYorkXOApp extends StatelessWidget {
       routes: {
         '/home': (context) => const HomeHub(),
         '/login': (context) => const LoginScreen(),
+        '/welcome': (context) => const WelcomeScreen(),
       },
       home: const _AppEntry(),
     );
@@ -2670,6 +2699,8 @@ class _HomeHubState extends State<HomeHub>
   bool _isReconnecting = false;
   bool _isDisconnecting = false;
   int _currentTab = 0;
+  // Tracks which tabs have been visited so their widgets are built lazily
+  final _visitedTabs = <int>{0};
   StreamSubscription? _sessionSub;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _firestoreSub;
 
@@ -2693,9 +2724,10 @@ class _HomeHubState extends State<HomeHub>
       if (mounted) setState(() => _offline = !online);
     });
 
-    // Defer IAP init to avoid heavy work during Home startup
+    // Defer IAP init and new-user onboarding to avoid heavy work during Home startup
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initIap();
+      if (mounted) _checkNewUserOnboarding();
     });
 
     // Staggered entrance: smooth 600ms sequence
@@ -2743,6 +2775,107 @@ class _HomeHubState extends State<HomeHub>
       }
     }
   }
+
+  // ── Guest onboarding & conversion ──────────────────────────────────────
+
+  Future<void> _checkNewUserOnboarding() async {
+    if (!_isGuest) return; // only for guests
+    final prefs = await SharedPreferences.getInstance();
+    final done = prefs.getBool(Keys.hasCompletedFirstEntry) ?? false;
+    if (done || !mounted) return;
+    await prefs.setBool(Keys.hasCompletedFirstEntry, true);
+    if (!mounted) return;
+    _showOnboardingSheet();
+  }
+
+  Future<void> _showOnboardingSheet() async {
+    final prefs = await SharedPreferences.getInstance();
+    final existingName = prefs.getString(Keys.guestName) ?? '';
+    if (!mounted) return;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _OnboardingSheet(
+        initialName: existingName,
+        onSaveName: (name) async {
+          final p = await SharedPreferences.getInstance();
+          await p.setString(Keys.guestName, name);
+          if (mounted) _refresh();
+        },
+        onCreateAccount: () {
+          Navigator.of(context).pushNamed('/login');
+        },
+      ),
+    );
+  }
+
+  Future<void> _onGameReturned() async {
+    if (!_isGuest) return;
+    final prefs = await SharedPreferences.getInstance();
+    final count = (prefs.getInt(Keys.guestGamesPlayed) ?? 0) + 1;
+    await prefs.setInt(Keys.guestGamesPlayed, count);
+    if (count % 3 == 0 && mounted) {
+      _showGuestConversionReminder();
+    }
+  }
+
+  void _showGuestConversionReminder() {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppPalette.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: BorderSide(color: AppPalette.stroke),
+        ),
+        title: Text(
+          'SAVE YOUR PROGRESS',
+          style: safeOrbitron(
+            fontSize: 13,
+            fontWeight: FontWeight.w800,
+            color: AppPalette.homeCyan,
+            letterSpacing: 1.8,
+          ),
+        ),
+        content: Text(
+          'Create a free account to sync your coins, cosmetics, and stats across devices.',
+          style: homeBodyFont(context, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              'MAYBE LATER',
+              style: safeOrbitron(
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                color: AppPalette.textSubtle,
+                letterSpacing: 1.2,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.of(context).pushNamed('/login');
+            },
+            child: Text(
+              'CREATE ACCOUNT',
+              style: safeOrbitron(
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                color: AppPalette.homeCyan,
+                letterSpacing: 1.2,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ────────────────────────────────────────────────────────────────────────
 
   void _onConnectivityChanged() {
     final wasOffline = _offline;
@@ -3221,7 +3354,10 @@ class _HomeHubState extends State<HomeHub>
     }
 
     if (_currentTab != 3) {
-      setState(() => _currentTab = 3);
+      setState(() {
+        _currentTab = 3;
+        _visitedTabs.add(3);
+      });
     }
   }
 
@@ -3402,46 +3538,41 @@ class _HomeHubState extends State<HomeHub>
     final xoSize = landscape ? 28.0 : (compact ? 34.0 : 40.0);
     final arenaSize = landscape ? 14.0 : (compact ? 16.0 : 18.0);
 
-    return FittedBox(
-      fit: BoxFit.scaleDown,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            'XO',
-            textAlign: TextAlign.center,
-            style: homeOrbitron(
-              fontSize: xoSize,
-              fontWeight: FontWeight.w900,
-              letterSpacing: landscape ? 1.8 : 2.4,
-              color: AppPalette.homeTitle,
-            ),
+    final titleColumn = Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          'XO',
+          textAlign: TextAlign.center,
+          style: homeOrbitron(
+            fontSize: xoSize,
+            fontWeight: FontWeight.w900,
+            letterSpacing: landscape ? 1.8 : 2.4,
+            color: AppPalette.homeTitle,
           ),
-          SizedBox(height: compact ? 1 : 3),
-          Text(
-            'ARENA',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-            style: brandFont(
-              context,
-              fontSize: arenaSize,
-            ).copyWith(
-              letterSpacing: landscape ? 2.2 : 3.0,
-              color: AppPalette.homeSky,
-            ),
+        ),
+        SizedBox(height: compact ? 1 : 3),
+        Text(
+          'ARENA',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: brandFont(
+            context,
+            fontSize: arenaSize,
+          ).copyWith(
+            letterSpacing: landscape ? 2.2 : 3.0,
+            color: AppPalette.homeSky,
           ),
-        ],
-      ),
+        ),
+      ],
     );
-  }
 
-  Widget _buildHomeSectionHeader() {
     final counterTile = AppGlassCard(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       backgroundColor: AppPalette.homePanel.withOpacity(0.86),
       borderColor: AppPalette.homeStroke.withOpacity(0.30),
-      radius: 22,
+      radius: 18,
       boxShadow: [
         BoxShadow(
           color: Colors.black.withOpacity(0.24),
@@ -3455,18 +3586,18 @@ class _HomeHubState extends State<HomeHub>
           Text(
             '4',
             style: homeOrbitron(
-              fontSize: 20,
+              fontSize: 16,
               fontWeight: FontWeight.w900,
               letterSpacing: 0.6,
               color: AppPalette.homeTitle,
             ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 2),
           Text(
             'MODES',
             style: homeLabelFont(
               context,
-              fontSize: 8,
+              fontSize: 6,
               color: AppPalette.homeSky,
             ),
           ),
@@ -3474,48 +3605,78 @@ class _HomeHubState extends State<HomeHub>
       ),
     );
 
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          titleColumn,
+          SizedBox(width: compact ? 8 : 12),
+          counterTile,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHomeSectionHeader() {
     return LayoutBuilder(
       builder: (context, constraints) {
         final compact = constraints.maxWidth < 360;
-        final textColumn = Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'SELECT MODE',
-              style: homeLabelFont(
-                context,
-                color: AppPalette.homeCyan,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Row(
-              children: [
-                Text(
-                  'Choose your arena',
-                  style: homeTitleFont(
-                    context,
-                    fontSize: compact ? 22 : 24,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                counterTile,
-              ],
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Four ways to play across solo, local, coin, and level runs.',
-              style: homeBodyFont(
-                context,
-                fontSize: compact ? 11 : 12,
-                color: AppPalette.homeMuted,
-              ),
-            ),
-          ],
-        );
-
         return Padding(
-          padding: const EdgeInsets.fromLTRB(4, 4, 4, 16),
-          child: textColumn,
+          padding: const EdgeInsets.fromLTRB(0, 0, 0, 4),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Text(
+                    'SELECT MODE',
+                    style: homeLabelFont(
+                      context,
+                      color: AppPalette.homeCyan,
+                    ),
+                  ),
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: AppPalette.homeCyan.withOpacity(0.10),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                          color: AppPalette.homeCyan.withOpacity(0.24)),
+                    ),
+                    child: Text(
+                      '4 MODES',
+                      style: homeLabelFont(
+                        context,
+                        fontSize: 7.5,
+                        color: AppPalette.homeCyan,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Choose your arena',
+                style: homeTitleFont(
+                  context,
+                  fontSize: compact ? 22 : 24,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Solo, 1v1, coin battles, or level challenges.',
+                style: homeBodyFont(
+                  context,
+                  fontSize: compact ? 11 : 12,
+                  color: AppPalette.homeMuted,
+                ),
+              ),
+            ],
+          ),
         );
       },
     );
@@ -3538,9 +3699,15 @@ class _HomeHubState extends State<HomeHub>
                       index: _currentTab,
                       children: [
                         _buildHomeContent(),
-                        const StorePage(embedded: true),
-                        const VaultPage(embedded: true),
-                        const SettingsPage(embedded: true),
+                        _visitedTabs.contains(1)
+                            ? const StorePage(embedded: true)
+                            : const SizedBox.shrink(),
+                        _visitedTabs.contains(2)
+                            ? const VaultPage(embedded: true)
+                            : const SizedBox.shrink(),
+                        _visitedTabs.contains(3)
+                            ? const SettingsPage(embedded: true)
+                            : const SizedBox.shrink(),
                       ],
                     ),
                   ),
@@ -3620,6 +3787,7 @@ class _HomeHubState extends State<HomeHub>
         onTap: () async {
           await Navigator.of(context).push(_fadeRoute(const SetupPage()));
           _refresh();
+          unawaited(_onGameReturned());
         },
       ),
       _HomeModeConfig(
@@ -3632,6 +3800,7 @@ class _HomeHubState extends State<HomeHub>
         onTap: () async {
           await Navigator.of(context).push(_fadeRoute(const FriendSetupPage()));
           _refresh();
+          unawaited(_onGameReturned());
         },
       ),
       _HomeModeConfig(
@@ -3644,6 +3813,7 @@ class _HomeHubState extends State<HomeHub>
         onTap: () async {
           await Navigator.of(context).push(_fadeRoute(const CoinMatchSetupPage()));
           _refresh();
+          unawaited(_onGameReturned());
         },
       ),
       _HomeModeConfig(
@@ -3656,6 +3826,7 @@ class _HomeHubState extends State<HomeHub>
         onTap: () async {
           await Navigator.of(context).push(_fadeRoute(const LevelGameSetupPage()));
           _refresh();
+          unawaited(_onGameReturned());
         },
       ),
     ];
@@ -3674,53 +3845,57 @@ class _HomeHubState extends State<HomeHub>
             builder: (context, constraints) {
               final metrics =
                   UiMetrics.of(constraints, MediaQuery.orientationOf(context));
-              final compact = constraints.maxWidth < 360;
-              // Force 2 columns on all phones 360px+, 1 column only on very small devices
-              final columns = constraints.maxWidth >= 360 ? 2 : 1;
+              final gap = metrics.cardGap;
 
-              final childAspectRatio = columns == 2
-                  ? metrics.homeGridAspectRatio
-                  : (compact ? 1.20 : 1.30);
+              Widget buildCard(int index) {
+                final mode = modes[index];
+                final animIdx = min(index ~/ 2, 1);
+                return RepaintBoundary(
+                  child: FadeTransition(
+                    opacity: _cardFades[animIdx],
+                    child: SlideTransition(
+                      position: _cardSlides[animIdx],
+                      child: _BigModeCard(
+                        title: mode.title,
+                        subtitle: mode.subtitle,
+                        badge: mode.badge,
+                        assetPath: mode.assetPath,
+                        accent: mode.accent,
+                        accentSecondary: mode.accentSecondary,
+                        onTap: mode.onTap,
+                      ),
+                    ),
+                  ),
+                );
+              }
 
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _buildHomeSectionHeader(),
                   Expanded(
-                    child: GridView.builder(
-                      padding: EdgeInsets.only(
-                        top: compact ? 1 : 3,
-                        bottom: 0,
-                      ),
-                      physics: const BouncingScrollPhysics(),
-                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: columns,
-                        mainAxisSpacing: metrics.cardGap,
-                        crossAxisSpacing: metrics.cardGap,
-                        childAspectRatio: childAspectRatio,
-                      ),
-                      itemCount: modes.length,
-                      itemBuilder: (context, index) {
-                        final mode = modes[index];
-                        final animationIndex = min(index ~/ 2, 1);
-                        return RepaintBoundary(
-                          child: FadeTransition(
-                            opacity: _cardFades[animationIndex],
-                            child: SlideTransition(
-                              position: _cardSlides[animationIndex],
-                              child: _BigModeCard(
-                                title: mode.title,
-                                subtitle: mode.subtitle,
-                                badge: mode.badge,
-                                assetPath: mode.assetPath,
-                                accent: mode.accent,
-                                accentSecondary: mode.accentSecondary,
-                                onTap: mode.onTap,
-                              ),
-                            ),
+                    child: Column(
+                      children: [
+                        Expanded(
+                          child: Row(
+                            children: [
+                              Expanded(child: buildCard(0)),
+                              SizedBox(width: gap),
+                              Expanded(child: buildCard(1)),
+                            ],
                           ),
-                        );
-                      },
+                        ),
+                        SizedBox(height: gap),
+                        Expanded(
+                          child: Row(
+                            children: [
+                              Expanded(child: buildCard(2)),
+                              SizedBox(width: gap),
+                              Expanded(child: buildCard(3)),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -3762,8 +3937,8 @@ class _HomeHubState extends State<HomeHub>
     );
     final itemMargin = EdgeInsets.symmetric(horizontal: landscape ? 2 : 4);
     final itemRadius = landscape ? 18.0 : 20.0;
-    final iconSize = landscape ? 20.0 : (compact ? 21.0 : 22.0);
-    final labelSize = landscape ? 7.4 : (compact ? 7.8 : 8.5);
+    final iconSize = landscape ? 24.0 : (compact ? 26.0 : 28.0);
+    final labelSize = landscape ? 8.0 : (compact ? 8.5 : 9.0);
 
     return Padding(
       padding: outerPadding,
@@ -3805,7 +3980,12 @@ class _HomeHubState extends State<HomeHub>
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onTap: () {
-                  if (_currentTab != i) setState(() => _currentTab = i);
+                  if (_currentTab != i) {
+                    setState(() {
+                      _currentTab = i;
+                      _visitedTabs.add(i);
+                    });
+                  }
                 },
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 220),
@@ -3931,13 +4111,34 @@ class _BigModeCard extends StatefulWidget {
 
 class _BigModeCardState extends State<_BigModeCard> {
   bool _pressed = false;
+  late Color _glowColor;
+  late Color _gradientColorA;
+  late Color _gradientColorB;
+
+  @override
+  void initState() {
+    super.initState();
+    _computeColors();
+  }
+
+  @override
+  void didUpdateWidget(_BigModeCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.accent != widget.accent ||
+        oldWidget.accentSecondary != widget.accentSecondary) {
+      _computeColors();
+    }
+  }
+
+  void _computeColors() {
+    _glowColor = Color.lerp(widget.accent, widget.accentSecondary, 0.5)!;
+    _gradientColorA = Color.lerp(AppPalette.homeSurface, widget.accent, 0.10)!;
+    _gradientColorB =
+        Color.lerp(AppPalette.homeSurface2, widget.accentSecondary, 0.14)!;
+  }
 
   @override
   Widget build(BuildContext context) {
-    final glowColor = Color.lerp(widget.accent, widget.accentSecondary, 0.5)!;
-    final media = MediaQuery.sizeOf(context);
-    final metrics = UiMetrics.fromSize(media, MediaQuery.orientationOf(context));
-
     return AnimatedScale(
       scale: _pressed ? 0.985 : 1,
       duration: const Duration(milliseconds: 140),
@@ -3949,11 +4150,7 @@ class _BigModeCardState extends State<_BigModeCard> {
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [
-              Color.lerp(AppPalette.homeSurface, widget.accent, 0.10)!,
-              Color.lerp(
-                  AppPalette.homeSurface2, widget.accentSecondary, 0.14)!,
-            ],
+            colors: [_gradientColorA, _gradientColorB],
           ),
           borderRadius: BorderRadius.circular(30),
           border: Border.all(
@@ -3967,7 +4164,7 @@ class _BigModeCardState extends State<_BigModeCard> {
               offset: const Offset(0, 18),
             ),
             BoxShadow(
-              color: glowColor.withOpacity(_pressed ? 0.18 : 0.12),
+              color: _glowColor.withOpacity(_pressed ? 0.18 : 0.12),
               blurRadius: _pressed ? 28 : 22,
               spreadRadius: -6,
               offset: const Offset(0, 8),
@@ -3991,8 +4188,7 @@ class _BigModeCardState extends State<_BigModeCard> {
               child: LayoutBuilder(
                 builder: (context, constraints) {
                   final compact =
-                      constraints.maxWidth < 220 || constraints.maxHeight < 250;
-                  final imageShare = metrics.homeCardImageShare;
+                      constraints.maxWidth < 220 || constraints.maxHeight < 220;
 
                   return Stack(
                     children: [
@@ -4089,10 +4285,9 @@ class _BigModeCardState extends State<_BigModeCard> {
                                 ),
                               ],
                             ),
-                            SizedBox(height: compact ? 6 : 8),
-                            SizedBox(
-                              height: constraints.maxHeight * imageShare,
-                              width: double.infinity,
+                            SizedBox(height: compact ? 5 : 7),
+                            Expanded(
+                              flex: 5,
                               child: Container(
                                 width: double.infinity,
                                 padding: EdgeInsets.all(compact ? 6 : 8),
@@ -4117,47 +4312,45 @@ class _BigModeCardState extends State<_BigModeCard> {
                                 ),
                               ),
                             ),
-                            SizedBox(height: compact ? 6 : 8),
+                            SizedBox(height: compact ? 5 : 7),
                             Expanded(
-                              child: FittedBox(
-                                fit: BoxFit.scaleDown,
-                                alignment: Alignment.topCenter,
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text(
-                                      widget.title,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      textAlign: TextAlign.center,
-                                      style: homeOrbitron(
-                                        fontSize: compact ? 17 : 19,
-                                        fontWeight: FontWeight.w900,
-                                        letterSpacing: 1.0,
-                                        color: AppPalette.homeTitle,
-                                        height: 1.05,
-                                        shadows: [
-                                          Shadow(
-                                            color: widget.accent.withOpacity(0.18),
-                                            blurRadius: 16,
-                                          ),
-                                        ],
-                                      ),
+                              flex: 2,
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    widget.title,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    textAlign: TextAlign.center,
+                                    style: homeOrbitron(
+                                      fontSize: compact ? 15 : 18,
+                                      fontWeight: FontWeight.w900,
+                                      letterSpacing: 1.0,
+                                      color: AppPalette.homeTitle,
+                                      height: 1.05,
+                                      shadows: [
+                                        Shadow(
+                                          color: widget.accent.withOpacity(0.18),
+                                          blurRadius: 16,
+                                        ),
+                                      ],
                                     ),
-                                    SizedBox(height: compact ? 2 : 4),
-                                    Text(
-                                      widget.subtitle,
-                                      maxLines: compact ? 2 : 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      textAlign: TextAlign.center,
-                                      style: homeBodyFont(
-                                        context,
-                                        fontSize: compact ? 11 : 12,
-                                        color: AppPalette.homeBody,
-                                      ),
+                                  ),
+                                  SizedBox(height: compact ? 2 : 3),
+                                  Text(
+                                    widget.subtitle,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    textAlign: TextAlign.center,
+                                    style: homeBodyFont(
+                                      context,
+                                      fontSize: compact ? 10 : 11,
+                                      color: AppPalette.homeBody,
                                     ),
-                                  ],
-                                ),
+                                  ),
+                                ],
                               ),
                             ),
                           ],
@@ -4226,15 +4419,13 @@ class _SetupPageState extends State<SetupPage> {
     final boardConfig = standardBoardConfig(_boardSize);
 
     await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => GamePage(
-          mode: GameMode.ai,
-          difficulty: _difficulty,
-          playerSymbol: _symbol,
-          boardSize: boardConfig.boardSize,
-          winCondition: boardConfig.winLength,
-        ),
-      ),
+      _xoFadeRoute(GamePage(
+        mode: GameMode.ai,
+        difficulty: _difficulty,
+        playerSymbol: _symbol,
+        boardSize: boardConfig.boardSize,
+        winCondition: boardConfig.winLength,
+      )),
     );
 
     if (mounted) setState(() => _busy = false);
@@ -4255,7 +4446,7 @@ class _SetupPageState extends State<SetupPage> {
                   children: [
                     AppIconButton(
                         icon: Icons.arrow_back,
-                        onTap: () => navigateToHomeHub(context)),
+                        onTap: () => Navigator.pop(context)),
                     const SizedBox(width: 12),
                     Text("SETUP",
                         style: titleFont(context).copyWith(fontSize: 18)),
@@ -4437,15 +4628,13 @@ class _FriendSetupPageState extends State<FriendSetupPage> {
     final boardConfig = standardBoardConfig(_boardSize);
 
     await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => GamePage(
-          mode: GameMode.friend,
-          difficulty: AIDifficulty.easy,
-          playerSymbol: _symbol,
-          boardSize: boardConfig.boardSize,
-          winCondition: boardConfig.winLength,
-        ),
-      ),
+      _xoFadeRoute(GamePage(
+        mode: GameMode.friend,
+        difficulty: AIDifficulty.easy,
+        playerSymbol: _symbol,
+        boardSize: boardConfig.boardSize,
+        winCondition: boardConfig.winLength,
+      )),
     );
 
     if (mounted) setState(() => _busy = false);
@@ -4466,7 +4655,7 @@ class _FriendSetupPageState extends State<FriendSetupPage> {
                   children: [
                     AppIconButton(
                       icon: Icons.arrow_back,
-                      onTap: () => navigateToHomeHub(context),
+                      onTap: () => Navigator.pop(context),
                     ),
                     const SizedBox(width: 12),
                     Text("LOCAL SETUP",
@@ -4962,14 +5151,12 @@ class _CoinMatchSetupPageState extends State<CoinMatchSetupPage> {
     final boardConfig = standardBoardConfig(_boardSize);
 
     await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => CoinMatchGamePage(
-          playerSymbol: _symbol,
-          entryFee: fee,
-          boardSize: boardConfig.boardSize,
-          winCondition: boardConfig.winLength,
-        ),
-      ),
+      _xoFadeRoute(CoinMatchGamePage(
+        playerSymbol: _symbol,
+        entryFee: fee,
+        boardSize: boardConfig.boardSize,
+        winCondition: boardConfig.winLength,
+      )),
     );
 
     if (mounted) {
@@ -4993,7 +5180,7 @@ class _CoinMatchSetupPageState extends State<CoinMatchSetupPage> {
                   children: [
                     AppIconButton(
                         icon: Icons.arrow_back,
-                        onTap: () => navigateToHomeHub(context)),
+                        onTap: () => Navigator.pop(context)),
                     const SizedBox(width: 12),
                     Text("PLAY COIN AI",
                         style: titleFont(context).copyWith(fontSize: 18)),
@@ -5473,7 +5660,7 @@ class _GamePageState extends State<GamePage> {
 
   void _leaveMatch() {
     unawaited(_restoreGameplayMusic());
-    navigateToHomeHub(context);
+    Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
   @override
@@ -6587,6 +6774,197 @@ class _EndDialog extends StatelessWidget {
 }
 
 /// ==========================
+///   LEVEL CONTINUE DIALOG
+/// ==========================
+class _ContinueDialog extends StatefulWidget {
+  final int level;
+  final int cost;
+  final int currentCoins;
+  final VoidCallback onContinue;
+  final VoidCallback onDecline;
+
+  const _ContinueDialog({
+    required this.level,
+    required this.cost,
+    required this.currentCoins,
+    required this.onContinue,
+    required this.onDecline,
+  });
+
+  @override
+  State<_ContinueDialog> createState() => _ContinueDialogState();
+}
+
+class _ContinueDialogState extends State<_ContinueDialog> {
+  int _seconds = 5;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
+      setState(() => _seconds--);
+      if (_seconds <= 0) {
+        t.cancel();
+        widget.onDecline();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final canAfford = widget.currentCoins >= widget.cost;
+    final timerColor = _seconds > 2 ? AppPalette.goldHighlight : AppPalette.danger;
+
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 380),
+        child: AppGlassCard(
+          padding: const EdgeInsets.all(24),
+          borderColor: AppPalette.goldHighlight.withOpacity(0.38),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              AppPalette.panelElevated.withOpacity(0.98),
+              AppPalette.panelDeep.withOpacity(0.98),
+            ],
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.34),
+              blurRadius: 30,
+              offset: const Offset(0, 18),
+            ),
+            BoxShadow(
+              color: AppPalette.goldHighlight.withOpacity(0.16),
+              blurRadius: 26,
+              spreadRadius: -8,
+            ),
+          ],
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 72,
+                height: 72,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    CircularProgressIndicator(
+                      value: _seconds / 5.0,
+                      backgroundColor: Colors.white12,
+                      color: timerColor,
+                      strokeWidth: 4,
+                    ),
+                    Text(
+                      '$_seconds',
+                      style: safeOrbitron(
+                        fontSize: 26,
+                        fontWeight: FontWeight.w900,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                'CONTINUE?',
+                style: safeOrbitron(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 2.0,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Level ${widget.level} — keep your progress',
+                style: bodyFont(context).copyWith(
+                  color: AppPalette.textMuted,
+                  height: 1.3,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                decoration: BoxDecoration(
+                  color: AppPalette.gold.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: AppPalette.gold.withOpacity(0.30)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Image.asset('assets/coin/COIN.png', height: 18, fit: BoxFit.contain),
+                    const SizedBox(width: 8),
+                    Text(
+                      '${widget.cost} XO COINS',
+                      style: safeOrbitron(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                        color: canAfford ? AppPalette.goldHighlight : AppPalette.danger,
+                        letterSpacing: 1.0,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (!canAfford) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'Not enough coins',
+                  style: bodyFont(context).copyWith(color: AppPalette.danger, fontSize: 12),
+                ),
+              ],
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  Expanded(
+                    child: AppPillButton(
+                      label: 'GIVE UP',
+                      fill: Colors.white.withOpacity(0.06),
+                      stroke: AppPalette.strokeStrong,
+                      onPressed: widget.onDecline,
+                      icon: Icons.close,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: AppPillButton(
+                      label: 'CONTINUE',
+                      fill: canAfford ? AppPalette.goldDeep : Colors.white12,
+                      stroke: canAfford
+                          ? AppPalette.goldHighlight.withOpacity(0.55)
+                          : AppPalette.strokeStrong,
+                      onPressed: canAfford ? widget.onContinue : null,
+                      icon: Icons.bolt_rounded,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// ==========================
 ///   COIN MATCH GAME PAGE
 /// ==========================
 class CoinMatchGamePage extends StatefulWidget {
@@ -6671,7 +7049,7 @@ class _CoinMatchGamePageState extends State<CoinMatchGamePage> {
 
   void _leaveMatch() {
     unawaited(_restoreGameplayMusic());
-    navigateToHomeHub(context);
+    Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
   @override
@@ -7506,9 +7884,8 @@ class _LevelGameSetupPageState extends State<LevelGameSetupPage> {
 
   Future<void> _start() async {
     await Navigator.of(context).push(
-      MaterialPageRoute(
-          builder: (_) => LevelGamePage(
-              initialLevel: _currentLevel, playerSymbol: _symbol)),
+      _xoFadeRoute(LevelGamePage(
+          initialLevel: _currentLevel, playerSymbol: _symbol)),
     );
     await _loadLevel();
   }
@@ -7539,7 +7916,7 @@ class _LevelGameSetupPageState extends State<LevelGameSetupPage> {
                   children: [
                     AppIconButton(
                         icon: Icons.arrow_back,
-                        onTap: () => navigateToHomeHub(context)),
+                        onTap: () => Navigator.pop(context)),
                     const SizedBox(width: 12),
                     Text("LEVEL GAME",
                         style: titleFont(context).copyWith(fontSize: 18)),
@@ -7787,6 +8164,7 @@ class _LevelGamePageState extends State<LevelGamePage> {
   Color _xPiece = NeonColors.xColors[0];
   Color _oPiece = NeonColors.oColors[0];
   bool _musicDucked = false;
+  int _continueCount = 0;
 
   @override
   void initState() {
@@ -7829,7 +8207,7 @@ class _LevelGamePageState extends State<LevelGamePage> {
 
   void _leaveLevelGame() {
     unawaited(_restoreGameplayMusic());
-    navigateToHomeHub(context);
+    Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
   @override
@@ -7936,20 +8314,12 @@ class _LevelGamePageState extends State<LevelGamePage> {
 
     if (winner == aiChar) {
       if (!mounted) return;
-      _showEndDialog(
-        title: "YOU LOST",
-        subtitle: "Level reset to 1\nStart from beginning!",
-        icon: Icons.sentiment_dissatisfied_outlined,
-        resetLevel: true,
-        isDraw: false,
-        isWin: false,
-      );
-      AuditService.log('match_ended', {
-        'matchType': 'level_campaign',
-        'level': _currentLevel,
-        'result': resultStr
-      });
-      _persistLevelResult(resultStr, 0, isLoss: true);
+      if (_currentLevel >= 3 &&
+          LocalStore.coinsNotifier.value >= 100 * (1 << _continueCount)) {
+        _showContinueDialog();
+      } else {
+        _doLoss(resultStr);
+      }
     } else if (draw) {
       if (!mounted) return;
       _showEndDialog(
@@ -8052,6 +8422,71 @@ class _LevelGamePageState extends State<LevelGamePage> {
     }
   }
 
+  void _doLoss(String resultStr) {
+    if (!mounted) return;
+    _continueCount = 0;
+    _showEndDialog(
+      title: 'YOU LOST',
+      subtitle: 'Level reset to 1\nStart from beginning!',
+      icon: Icons.sentiment_dissatisfied_outlined,
+      resetLevel: true,
+      isDraw: false,
+      isWin: false,
+    );
+    AuditService.log('match_ended', {
+      'matchType': 'level_campaign',
+      'level': _currentLevel,
+      'result': resultStr,
+    });
+    _persistLevelResult(resultStr, 0, isLoss: true);
+  }
+
+  void _showContinueDialog() {
+    final cost = 100 * (1 << _continueCount);
+    final currentCoins = LocalStore.coinsNotifier.value;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _ContinueDialog(
+        level: _currentLevel,
+        cost: cost,
+        currentCoins: currentCoins,
+        onContinue: () {
+          Navigator.pop(context);
+          _doContinue(cost, currentCoins);
+        },
+        onDecline: () {
+          Navigator.pop(context);
+          _doLoss('loss');
+        },
+      ),
+    );
+  }
+
+  void _doContinue(int cost, int coinsBefore) {
+    _continueCount++;
+    unawaited(LocalStore.applyCoinDeltaLocally(-cost));
+    unawaited(LocalStore.syncCoinBalance());
+    unawaited(LocalStore.addTopupHistory(
+      usd: 0.0,
+      coins: -cost,
+      type: 'spend',
+      description: 'Level $_currentLevel Continue',
+      balanceBefore: coinsBefore,
+      balanceAfter: coinsBefore - cost,
+    ));
+    unawaited(_duckGameplayMusic());
+    setState(() {
+      board = List.filled(_boardSize * _boardSize, '');
+      gameOver = false;
+      winner = '';
+      winningLine = [];
+      currentTurn = playerChar;
+      isAIMoving = false;
+    });
+    if (currentTurn == aiChar) _aiMove();
+  }
+
   void _showEndDialog({
     required String title,
     required String subtitle,
@@ -8079,6 +8514,7 @@ class _LevelGamePageState extends State<LevelGamePage> {
           unawaited(_duckGameplayMusic());
           if (resetLevel) {
             _currentLevel = 1;
+            _continueCount = 0;
             _updateLevelConfig();
             setState(() {
               board = List.filled(_boardSize * _boardSize, "");
@@ -11931,6 +12367,175 @@ class _SettingTile extends StatelessWidget {
                     size: 14, color: AppPalette.primary),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────
+//  Guest onboarding bottom sheet
+// ─────────────────────────────────────────
+
+class _OnboardingSheet extends StatefulWidget {
+  final String initialName;
+  final Future<void> Function(String name) onSaveName;
+  final VoidCallback onCreateAccount;
+
+  const _OnboardingSheet({
+    required this.initialName,
+    required this.onSaveName,
+    required this.onCreateAccount,
+  });
+
+  @override
+  State<_OnboardingSheet> createState() => _OnboardingSheetState();
+}
+
+class _OnboardingSheetState extends State<_OnboardingSheet> {
+  late final TextEditingController _name;
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _name = TextEditingController(text: widget.initialName);
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final name = _name.text.trim();
+    if (name.length < 3 || name.length > 16) {
+      setState(() => _error = 'DISPLAY NAME MUST BE 3-16 CHARACTERS.');
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    await widget.onSaveName(name);
+    if (mounted) Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding:
+          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: AppGlassCard(
+        padding: const EdgeInsets.fromLTRB(24, 28, 24, 32),
+        radius: 28,
+        borderColor: AppPalette.homeStroke.withOpacity(0.36),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'WELCOME TO XO ARENA',
+              style: safeOrbitron(
+                fontSize: 13,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 1.8,
+                color: AppPalette.homeCyan,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              "You're playing as guest. Set a display name or create an account to save your progress forever.",
+              style: homeBodyFont(context, fontSize: 13, color: AppPalette.textMuted),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 20),
+            ArenaField(
+              controller: _name,
+              hint: 'DISPLAY NAME (3-16 CHARS)',
+              icon: Icons.person_outline,
+              keyboardType: TextInputType.text,
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _error!,
+                style: safeOrbitron(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  color: AppPalette.danger,
+                  letterSpacing: 1.0,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ],
+            const SizedBox(height: 20),
+            Container(
+              height: 52,
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [AppPalette.homeSky, AppPalette.homeBlue],
+                ),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                    color: AppPalette.homeStrokeStrong.withOpacity(0.45)),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x302EA8FF),
+                    blurRadius: 20,
+                    offset: Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: _loading ? null : _save,
+                  borderRadius: BorderRadius.circular(16),
+                  child: Center(
+                    child: _loading
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              valueColor:
+                                  AlwaysStoppedAnimation<Color>(Colors.white),
+                            ),
+                          )
+                        : Text(
+                            'SAVE NAME',
+                            style: safeOrbitron(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w800,
+                              color: Colors.white,
+                              letterSpacing: 1.8,
+                            ),
+                          ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                widget.onCreateAccount();
+              },
+              child: Text(
+                'Create account or sign in',
+                style: homeBodyFont(
+                  context,
+                  fontSize: 13,
+                  color: AppPalette.textSubtle,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

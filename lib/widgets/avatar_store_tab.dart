@@ -66,9 +66,11 @@ class AvatarStoreTab extends StatelessWidget {
           padding: cardPadding,
           radius: metrics.cardRadius,
           backgroundColor: equipped
-              ? Color.lerp(AppPalette.panelElevated, meta.color, 0.18)
+              ? Color.lerp(AppPalette.panelElevated, const Color(0xFF3DCC6E), 0.28)
               : AppPalette.panel,
-          borderColor: meta.color.withOpacity(equipped ? 0.70 : owned ? 0.40 : 0.26),
+          borderColor: equipped
+              ? const Color(0xFF3DCC6E).withOpacity(0.88)
+              : meta.color.withOpacity(owned ? 0.40 : 0.26),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withOpacity(0.30),
@@ -76,9 +78,11 @@ class AvatarStoreTab extends StatelessWidget {
               offset: const Offset(0, 14),
             ),
             BoxShadow(
-              color: meta.color.withOpacity(equipped ? 0.28 : owned ? 0.14 : 0.10),
-              blurRadius: equipped ? 28 : 22,
-              spreadRadius: -4,
+              color: equipped
+                  ? const Color(0xFF3DCC6E).withOpacity(0.48)
+                  : meta.color.withOpacity(owned ? 0.14 : 0.10),
+              blurRadius: equipped ? 36 : 22,
+              spreadRadius: equipped ? -1 : -4,
             ),
           ],
           child: Column(
@@ -354,8 +358,8 @@ class _AvatarActionButton extends StatelessWidget {
     if (equipped) {
       return AppPillButton(
         label: 'EQUIPPED',
-        fill: meta.color,
-        stroke: meta.color.withOpacity(0.50),
+        fill: const Color(0xFF3DCC6E),
+        stroke: const Color(0xFF3DCC6E).withOpacity(0.55),
         onPressed: null,
         icon: Icons.check_rounded,
         labelFontSize: metrics.buttonFontSize,

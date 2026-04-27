@@ -15,7 +15,17 @@
       "Bash(/e/Programs/flutter_windows_3.41.6-stable/flutter/bin/flutter --version)",
       "Bash(\"/e/Programs/flutter_windows_3.41.6-stable/flutter/bin/flutter\" pub:*)",
       "Bash(\"/e/Programs/flutter_windows_3.41.6-stable/flutter/bin/flutter\" analyze:*)",
-      "Bash(\"E:\\\\Programs\\\\flutter_windows_3.41.6-stable\\\\flutter\\\\bin\\\\flutter.bat\" analyze:*)"
+      "Bash(\"E:\\\\Programs\\\\flutter_windows_3.41.6-stable\\\\flutter\\\\bin\\\\flutter.bat\" analyze:*)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(gh pr *)",
+      "Bash(dart analyze *)",
+      "Bash(powershell -Command \"Select-String -Path 'E:\\\\work\\\\xo-main\\\\lib\\\\main.dart' -Pattern '^class ' | Select-Object -Last 5 | Format-Table LineNumber, Line\")",
+      "Bash(powershell -Command \"\\(Get-Content 'E:\\\\work\\\\xo-main\\\\lib\\\\main.dart' | Measure-Object -Line\\).Lines\")",
+      "Bash(powershell -Command \"Get-Content 'E:\\\\work\\\\xo-main\\\\lib\\\\main.dart' | Select-Object -Last 15\")",
+      "Bash(powershell -Command \"\\(Get-Content 'E:\\\\work\\\\xo-main\\\\lib\\\\main.dart'\\)[-1]\")",
+      "Bash(powershell -Command \"\\(Get-Content 'E:\\\\work\\\\xo-main\\\\lib\\\\main.dart'\\).Count\")"
     ]
   }
 }

@@ -64,6 +64,15 @@ class Keys {
   /// Single-device session enforcer.
   static const sessionId = "sessionId";
 
+  /// First-time welcome screen shown flag.
+  static const hasSeenWelcomeScreen = "hasSeenWelcomeScreen";
+
+  /// Guest has completed the initial in-home onboarding prompt.
+  static const hasCompletedFirstEntry = "hasCompletedFirstEntry";
+
+  /// Number of games played as guest (for conversion reminder trigger).
+  static const guestGamesPlayed = "guestGamesPlayed";
+
   /// Offline guest mode state.
   static const offlineGuest = "offlineGuest";
   static const offlineCoins = "offlineCoins";

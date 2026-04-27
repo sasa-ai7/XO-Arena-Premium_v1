@@ -32,6 +32,8 @@ class _CoinsScreenState extends State<CoinsScreen> {
   bool _isLoadingPurchase = false;
   Timer? _loadingTimeout;
   bool _isDisposed = false;
+  // Cached product presentations to avoid rebuilding price strings per frame
+  final Map<String, _CoinPackPresentation> _presentationCache = {};
 
   @override
   void initState() {
@@ -84,7 +86,18 @@ class _CoinsScreenState extends State<CoinsScreen> {
 
   void _onControllerChanged() {
     if (mounted) {
-      setState(() {});
+      setState(() {
+        _rebuildPresentationCache();
+      });
+    }
+  }
+
+  void _rebuildPresentationCache() {
+    _presentationCache.clear();
+    for (final product in _controller.products) {
+      final coinAmount = CoinsCatalog.coinsForProductId(product.id);
+      _presentationCache[product.id] =
+          _presentationForProduct(product, coinAmount);
     }
   }
 
@@ -863,7 +876,8 @@ class _CoinsScreenState extends State<CoinsScreen> {
                 !_controller.storeAvailable ||
                 _isLoadingPurchase ||
                 isPending;
-            final presentation = _presentationForProduct(product, coinAmount);
+            final presentation = _presentationCache[product.id] ??
+                _presentationForProduct(product, coinAmount);
 
             return AppGlassCard(
           padding: const EdgeInsets.fromLTRB(12, 12, 12, 14),

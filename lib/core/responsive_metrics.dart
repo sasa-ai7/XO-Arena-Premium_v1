@@ -96,9 +96,9 @@ class UiMetrics {
       };
 
   double get homeCardImageShare => switch (sizeClass) {
-        DeviceSizeClass.compact => 0.49,
-        DeviceSizeClass.regular => 0.52,
-        DeviceSizeClass.expanded => 0.50,
+        DeviceSizeClass.compact => 0.62,
+        DeviceSizeClass.regular => 0.60,
+        DeviceSizeClass.expanded => 0.58,
       };
 
   double get tabBarHeight => switch (sizeClass) {
