@@ -19,7 +19,7 @@ if (keystorePropertiesFile.exists()) {
 }
 
 android {
-    namespace = "com.sasa.xogame"
+    namespace = "com.xoarena.neonclash"
     // compileSdk = 36 is required by plugins (app_links, in_app_purchase, etc.)
     // This is different from targetSdk - compileSdk is only for building
     compileSdk = 36
@@ -36,7 +36,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.sasa.xogame"
+        applicationId = "com.xoarena.neonclash"
         // Kotlin DSL: use assignment syntax instead of Groovy-style minSdkVersion
         minSdk = flutter.minSdkVersion
         // targetSdk = 35 is safe and compatible with Play Store policy

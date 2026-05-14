@@ -24,8 +24,8 @@ class EmailVerificationLinkHandler {
 
   // Allowed domains for verification links
   static const List<String> _allowedDomains = [
-    'xogame-105c9.web.app',
-    'xogame-105c9.firebaseapp.com',
+    'xo-arenaneon-clash.web.app',
+    'xo-arenaneon-clash.firebaseapp.com',
   ];
 
   /// Validate and process a verification link.

@@ -10,118 +10,149 @@ class FirebaseConfigValidator {
   factory FirebaseConfigValidator() => _instance;
   FirebaseConfigValidator._();
 
+  static const String _expectedProjectId = 'xo-arenaneon-clash';
+  static const String _expectedPackageName = 'com.xoarena.neonclash';
+  static const String _expectedAppId =
+      '1:928308967161:android:7fab6afb06730609311428';
+  static const String _expectedProjectNumber = '928308967161';
+
   /// Validates Firebase configuration and returns a list of issues found.
   /// Returns empty list if configuration is valid.
-  /// 
+  ///
   /// Checks:
   /// 1. Project ID match between google-services.json and firebase_options.dart
   /// 2. Package name consistency
+  /// 3. App ID consistency
   Future<List<String>> validateConfiguration() async {
     final issues = <String>[];
 
     try {
-      // Get expected project ID from firebase_options.dart
-      final expectedProjectId = DefaultFirebaseOptions.currentPlatform.projectId;
-      
-      // Read google-services.json
+      // Check that firebase_options.dart points to the correct project
+      final runtimeProjectId = DefaultFirebaseOptions.currentPlatform.projectId;
+      if (runtimeProjectId != _expectedProjectId) {
+        issues.add(
+          'CRITICAL: Firebase project mismatch in firebase_options.dart.\n'
+          '  - Expected: "$_expectedProjectId"\n'
+          '  - Found:    "$runtimeProjectId"\n'
+          '  - Fix: Run flutterfire configure --project=$_expectedProjectId --platforms=android',
+        );
+      }
+
+      final runtimeAppId = DefaultFirebaseOptions.currentPlatform.appId;
+      if (runtimeAppId != _expectedAppId) {
+        issues.add(
+          'CRITICAL: Firebase App ID mismatch in firebase_options.dart.\n'
+          '  - Expected: "$_expectedAppId"\n'
+          '  - Found:    "$runtimeAppId"',
+        );
+      }
+
+      // Read google-services.json (best-effort; processed at build time on Android)
       final googleServicesJson = await _loadGoogleServicesJson();
       if (googleServicesJson == null) {
-        // File not readable (normal on Android) - can't validate, but that's okay
-        // The build system still uses it, and runtime errors will catch mismatches
         if (kDebugMode) {
-          debugPrint('[FirebaseConfigValidator] Cannot read google-services.json for validation (normal on Android)');
+          debugPrint(
+            '[FirebaseConfigValidator] google-services.json not readable at runtime (normal on Android)',
+          );
         }
-        return issues; // Return empty - no issues detected, but also can't validate
+        return issues;
       }
 
-      // Check project ID match
-      final actualProjectId = googleServicesJson['project_info']?['project_id'] as String?;
+      // Verify project ID in google-services.json
+      final actualProjectId =
+          googleServicesJson['project_info']?['project_id'] as String?;
       if (actualProjectId == null) {
-        issues.add('google-services.json missing project_info.project_id');
-      } else if (actualProjectId != expectedProjectId) {
+        issues.add('google-services.json is missing project_info.project_id');
+      } else if (actualProjectId != _expectedProjectId) {
         issues.add(
-          'Project ID mismatch:\n'
-          '  - google-services.json: "$actualProjectId"\n'
-          '  - firebase_options.dart: "$expectedProjectId"\n'
-          '  - Fix: Download correct google-services.json from Firebase Console for project "$expectedProjectId"'
+          'CRITICAL: Firebase project mismatch in google-services.json.\n'
+          '  - Expected: "$_expectedProjectId"\n'
+          '  - Found:    "$actualProjectId"\n'
+          '  - Fix: Download the correct google-services.json from Firebase Console.',
         );
       }
 
-      // Check package name (optional, but good to verify)
+      // Verify project number in google-services.json
+      final actualProjectNumber =
+          googleServicesJson['project_info']?['project_number'] as String?;
+      if (actualProjectNumber != null &&
+          actualProjectNumber != _expectedProjectNumber) {
+        issues.add(
+          'Firebase project number mismatch in google-services.json.\n'
+          '  - Expected: "$_expectedProjectNumber"\n'
+          '  - Found:    "$actualProjectNumber"',
+        );
+      }
+
+      // Verify Android package name in google-services.json
       final packageName = _getPackageName(googleServicesJson);
-      if (packageName != null && packageName != 'com.sasa.xogame') {
+      if (packageName != null && packageName != _expectedPackageName) {
         issues.add(
-          'Package name mismatch in google-services.json: "$packageName"\n'
-          '  - Expected: "com.sasa.xogame"'
+          'CRITICAL: Package name mismatch in google-services.json.\n'
+          '  - Expected: "$_expectedPackageName"\n'
+          '  - Found:    "$packageName"\n'
+          '  - Fix: Download the correct google-services.json from Firebase Console.',
         );
       }
 
+      // Verify App ID in google-services.json
+      final actualAppId = _getAppId(googleServicesJson);
+      if (actualAppId != null && actualAppId != _expectedAppId) {
+        issues.add(
+          'Firebase App ID mismatch in google-services.json.\n'
+          '  - Expected: "$_expectedAppId"\n'
+          '  - Found:    "$actualAppId"',
+        );
+      }
     } catch (e, st) {
       if (kDebugMode) {
         debugPrint('[FirebaseConfigValidator] Error validating config: $e');
         debugPrint('[FirebaseConfigValidator] StackTrace: $st');
       }
-      issues.add('Error validating configuration: $e');
+      issues.add('Error validating Firebase configuration: $e');
     }
 
     return issues;
   }
 
-  /// Loads and parses google-services.json from assets or file system.
-  /// 
-  /// Note: On Android, google-services.json is processed at build time and
-  /// may not be directly readable at runtime. This validator provides best-effort
-  /// validation and will gracefully handle cases where the file cannot be read.
   Future<Map<String, dynamic>?> _loadGoogleServicesJson() async {
     try {
-      // Try to load from assets first (if bundled)
-      try {
-        final content = await rootBundle.loadString('google-services.json');
-        return jsonDecode(content) as Map<String, dynamic>;
-      } catch (e) {
-        // If not in assets, the file is likely processed at build time
-        // This is normal on Android - google-services.json is merged into the app
-        if (kDebugMode) {
-          debugPrint('[FirebaseConfigValidator] google-services.json not readable from assets (normal on Android)');
-        }
-        return null;
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        debugPrint('[FirebaseConfigValidator] Error loading google-services.json: $e');
-      }
+      final content = await rootBundle.loadString('google-services.json');
+      return jsonDecode(content) as Map<String, dynamic>;
+    } catch (_) {
       return null;
     }
   }
 
-  /// Extracts package name from google-services.json.
   String? _getPackageName(Map<String, dynamic> json) {
     try {
       final clients = json['client'] as List?;
-      if (clients == null || clients.isEmpty) {
-        return null;
-      }
-
-      final firstClient = clients.first as Map<String, dynamic>?;
-      if (firstClient == null) return null;
-
-      final clientInfo = firstClient['client_info'] as Map<String, dynamic>?;
-      if (clientInfo == null) return null;
-
-      final androidClientInfo = clientInfo['android_client_info'] as Map<String, dynamic>?;
-      if (androidClientInfo == null) return null;
-
-      return androidClientInfo['package_name'] as String?;
-    } catch (e) {
-      if (kDebugMode) {
-        debugPrint('[FirebaseConfigValidator] Error extracting package name: $e');
-      }
+      if (clients == null || clients.isEmpty) return null;
+      final clientInfo =
+          (clients.first as Map<String, dynamic>)['client_info']
+              as Map<String, dynamic>?;
+      final androidInfo =
+          clientInfo?['android_client_info'] as Map<String, dynamic>?;
+      return androidInfo?['package_name'] as String?;
+    } catch (_) {
       return null;
     }
   }
 
-  /// Validates configuration and logs warnings if issues are found.
-  /// This is a convenience method that can be called at app startup.
+  String? _getAppId(Map<String, dynamic> json) {
+    try {
+      final clients = json['client'] as List?;
+      if (clients == null || clients.isEmpty) return null;
+      final clientInfo =
+          (clients.first as Map<String, dynamic>)['client_info']
+              as Map<String, dynamic>?;
+      return clientInfo?['mobilesdk_app_id'] as String?;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Validates configuration at app startup and logs any issues.
   Future<void> validateAndLogWarnings() async {
     final issues = await validateConfiguration();
     if (issues.isNotEmpty) {
@@ -134,7 +165,7 @@ class FirebaseConfigValidator {
       }
     } else {
       if (kDebugMode) {
-        debugPrint('[FirebaseConfigValidator] ✅ Configuration validated successfully');
+        debugPrint('[FirebaseConfigValidator] ✅ Firebase configuration validated successfully');
       }
     }
   }

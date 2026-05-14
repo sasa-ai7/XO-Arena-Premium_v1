@@ -3,10 +3,12 @@ import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:device_info_plus/device_info_plus.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/keys.dart';
+import 'app_mode_service.dart';
 
 /// Single-device session enforcer.
 ///
@@ -20,6 +22,10 @@ class SessionService {
 
   /// Generate a unique session, save it locally, and write it to Firestore.
   static Future<void> writeSession(String uid) async {
+    if (!AppModeService.canUseOnlineServices) {
+      if (kDebugMode) debugPrint('[SESSION] writeSession skipped — offline mode');
+      return;
+    }
     final sessionId = DateTime.now().millisecondsSinceEpoch.toString();
     _currentSessionId = sessionId;
 
@@ -61,12 +67,17 @@ class SessionService {
   /// Returns a [StreamSubscription] that the caller must cancel on dispose.
   /// Calls [onConflict] with the new device model and login time when
   /// the remote session ID differs from the local one.
-  static StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>
+  static StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
       listenForConflict({
     required String uid,
     required String sessionId,
     required void Function(String newDevice, DateTime loginTime) onConflict,
   }) {
+    if (!AppModeService.canUseOnlineServices) {
+      if (kDebugMode) debugPrint('[SESSION] listenForConflict skipped — offline mode');
+      return null;
+    }
+
     // Set in-memory ID immediately — no async race
     _currentSessionId = sessionId;
 
@@ -111,9 +122,12 @@ class SessionService {
         }
       },
       onError: (e) {
-        if (kDebugMode) {
-          debugPrint('[SESSION] Stream error: $e');
+        if (FirebaseAuth.instance.currentUser == null) {
+          // permission-denied after sign-out is expected — suppress
+          if (kDebugMode) debugPrint('[SESSION] stream closed (signed out)');
+          return;
         }
+        if (kDebugMode) debugPrint('[SESSION] Stream error: $e');
       },
     );
   }

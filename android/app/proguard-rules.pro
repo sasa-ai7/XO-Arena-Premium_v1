@@ -1,4 +1,4 @@
-# ProGuard Rules for XO Game
+# ProGuard Rules for XO Arena
 # This file contains keep rules to prevent crashes when minification is enabled
 # Currently minification is disabled, but these rules are prepared for future use
 
@@ -107,11 +107,10 @@
 # ============================================
 # Application Classes
 # ============================================
--keep class com.sasa.xogame.** { *; }
--keep class com.xogame.xo.** { *; }
+-keep class com.xoarena.neonclash.** { *; }
 
 # Keep MainActivity
--keep class com.xogame.xo.MainActivity { *; }
+-keep class com.xoarena.neonclash.MainActivity { *; }
 
 # ============================================
 # General Android Rules

@@ -1,65 +1,42 @@
 {
   "project_info": {
-    "project_number": "1093013909122",
-    "project_id": "xogame-105c9",
-    "storage_bucket": "xogame-105c9.firebasestorage.app"
+    "project_number": "928308967161",
+    "project_id": "xo-arenaneon-clash",
+    "storage_bucket": "xo-arenaneon-clash.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:1093013909122:android:fc9f8ccf6b26083dc08e9b",
+        "mobilesdk_app_id": "1:928308967161:android:7fab6afb06730609311428",
         "android_client_info": {
-          "package_name": "com.sasa.xogame"
+          "package_name": "com.xoarena.neonclash"
         }
       },
       "oauth_client": [
         {
-          "client_id": "1093013909122-6mlvsfjnpm0kjce72gc9uprc1fa1gp8v.apps.googleusercontent.com",
+          "client_id": "928308967161-msuac43opbvsup331subbii5n69b0c7p.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
-            "package_name": "com.sasa.xogame",
-            "certificate_hash": "435f5df9359d82eebba8e5c5329423533f2a4d05"
+            "package_name": "com.xoarena.neonclash",
+            "certificate_hash": "e822d8b7fe473a6d3818550503ec79e8a508fc13"
           }
         },
         {
-          "client_id": "1093013909122-e0gd5vq9l9kh0rufap2gbh7arv88dnhr.apps.googleusercontent.com",
-          "client_type": 1,
-          "android_info": {
-            "package_name": "com.sasa.xogame",
-            "certificate_hash": "f255071d2a6ba5865d76427bf84e07200c63d92a"
-          }
-        },
-        {
-          "client_id": "1093013909122-suv08cf1qnvd7mln87maa22lics1ca9h.apps.googleusercontent.com",
-          "client_type": 1,
-          "android_info": {
-            "package_name": "com.sasa.xogame",
-            "certificate_hash": "1cfff26a65d5450656b0a812ec9438321bdfce19"
-          }
-        },
-        {
-          "client_id": "1093013909122-nv1nu9ps24cbbo37ctef3fmtfk897n19.apps.googleusercontent.com",
+          "client_id": "928308967161-7v5metf544q0mmdvp5fvl6dcl703hj8i.apps.googleusercontent.com",
           "client_type": 3
         }
       ],
       "api_key": [
         {
-          "current_key": "AIzaSyDzvTlSYF_BHdMlmbUrqFLxlw-KFM_zIeM"
+          "current_key": "AIzaSyDvJUVSC1s_KQEs-NehKmYJ6R3q4ITZqz0"
         }
       ],
       "services": {
         "appinvite_service": {
           "other_platform_oauth_client": [
             {
-              "client_id": "1093013909122-17b62fudt0nmhrctkhfn7106j2rb899j.apps.googleusercontent.com",
+              "client_id": "928308967161-7v5metf544q0mmdvp5fvl6dcl703hj8i.apps.googleusercontent.com",
               "client_type": 3
-            },
-            {
-              "client_id": "1093013909122-dhcdv89t7iruinambgtv44fionienbh6.apps.googleusercontent.com",
-              "client_type": 2,
-              "ios_info": {
-                "bundle_id": "com.example.xo"
-              }
             }
           ]
         }

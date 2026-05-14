@@ -1,17 +1,30 @@
-build/
+# Dependencies
+node_modules/
+functions/node_modules/
+
+# Flutter / Dart
 .dart_tool/
-.packages
+build/
 .flutter-plugins
 .flutter-plugins-dependencies
+flutter-plugins-dependencies
 
-android/key.properties
-*.jks
+# Firebase cache
+.firebase/
+
+# Local tools / IDE
+.claude/
+.cursor/
+.vscode/
+.idea/
+
+# Logs / analysis
+*.log
+analyze_out.txt
+.copilot-analyze.txt
+
+# Secrets / signing keys
 *.keystore
-*.p12
-
-*adminsdk*.json
-google-services.json
-GoogleService-Info.plist
-
-.env
-.env.*
+*.jks
+key.properties
+android/key.properties

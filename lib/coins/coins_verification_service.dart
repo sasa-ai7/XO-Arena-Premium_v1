@@ -2,6 +2,8 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
+import '../core/app_config.dart';
+
 /// Service for server-side verification of in-app purchases using Firebase Cloud Functions.
 class CoinsVerificationService {
   static final CoinsVerificationService _instance = CoinsVerificationService._();
@@ -35,6 +37,20 @@ class CoinsVerificationService {
     required String? orderId,
     required String packageName,
   }) async {
+    // Spark plan: purchases disabled — return early without calling Cloud Function.
+    if (!AppConfig.kEnableRealPurchases) {
+      if (kDebugMode) {
+        debugPrint('[VerificationService] kEnableRealPurchases=false — purchase verification disabled');
+      }
+      return {
+        'ok': false,
+        'coinsAdded': null,
+        'newBalance': null,
+        'consumed': false,
+        'error': 'Purchases are temporarily unavailable.',
+      };
+    }
+
     // Logging
     if (kDebugMode) {
       debugPrint('[VerificationService] Calling Cloud Function for verification...');

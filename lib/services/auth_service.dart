@@ -1,14 +1,16 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/app_config.dart';
 import '../core/keys.dart';
-import '../main.dart' show LocalStore;
+import 'local_store.dart';
 import '../models/user_data.dart';
 import 'audit_service.dart';
 import 'connectivity_service.dart';
@@ -85,7 +87,7 @@ class AuthService {
 
     if (merged.contains('10') || merged.contains('12500') || merged.contains('developer_error')) {
       return Exception(
-        'Google Sign-In configuration error. Add this device SHA-1 to Firebase for com.sasa.xogame, download a fresh android/app/google-services.json, then rebuild and reinstall.'
+        'Google Sign-In configuration error. Add this device SHA-1 to Firebase for com.xoarena.neonclash, download a fresh android/app/google-services.json, then rebuild and reinstall.'
       );
     }
 
@@ -528,7 +530,9 @@ class AuthService {
   Future<void> completeGoogleProfile({
     required String name,
     required String password,
-    required int age,
+    required String characterType,
+    required DateTime birthDate,
+    bool acceptedTerms = false,
   }) async {
     var user = _auth.currentUser;
     if (user == null) {
@@ -539,9 +543,25 @@ class AuthService {
       throw Exception('User email not found. Please try signing in again.');
     }
 
+    // Exact age calculation — never use inDays ~/ 365.
+    final now = DateTime.now();
+    int age = now.year - birthDate.year;
+    if (now.month < birthDate.month ||
+        (now.month == birthDate.month && now.day < birthDate.day)) {
+      age--;
+    }
+    if (age < 13) {
+      throw Exception('You must be at least 13 years old to use this app.');
+    }
+
+    final birthDateStr =
+        '${birthDate.year.toString().padLeft(4, '0')}-${birthDate.month.toString().padLeft(2, '0')}-${birthDate.day.toString().padLeft(2, '0')}';
+
     try {
       if (kDebugMode) {
         debugPrint('[AUTH] Completing Google profile for ${user.email}');
+        debugPrint('[ONBOARDING] birthDate=$birthDateStr age=$age');
+        debugPrint('[ONBOARDING] Creating Google profile...');
       }
 
       // Step 1: Link email/password credential (required)
@@ -587,9 +607,30 @@ class AuthService {
       if (kDebugMode) {
         debugPrint('[AUTH] STEP 3: Saving profile to Firestore');
       }
-      await _saveUserToFirestore(user!, name: name.trim(), age: age, provider: 'google');
+      await _saveUserToFirestore(
+        user!,
+        name: name.trim(),
+        age: age,
+        characterType: characterType,
+        birthDate: birthDate,
+        ageVerified: true,
+        minimumAgePassed: true,
+        provider: 'google',
+      );
+
+      // Write Account sub-map with terms acceptance (merge so it never overwrites other keys).
+      if (acceptedTerms) {
+        await _firestore.collection('users').doc(user.uid).set({
+          'Account': {
+            'acceptedTerms': true,
+            'acceptedTermsAt': FieldValue.serverTimestamp(),
+          },
+        }, SetOptions(merge: true));
+      }
+
       if (kDebugMode) {
         debugPrint('[AUTH] STEP 3 OK: Profile saved to Firestore');
+        debugPrint('[ONBOARDING] Profile created successfully');
       }
 
       // Step 4: Sync to LocalStore
@@ -720,12 +761,13 @@ class AuthService {
 
   /// Full-cycle account purge (Google Play compliant):
   /// 0. Re-authenticate (if password provided)
-  /// 1. Read user doc → build Ghost Record → write to /deletion_feedback/{uid}
+  /// 1. Read user doc → write best-effort deletion_feedback/{uid}
   /// 2. Delete /users/{uid}/transactions subcollection
   /// 3. Delete /users/{uid}/purchase_counts subcollection
   /// 4. Delete /users/{uid} main document
-  /// 5. Clean local storage (SharedPreferences)
-  /// 6. Delete Firebase Auth account
+  /// 5. Delete Firebase Auth account via user.delete()
+  /// 6. Clear local storage (SharedPreferences)
+  /// 7. Sign out locally
   ///
   /// Throws [RequiresReauthException] if Auth deletion needs recent login.
   Future<void> deleteAccountAndData({String? password}) async {
@@ -740,130 +782,132 @@ class AuthService {
     }
 
     final uid = user.uid;
+    final email = user.email ?? '';
+
+    // Inspect providers for routing and debug logging.
+    final providers = user.providerData.map((p) => p.providerId).toSet();
+    final hasPassword = providers.contains('password');
+    final hasGoogle = providers.contains('google.com');
+
     if (kDebugMode) {
+      debugPrint('[DELETE] providerData=${providers.join(',')}');
+      debugPrint('[DELETE] hasPassword=$hasPassword hasGoogle=$hasGoogle');
       debugPrint('[AUTH] deleteAccountAndData: Starting deletion for uid=$uid');
     }
 
-    // STEP 0: Re-authenticate if password provided
+    // STEP 0: Re-authenticate based on provider.
+    // - If password is provided and the account has a password provider → password reauth.
+    // - If Google-only and no password provided → trust that the caller (UI) already
+    //   reauthenticated with Google before calling this method.
+    // - If requires-recent-login surfaces during user.delete(), that is caught below.
     if (password != null && password.isNotEmpty) {
+      if (!hasPassword) {
+        // Caller tried to use a password for a Google-only account — reject clearly.
+        throw Exception(
+            'This account uses Google sign-in. Please re-authenticate with Google to delete your account.');
+      }
+      if (kDebugMode) debugPrint('[DELETE] Starting reauthentication (password)');
       try {
         await reauthenticateWithPassword(password);
+        if (kDebugMode) debugPrint('[DELETE] Password reauthentication success');
       } catch (e) {
         throw Exception('Incorrect password. Please try again.');
       }
+    } else if (kDebugMode) {
+      debugPrint('[DELETE] No password provided — assuming Google reauth was done by caller');
     }
 
-    // STEP 1: Read user document for Ghost Record BEFORE deleting anything
+    // STEP 1: Read user doc for audit/feedback data (best-effort).
     int finalBalance = 0;
     int totalGames = 0;
-    String email = user.email ?? '';
-    try {
-      final userDoc = await _firestore.collection('users').doc(uid).get();
-      if (userDoc.exists) {
-        final data = userDoc.data() ?? {};
-        final wallet = data['Wallet'] as Map<String, dynamic>?;
-        final stats = data['Stats'] as Map<String, dynamic>?;
-        finalBalance = (wallet?['coins'] as num?)?.toInt() ?? 0;
-        totalGames = (stats?['gamesPlayed'] as num?)?.toInt() ?? 0;
-        final profile = data['Profile'] as Map<String, dynamic>?;
-        if (profile != null && (profile['email'] as String?)?.isNotEmpty == true) {
-          email = profile['email'] as String;
-        }
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        debugPrint('[AUTH] deleteAccountAndData: Failed to read user doc for ghost record (non-fatal): $e');
-      }
-    }
 
-    // STEP 2: Write Ghost Record to /deletion_feedback/{uid}
+    try {
+      final snap = await _firestore.collection('users').doc(uid).get();
+      final data = snap.data();
+      final wallet = data?['Wallet'];
+      final stats = data?['Stats'];
+      if (wallet is Map) finalBalance = (wallet['coins'] as num?)?.toInt() ?? 0;
+      if (stats is Map) totalGames = (stats['gamesPlayed'] as num?)?.toInt() ?? 0;
+    } catch (_) {}
+
+    // STEP 2: Write deletion feedback — non-fatal, must include uid for Firestore rules.
+    // Note: The UI layer (main.dart) saves user-entered reason before calling here.
+    // This write merges in the final audit data (balance, games).
     try {
       await _firestore.collection('deletion_feedback').doc(uid).set({
-        'email': email,
         'uid': uid,
+        'email': email,
+        'reason': 'User requested deletion',
+        'details': '',
         'finalBalance': finalBalance,
         'totalGames': totalGames,
         'deletionDate': FieldValue.serverTimestamp(),
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
       if (kDebugMode) {
-        debugPrint('[AUTH] deleteAccountAndData: Ghost Record written');
+        debugPrint('[DELETE] deletion_feedback saved');
       }
     } catch (e) {
       if (kDebugMode) {
-        debugPrint('[AUTH] deleteAccountAndData: Ghost Record write failed (non-fatal): $e');
+        debugPrint('[DELETE] deletion_feedback failed non-fatal: $e');
       }
     }
 
-    // STEP 3: Delete subcollections
-    try {
-      await _deleteSubcollection(uid, 'transactions');
-      await _deleteSubcollection(uid, 'purchase_counts');
-      if (kDebugMode) {
-        debugPrint('[AUTH] deleteAccountAndData: Subcollections deleted');
-      }
-    } catch (e, st) {
-      _logException(e, st);
-      if (e is FirebaseException) {
-        throw _getUserFriendlyFirestoreError(e);
-      }
-      throw Exception('Failed to delete your data. Please try again.');
-    }
+    // STEP 3: Delete subcollections.
+    if (kDebugMode) debugPrint('[DELETE] deleting subcollection transactions');
+    await _deleteSubcollection(uid, 'transactions');
+    if (kDebugMode) debugPrint('[DELETE] deleting subcollection purchase_counts');
+    await _deleteSubcollection(uid, 'purchase_counts');
 
-    // STEP 4: Delete main user document
+    // STEP 4: Delete main user document.
+    if (kDebugMode) debugPrint('[DELETE] deleting users/$uid');
     try {
       await _firestore.collection('users').doc(uid).delete();
-      if (kDebugMode) {
-        debugPrint('[AUTH] deleteAccountAndData: Main document deleted');
+    } on FirebaseException catch (e) {
+      if (e.code == 'permission-denied') {
+        throw Exception(
+            'Firestore denied deleting user data. Deploy updated firestore.rules first.');
       }
-    } catch (e, st) {
-      _logException(e, st);
-      if (e is FirebaseException) {
-        throw _getUserFriendlyFirestoreError(e);
-      }
-      throw Exception('Failed to delete your data. Please try again.');
+      rethrow;
     }
 
-    // STEP 5: Clean local storage
-    try {
-      final p = await SharedPreferences.getInstance();
-      await p.setBool(Keys.loggedIn, false);
-      await p.remove(Keys.username);
-      await p.remove(Keys.email);
-      await p.remove(Keys.gamesPlayed);
-      await p.remove(Keys.wins);
-      await p.remove(Keys.losses);
-      await p.remove(Keys.draws);
-      await p.remove(Keys.coins);
-      await p.remove(Keys.xColor);
-      await p.remove(Keys.oColor);
-      await p.remove(Keys.ownedXColors);
-      await p.remove(Keys.ownedOColors);
-      await p.remove(Keys.topupHistory);
-      await p.remove(Keys.levelGameCurrentLevel);
-      await p.remove(Keys.levelGameCompleted);
-      await p.remove(Keys.migrated);
-      await p.setBool(Keys.justDeletedAccount, true);
-    } catch (e) {
-      if (kDebugMode) {
-        debugPrint('[AUTH] deleteAccountAndData: Local cleanup failed (non-fatal): $e');
-      }
-    }
-
-    // STEP 6: Delete Firebase Auth account
+    // STEP 5: Delete Firebase Auth account.
+    if (kDebugMode) debugPrint('[DELETE] deleting Firebase Auth user');
     try {
       await user.delete();
-      await signOut();
     } on FirebaseAuthException catch (e) {
       if (e.code == 'requires-recent-login') {
         throw RequiresReauthException();
       }
-      _logException(e, null);
       throw _getUserFriendlyAuthError(e);
-    } catch (e, st) {
-      _logException(e, st);
-      if (e is Exception) rethrow;
-      throw Exception('Account deletion failed. Please try again.');
     }
+
+    // STEP 6: Clear all local storage.
+    if (kDebugMode) debugPrint('[DELETE] clearing local cache');
+    try {
+      final p = await SharedPreferences.getInstance();
+      await p.clear();
+      await p.setBool(Keys.justDeletedAccount, true);
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[DELETE] local cleanup failed (non-fatal): $e');
+      }
+    }
+
+    // STEP 7: Sign out locally (Google + Firebase Auth).
+    try {
+      await _googleSignIn.signOut();
+    } catch (_) {}
+    try {
+      await _auth.signOut();
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[DELETE] sign-out failed (non-fatal): $e');
+      }
+    }
+
+    if (kDebugMode) debugPrint('[DELETE] account deleted successfully');
   }
 
   /// Delete ONLY the Firebase Auth account (called after re-authentication).
@@ -899,27 +943,21 @@ class AuthService {
   }
 
   Future<void> _saveUserToFirestore(User user,
-      {String? name, int? age, required String provider, String? photoUrl}) async {
+      {String? name, int? age, String? characterType, DateTime? birthDate,
+       bool? ageVerified, bool? minimumAgePassed,
+       required String provider, String? photoUrl}) async {
     try {
       final displayName =
           name ?? user.displayName ?? user.email?.split('@').first ?? 'Player';
       final now = DateTime.now();
       final resolvedPhotoUrl = photoUrl ?? user.photoURL;
 
-      final profile = UserProfile(
-        name: displayName,
-        age: age,
-        email: user.email ?? '',
-        provider: provider,
-        createdAt: now,
-        lastLoginAt: now,
-      );
-
       final ref = _firestore.collection('users').doc(user.uid);
       final existing = await ref.get();
 
       if (!existing.exists || existing.data() == null) {
-        // New user: create full document with defaults and welcome gift
+        // New user: create full document with defaults and 200-coin welcome gift.
+        // No free avatars or skins — those must be purchased.
         final userData = UserData(
           profile: UserProfile(
             name: displayName,
@@ -928,31 +966,49 @@ class AuthService {
             provider: provider,
             createdAt: now,
             lastLoginAt: now,
-            welcomeGiftClaimed: true, // Mark as claimed for new users
+            updatedAt: now,
+            welcomeGiftClaimed: true,
             photoURL: resolvedPhotoUrl,
+            characterType: characterType,
+            birthDate: birthDate,
+            ageVerified: ageVerified,
+            minimumAgePassed: minimumAgePassed,
           ),
-          wallet: const UserWallet(coins: 200), // Welcome gift: 200 coins
+          wallet: const UserWallet(coins: 200),
           stats: const UserStats(),
           cosmetics: const UserCosmetics(
             xColor: 'ffff3b30',
             oColor: 'ff0a84ff',
             ownedXColors: [0],
             ownedOColors: [0],
+            equippedAvatar: 0,
+            ownedAvatars: [],
+            ownedXSkins: [],
+            ownedOSkins: [],
+            selectedXSkin: 'default',
+            selectedOSkin: 'default',
           ),
           progress: const UserProgress(),
         );
         await ref.set(userData.toFirestore(), SetOptions(merge: true));
+        // Overwrite updatedAt and createdAt with server timestamp for accuracy.
+        await ref.set({
+          'Profile': {
+            'createdAt': FieldValue.serverTimestamp(),
+            'updatedAt': FieldValue.serverTimestamp(),
+          },
+        }, SetOptions(merge: true));
       } else {
-        // Existing user: check for welcome gift and update Profile
+        // Existing user: update Profile and check for pending welcome gift.
         final existingData = existing.data() ?? {};
         final existingProfile =
             UserProfile.fromMap(existingData['Profile'] as Map<String, dynamic>?);
         final existingWallet =
             UserWallet.fromMap(existingData['Wallet'] as Map<String, dynamic>?);
-        
-        // Check if welcome gift needs to be granted
-        bool shouldGrantWelcomeGift = existingProfile.welcomeGiftClaimed != true;
-        
+
+        // Grant welcome gift if not yet claimed (e.g. account created before this field existed).
+        final shouldGrantWelcomeGift = existingProfile.welcomeGiftClaimed != true;
+
         final mergedProfile = UserProfile(
           name: name ?? existingProfile.name,
           age: age ?? existingProfile.age,
@@ -960,24 +1016,32 @@ class AuthService {
           provider: provider,
           createdAt: existingProfile.createdAt,
           lastLoginAt: now,
+          updatedAt: now,
           welcomeGiftClaimed: shouldGrantWelcomeGift ? true : existingProfile.welcomeGiftClaimed,
           photoURL: resolvedPhotoUrl ?? existingProfile.photoURL,
+          characterType: characterType ?? existingProfile.characterType,
+          birthDate: birthDate ?? existingProfile.birthDate,
+          ageVerified: ageVerified ?? existingProfile.ageVerified,
+          minimumAgePassed: minimumAgePassed ?? existingProfile.minimumAgePassed,
         );
-        
+
         final updates = <String, dynamic>{
           'Profile': mergedProfile.toMap(),
         };
-        
-        // Grant welcome gift if needed
+
         if (shouldGrantWelcomeGift) {
-          final newCoins = (existingWallet.coins) + 200;
+          final newCoins = existingWallet.coins + 200;
           updates['Wallet'] = {'coins': newCoins};
           if (kDebugMode) {
             debugPrint('[AUTH] Welcome gift granted: +200 coins (total: $newCoins)');
           }
         }
-        
+
         await ref.set(updates, SetOptions(merge: true));
+        // Overwrite updatedAt with server timestamp for accuracy.
+        await ref.set({
+          'Profile': {'updatedAt': FieldValue.serverTimestamp()},
+        }, SetOptions(merge: true));
       }
     } on FirebaseException catch (e) {
       _logException(e, null);

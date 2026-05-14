@@ -22,8 +22,16 @@ class Keys {
   static const profilePhotoUrl = "profilePhotoUrl";
   static const customXColor = "customXColor";
   static const customOColor = "customOColor";
-  static const customXConfigs = "customXConfigsV2"; 
-  static const customOConfigs = "customOConfigsV2"; 
+  static const customXConfigs = "customXConfigsV2";
+  static const customOConfigs = "customOConfigsV2";
+
+  // XO Image Skin system
+  static const selectedXSkin = "selectedXSkin";  // "default" | "x5" | etc.
+  static const selectedOSkin = "selectedOSkin";
+  static const ownedXSkins = "ownedXSkins";       // comma-separated: "default,x5,x1"
+  static const ownedOSkins = "ownedOSkins";
+  static const xColorNames = "xColorNames";       // JSON map: {"0":"My Red"}
+  static const oColorNames = "oColorNames";
   static const topupHistory = "topupHistory";
 
   static const levelGameCurrentLevel = "levelGameCurrentLevel";
@@ -79,4 +87,29 @@ class Keys {
 
   /// Coin balance saved before network disconnect (for smart sync on reconnect).
   static const preDisconnectCoins = "preDisconnectCoins";
+
+  /// App language preference. Values: 'en' | 'ar'. Defaults to 'en'.
+  static const appLanguage = "app_language";
+
+  /// Cached online profile character type for offline avatar hint ('male' | 'female').
+  static const characterType = 'characterType';
+
+  /// Offline player profile — completely separate from the online account.
+  static const offlineProfileExists = 'offline_profile_exists';
+  static const offlinePlayerId = 'offline_player_id';
+  static const offlinePlayerName = 'offline_player_name';
+  static const offlineCharacterType = 'offline_character_type';
+  static const offlineCoinsV2 = 'offline_coins_v2';
+  static const offlineGamesPlayed = 'offline_games_played';
+  static const offlineWins = 'offline_wins';
+  static const offlineLosses = 'offline_losses';
+  static const offlineDraws = 'offline_draws';
+
+  /// Offline cosmetics — local-only, never written to Firestore.
+  static const offlineOwnedAvatars   = 'offline_owned_avatars';
+  static const offlineSelectedAvatar = 'offline_selected_avatar';
+  static const offlineOwnedXSkins    = 'offline_owned_x_skins';
+  static const offlineSelectedXSkin  = 'offline_selected_x_skin';
+  static const offlineOwnedOSkins    = 'offline_owned_o_skins';
+  static const offlineSelectedOSkin  = 'offline_selected_o_skin';
 }

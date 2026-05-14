@@ -7,7 +7,9 @@ import 'package:flutter/services.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:in_app_purchase_android/in_app_purchase_android.dart';
 
-import '../main.dart' show LocalStore;
+import '../core/app_config.dart';
+import '../services/app_mode_service.dart';
+import '../services/local_store.dart';
 import '../services/audit_service.dart';
 
 import 'coins_catalog.dart';
@@ -74,6 +76,32 @@ class IapCoinsService {
   }
 
   Future<void> _initInternal() async {
+    // Spark plan: skip Google Play Billing connection entirely.
+    if (!AppConfig.kEnableRealPurchases) {
+      _isAvailable = false;
+      if (kDebugMode) debugPrint('[IAP] Skipping IAP init — kEnableRealPurchases=false');
+      return;
+    }
+
+    // Strict online guard: never connect to billing unless the app is
+    // stably online. canUseOnlineServices is tighter than isOfflineLike
+    // and excludes switchingToOnline / connectionProblem.
+    if (!AppModeService.canUseOnlineServices) {
+      _isAvailable = false;
+      if (kDebugMode) {
+        debugPrint('[IAP] skipped because app is not safely online (mode=${AppModeService.current})');
+      }
+      return;
+    }
+
+    // Auth guard: never start billing without a signed-in user. Without
+    // a uid we can't credit purchases or call verifyGooglePlayPurchase.
+    if (FirebaseAuth.instance.currentUser == null) {
+      _isAvailable = false;
+      if (kDebugMode) debugPrint('[IAP] skipped because user is null');
+      return;
+    }
+
     _isAvailable = await _iap.isAvailable();
     if (!_isAvailable) {
       if (kDebugMode) {
@@ -191,6 +219,18 @@ class IapCoinsService {
   /// 
   /// Handles network errors, billing disconnection, and "already owned" errors with retry logic.
   Future<bool> buy(ProductDetails product, {bool isRetry = false}) async {
+    // Spark plan: purchases disabled.
+    if (!AppConfig.kEnableRealPurchases) {
+      if (kDebugMode) debugPrint('[IAP] buy() blocked — kEnableRealPurchases=false');
+      return false;
+    }
+
+    // Offline guard: in-app purchases require network.
+    if (AppModeService.isOfflineLike) {
+      if (kDebugMode) debugPrint('[IAP] buy() blocked — offline mode');
+      return false;
+    }
+
     // Check store availability first
     try {
       _isAvailable = await _iap.isAvailable();
@@ -517,7 +557,7 @@ class IapCoinsService {
       productId: productId,
       purchaseToken: purchaseToken,
       orderId: orderId,
-      packageName: Platform.isAndroid ? 'com.sasa.xogame' : 'com.example.xo',
+      packageName: 'com.xoarena.neonclash',
     );
 
     var ok = result['ok'] == true;
@@ -710,6 +750,10 @@ class IapCoinsService {
   /// Fetches purchases that Google sees are still "owned" and not completed,
   /// then processes and completes them to allow repurchase.
   Future<void> consumePendingPurchases() async {
+    if (AppModeService.isOfflineLike) {
+      if (kDebugMode) debugPrint('[IAP] consumePendingPurchases skipped — offline mode');
+      return;
+    }
     if (!_isAvailable || !Platform.isAndroid) {
       if (kDebugMode && !Platform.isAndroid) {
         debugPrint('[IAP] consumePendingPurchases is Android-only');

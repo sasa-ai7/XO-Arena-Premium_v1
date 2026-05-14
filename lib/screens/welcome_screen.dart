@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/app_l10n.dart';
 import '../core/app_theme.dart';
 import '../core/keys.dart';
 import '../widgets/app_ui.dart';
@@ -47,6 +48,7 @@ class _WelcomeScreenState extends State<WelcomeScreen>
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppL10n.of(context);
     return Scaffold(
       backgroundColor: AppPalette.bgDepth,
       body: AppBackground(
@@ -67,7 +69,6 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                 children: [
                   const SizedBox(height: 48),
 
-                  // Animated XO Logo
                   AnimatedBuilder(
                     animation: _pulseAnim,
                     builder: (context, child) => Transform.scale(
@@ -84,18 +85,16 @@ class _WelcomeScreenState extends State<WelcomeScreen>
 
                   const SizedBox(height: 20),
 
-                  // Brand name
                   Text(
-                    'XO ARENA',
+                    l10n.gameTitle,
                     style: brandFont(context, fontSize: 30),
                     textAlign: TextAlign.center,
                   ),
 
                   const SizedBox(height: 10),
 
-                  // Tagline
                   Text(
-                    'THE ARENA AWAITS',
+                    l10n.theArenaAwaits,
                     style: homeLabelFont(
                       context,
                       fontSize: 11,
@@ -106,7 +105,6 @@ class _WelcomeScreenState extends State<WelcomeScreen>
 
                   const SizedBox(height: 36),
 
-                  // Feature bullets
                   AppGlassCard(
                     padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
                     radius: 24,
@@ -116,22 +114,22 @@ class _WelcomeScreenState extends State<WelcomeScreen>
                         _WelcomeBullet(
                           icon: Icons.flash_on_rounded,
                           color: AppPalette.homeCyan,
-                          title: 'QUICK START',
-                          body: 'No signup needed. Play in seconds.',
+                          title: l10n.quickStart,
+                          body: l10n.quickStartDesc,
                         ),
                         const SizedBox(height: 16),
                         _WelcomeBullet(
                           icon: Icons.workspace_premium_outlined,
                           color: AppPalette.gold,
-                          title: 'FAIR REWARDS',
-                          body: 'Earn coins, unlock cosmetics.',
+                          title: l10n.fairRewards,
+                          body: l10n.fairRewardsDesc,
                         ),
                         const SizedBox(height: 16),
                         _WelcomeBullet(
                           icon: Icons.leaderboard_outlined,
                           color: AppPalette.accentPurple,
-                          title: 'COMPETITIVE FLOW',
-                          body: 'Solo, 1v1, coin battles & more.',
+                          title: l10n.competitiveFlow,
+                          body: l10n.competitiveFlowDesc,
                         ),
                       ],
                     ),
@@ -139,16 +137,17 @@ class _WelcomeScreenState extends State<WelcomeScreen>
 
                   const SizedBox(height: 32),
 
-                  // CTA Button — gold gradient
-                  _WelcomeCtaButton(onTap: _enterArena),
+                  _WelcomeCtaButton(
+                    label: l10n.enterTheArena,
+                    onTap: _enterArena,
+                  ),
 
                   const SizedBox(height: 16),
 
-                  // Sign-in link
                   TextButton(
                     onPressed: _goToLogin,
                     child: Text(
-                      'Already have an account?  Sign In',
+                      '${l10n.alreadyHaveAccount}${l10n.signInLink}',
                       style: safeInter(
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
@@ -230,9 +229,10 @@ class _WelcomeBullet extends StatelessWidget {
 //  Gold CTA button
 // ─────────────────────────────────────────
 class _WelcomeCtaButton extends StatelessWidget {
+  final String label;
   final VoidCallback onTap;
 
-  const _WelcomeCtaButton({required this.onTap});
+  const _WelcomeCtaButton({required this.label, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -271,7 +271,7 @@ class _WelcomeCtaButton extends StatelessWidget {
                 ),
                 const SizedBox(width: 12),
                 Text(
-                  'ENTER THE ARENA',
+                  label,
                   style: safeOrbitron(
                     fontSize: 14,
                     fontWeight: FontWeight.w900,

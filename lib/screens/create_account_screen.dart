@@ -2,12 +2,12 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'dart:async';
 
 import '../core/app_config.dart';
+import '../core/app_l10n.dart';
 import '../core/app_theme.dart';
 import '../services/auth_service.dart';
 import '../services/verify_email_resend_controller.dart';
@@ -24,7 +24,6 @@ class CreateAccountScreen extends StatefulWidget {
 class _CreateAccountScreenState extends State<CreateAccountScreen> {
   final _form = GlobalKey<FormState>();
   final _username = TextEditingController();
-  final _age = TextEditingController();
   final _email = TextEditingController();
   final _pass = TextEditingController();
   final _pass2 = TextEditingController();
@@ -32,30 +31,70 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
   bool _privacyConsent = false;
   final _auth = AuthService();
 
+  // Birth date state
+  int? _selectedYear;
+  int? _selectedMonth;
+  int? _selectedDay;
+
+  DateTime? get _birthDate {
+    if (_selectedYear == null || _selectedMonth == null || _selectedDay == null) {
+      return null;
+    }
+    return DateTime(_selectedYear!, _selectedMonth!, _selectedDay!);
+  }
+
+  int _calculateAge(DateTime birthDate) {
+    final now = DateTime.now();
+    int age = now.year - birthDate.year;
+    if (now.month < birthDate.month ||
+        (now.month == birthDate.month && now.day < birthDate.day)) {
+      age--;
+    }
+    return age;
+  }
+
+  int _daysInMonth(int year, int month) => DateTime(year, month + 1, 0).day;
+
+  void _onBirthYearChanged(int? year) {
+    setState(() {
+      _selectedYear = year;
+      _clampBirthDay();
+    });
+  }
+
+  void _onBirthMonthChanged(int? month) {
+    setState(() {
+      _selectedMonth = month;
+      _clampBirthDay();
+    });
+  }
+
+  void _clampBirthDay() {
+    if (_selectedYear != null && _selectedMonth != null && _selectedDay != null) {
+      final maxDay = _daysInMonth(_selectedYear!, _selectedMonth!);
+      if (_selectedDay! > maxDay) _selectedDay = null;
+    }
+  }
+
   Future<void> _create() async {
     FocusScope.of(context).unfocus();
     if (!(_form.currentState?.validate() ?? false)) return;
 
+    final l10n = AppL10n.of(context);
+
     // Check privacy consent
     if (!_privacyConsent) {
-      showTopNotification(context, 'Please accept the Privacy Policy to continue.', color: AppPalette.danger);
+      showTopNotification(context, l10n.acceptPrivacyRequired, color: AppPalette.danger);
       return;
     }
 
-    // Validate age (required for COPPA compliance)
-    final ageStr = _age.text.trim();
-    if (ageStr.isEmpty) {
-      showTopNotification(context, 'Age is required.', color: AppPalette.danger);
-      return;
-    }
-    
-    final age = int.tryParse(ageStr);
-    if (age == null || age < 1 || age > 99) {
-      showTopNotification(context, 'Please enter a valid age.', color: AppPalette.danger);
+    // Validate birth date (required for COPPA compliance)
+    if (_birthDate == null) {
+      showTopNotification(context, l10n.selectBirthDate, color: AppPalette.danger);
       return;
     }
 
-    // COPPA compliance: Block users under 13
+    final age = _calculateAge(_birthDate!);
     if (age < 13) {
       _showAgeRestrictionDialog();
       return;
@@ -80,12 +119,12 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
         } else {
           // Email already verified (unlikely but possible)
           if (_auth.lastSyncFailed) {
-            showTopNotification(context, 'Logged in but failed to sync profile', color: AppPalette.warning);
+            showTopNotification(context, AppL10n.of(context).failedToSyncProfile, color: AppPalette.warning);
           }
           Navigator.of(context).pushNamedAndRemoveUntil('/home', (route) => false);
         }
       } else {
-        showTopNotification(context, 'Sign-up failed. Try again.', color: AppPalette.danger);
+        showTopNotification(context, AppL10n.of(context).signUpFailed, color: AppPalette.danger);
       }
     } on FirebaseAuthException catch (e, st) {
       if (kDebugMode) {
@@ -105,7 +144,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
       if (!mounted) return;
       final msg = e.code == 'permission-denied'
           ? 'Firestore permissions prevent saving'
-          : (e.message ?? 'Sign-up failed. Try again.');
+          : (e.message ?? AppL10n.of(context).signUpFailed);
       showTopNotification(context, msg, color: AppPalette.danger);
     } catch (e, st) {
       if (kDebugMode) {
@@ -113,13 +152,14 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
         debugPrint('[AUTH] StackTrace: $st');
       }
       if (!mounted) return;
-      showTopNotification(context, 'Sign-up failed. Try again.', color: AppPalette.danger);
+      showTopNotification(context, AppL10n.of(context).signUpFailed, color: AppPalette.danger);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
   void _showAgeRestrictionDialog() {
+    final l10n = AppL10n.of(context);
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -132,18 +172,18 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
               Icon(Icons.block, size: 48, color: AppPalette.danger),
               const SizedBox(height: 16),
               Text(
-                'Age Restriction',
+                l10n.ageRestrictionTitle,
                 style: titleFont(ctx).copyWith(fontSize: 18),
               ),
               const SizedBox(height: 12),
               Text(
-                'This app is not for users under 13. Please contact a parent.',
+                l10n.ageRestrictionMsg,
                 style: bodyFont(ctx),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 20),
               AppPillButton(
-                label: 'OK',
+                label: l10n.ok,
                 fill: AppPalette.primary,
                 onPressed: () => Navigator.pop(ctx),
               ),
@@ -168,7 +208,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
       final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
       if (!ok) {
         if (!mounted) return;
-        showTopNotification(context, "Could not open Privacy Policy.", color: AppPalette.danger);
+        showTopNotification(context, AppL10n.of(context).couldNotOpenPrivacyPolicy, color: AppPalette.danger);
       }
     } catch (e) {
       if (kDebugMode) {
@@ -185,7 +225,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
       final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
       if (!ok) {
         if (!mounted) return;
-        showTopNotification(context, "Could not open Google Policies.", color: AppPalette.danger);
+        showTopNotification(context, AppL10n.of(context).couldNotOpenGooglePolicies, color: AppPalette.danger);
       }
     } catch (e) {
       if (kDebugMode) {
@@ -197,26 +237,138 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
   }
 
   String _authErrorMessage(String code) {
+    final l10n = AppL10n.of(context);
     switch (code) {
       case 'email-already-in-use':
-        return 'An account already exists with this email.';
+        return l10n.emailAlreadyInUse;
       case 'invalid-email':
-        return 'Invalid email address.';
+        return l10n.invalidEmailError;
       case 'weak-password':
-        return 'Password is too weak. Use at least 6 characters.';
+        return l10n.passwordTooWeak;
       case 'network-request-failed':
-        return 'Internet problem';
+        return l10n.internetProblem;
       case 'operation-not-allowed':
         return 'Email/Password sign-in is disabled. Enable it in Firebase Console.';
       default:
-        return 'Sign-up failed. Try again.';
+        return l10n.signUpFailed;
     }
+  }
+
+  Widget _buildBirthDateRow() {
+    final l10n = AppL10n.of(context);
+    final currentYear = DateTime.now().year;
+    final years = List.generate(101, (i) => currentYear - i);
+    final maxDay = (_selectedYear != null && _selectedMonth != null)
+        ? _daysInMonth(_selectedYear!, _selectedMonth!)
+        : 31;
+    final days = List.generate(maxDay, (i) => i + 1);
+
+    final dropdownDecoration = BoxDecoration(
+      color: AppPalette.panelDeep.withOpacity(0.9),
+      borderRadius: BorderRadius.circular(14),
+      border: Border.all(
+        color: AppPalette.homeStroke.withOpacity(0.35),
+        width: 1.2,
+      ),
+    );
+
+    Widget styledDropdown<T>({
+      required String hint,
+      required T? value,
+      required List<T> items,
+      required String Function(T) label,
+      required void Function(T?) onChanged,
+      int flex = 1,
+    }) {
+      return Expanded(
+        flex: flex,
+        child: Container(
+          decoration: dropdownDecoration,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<T>(
+              value: value,
+              isExpanded: true,
+              dropdownColor: AppPalette.panelDeep,
+              icon: const Icon(Icons.keyboard_arrow_down,
+                  color: AppPalette.primary, size: 18),
+              hint: Text(
+                hint,
+                style: safeInter(
+                  fontSize: 12,
+                  color: Colors.white.withOpacity(0.45),
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              style: safeInter(
+                fontSize: 13,
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+              ),
+              items: items
+                  .map((item) => DropdownMenuItem<T>(
+                        value: item,
+                        child: Text(label(item)),
+                      ))
+                  .toList(),
+              onChanged: onChanged,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Icon(Icons.cake_outlined, size: 16, color: AppPalette.primary),
+            const SizedBox(width: 6),
+            Text(
+              l10n.birthDateLabel,
+              style: sectionFont(context).copyWith(fontSize: 11),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            styledDropdown<int>(
+              hint: l10n.yearHint,
+              value: _selectedYear,
+              items: years,
+              label: (y) => y.toString(),
+              onChanged: _onBirthYearChanged,
+              flex: 3,
+            ),
+            const SizedBox(width: 8),
+            styledDropdown<int>(
+              hint: l10n.monthHint,
+              value: _selectedMonth,
+              items: List.generate(12, (i) => i + 1),
+              label: (m) => l10n.monthNames[m - 1],
+              onChanged: _onBirthMonthChanged,
+              flex: 3,
+            ),
+            const SizedBox(width: 8),
+            styledDropdown<int>(
+              hint: l10n.dayHint,
+              value: _selectedDay,
+              items: days,
+              label: (d) => d.toString().padLeft(2, '0'),
+              onChanged: (d) => setState(() => _selectedDay = d),
+              flex: 2,
+            ),
+          ],
+        ),
+      ],
+    );
   }
 
   @override
   void dispose() {
     _username.dispose();
-    _age.dispose();
     _email.dispose();
     _pass.dispose();
     _pass2.dispose();
@@ -225,6 +377,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppL10n.of(context);
     return Scaffold(
       body: AppBackground(
         variant: AppBackgroundVariant.homeNeon,
@@ -242,11 +395,11 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'XO ARENA',
+                            l10n.gameTitle,
                             style: brandFont(context, fontSize: 24),
                           ),
                           Text(
-                            'CREATE ACCOUNT',
+                            l10n.createAccount,
                             style: sectionFont(context).copyWith(fontSize: 12),
                           ),
                         ],
@@ -270,13 +423,13 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
                             child: Column(
                               children: [
                                 Text(
-                                  'Forge Your Arena ID',
+                                  l10n.forgeYourArenaId,
                                   style: titleFont(context).copyWith(fontSize: 24),
                                   textAlign: TextAlign.center,
                                 ),
                                 const SizedBox(height: 10),
                                 Text(
-                                  'Create a verified profile to sync coins, cosmetics, purchases, and progression across every arena session.',
+                                  l10n.createAccountDesc,
                                   style: bodyFont(context).copyWith(fontSize: 14),
                                   textAlign: TextAlign.center,
                                 ),
@@ -287,17 +440,17 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
                                   alignment: WrapAlignment.center,
                                   children: [
                                     _CreateAccountChip(
-                                      label: 'AGE 13+',
+                                      label: l10n.chipAge13Plus,
                                       icon: Icons.verified_user_outlined,
                                       color: AppPalette.primary,
                                     ),
                                     _CreateAccountChip(
-                                      label: 'EMAIL VERIFIED',
+                                      label: l10n.chipEmailVerified,
                                       icon: Icons.mark_email_read_outlined,
                                       color: AppPalette.accentPurple,
                                     ),
                                     _CreateAccountChip(
-                                      label: 'SYNC READY',
+                                      label: l10n.chipSyncReady,
                                       icon: Icons.cloud_done_outlined,
                                       color: AppPalette.gold,
                                     ),
@@ -316,75 +469,56 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
                               child: Column(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  Text('ACCOUNT DETAILS', style: sectionFont(context)),
+                                  Text(l10n.accountDetails, style: sectionFont(context)),
                                   const SizedBox(height: 14),
                                   AuthField(
                                     controller: _username,
-                                    hint: 'Name',
+                                    hint: l10n.nameHint,
                                     icon: Icons.person_outline,
                                     validator: (v) {
                                       final s = (v ?? '').trim();
-                                      if (s.isEmpty) return 'Name is required';
-                                      if (s.length < 3) return 'Name is too short';
+                                      if (s.isEmpty) return AppL10n.of(context).nameRequired;
+                                      if (s.length < 3) return AppL10n.of(context).nameTooShort;
                                       return null;
                                     },
                                   ),
                                   const SizedBox(height: 12),
-                                  AuthField(
-                                    controller: _age,
-                                    hint: 'Age (Required)',
-                                    icon: Icons.cake_outlined,
-                                    keyboardType: TextInputType.number,
-                                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                                    maxLength: 2,
-                                    validator: (v) {
-                                      final s = (v ?? '').trim();
-                                      if (s.isEmpty) return 'Age is required';
-                                      final n = int.tryParse(s);
-                                      if (n == null || n < 1 || n > 99) {
-                                        return 'Enter age between 1 and 99';
-                                      }
-                                      if (n < 13) {
-                                        return 'Must be 13 or older';
-                                      }
-                                      return null;
-                                    },
-                                  ),
+                                  _buildBirthDateRow(),
                                   const SizedBox(height: 12),
                                   AuthField(
                                     controller: _email,
-                                    hint: 'Email',
+                                    hint: l10n.emailHint,
                                     icon: Icons.email_outlined,
                                     keyboardType: TextInputType.emailAddress,
                                     validator: (v) {
                                       final s = (v ?? '').trim();
-                                      if (s.isEmpty) return 'Email is required';
-                                      if (!s.contains('@') || !s.contains('.')) return 'Enter a valid email';
+                                      if (s.isEmpty) return AppL10n.of(context).emailRequired;
+                                      if (!s.contains('@') || !s.contains('.')) return AppL10n.of(context).emailInvalid;
                                       return null;
                                     },
                                   ),
                                   const SizedBox(height: 12),
                                   ArenaField(
                                     controller: _pass,
-                                    hint: 'PASSWORD',
+                                    hint: l10n.passwordHint,
                                     icon: Icons.lock_outline,
                                     isPassword: true,
                                     validator: (v) {
                                       final s = v ?? '';
-                                      if (s.isEmpty) return 'Password is required';
-                                      if (s.length < 6) return 'Password must be at least 6 characters';
+                                      if (s.isEmpty) return AppL10n.of(context).passwordRequired;
+                                      if (s.length < 6) return AppL10n.of(context).passwordTooShort;
                                       return null;
                                     },
                                   ),
                                   const SizedBox(height: 12),
                                   ArenaField(
                                     controller: _pass2,
-                                    hint: 'CONFIRM PASSWORD',
+                                    hint: l10n.confirmPasswordHint,
                                     icon: Icons.lock_outline,
                                     isPassword: true,
                                     validator: (v) {
-                                      if ((v ?? '').isEmpty) return 'Confirm your password';
-                                      if (v != _pass.text) return 'Passwords do not match';
+                                      if ((v ?? '').isEmpty) return AppL10n.of(context).confirmPasswordRequired;
+                                      if (v != _pass.text) return AppL10n.of(context).passwordsDoNotMatch;
                                       return null;
                                     },
                                   ),
@@ -410,12 +544,12 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
                                         text: TextSpan(
                                           style: bodyFont(context).copyWith(fontSize: 12),
                                           children: [
-                                            const TextSpan(text: 'I agree to the '),
+                                            TextSpan(text: l10n.agreeToPrivacyPrefix),
                                             WidgetSpan(
                                               child: GestureDetector(
                                                 onTap: _openPrivacyPolicy,
                                                 child: Text(
-                                                  'Privacy Policy',
+                                                  l10n.privacyPolicy,
                                                   style: bodyFont(context).copyWith(
                                                     fontSize: 12,
                                                     color: AppPalette.primary,
@@ -424,12 +558,12 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
                                                 ),
                                               ),
                                             ),
-                                            const TextSpan(text: ' and '),
+                                            TextSpan(text: l10n.agreeToPrivacyAnd),
                                             WidgetSpan(
                                               child: GestureDetector(
                                                 onTap: _openGooglePolicies,
                                                 child: Text(
-                                                  'Google Policies',
+                                                  l10n.googlePolicies,
                                                   style: bodyFont(context).copyWith(
                                                     fontSize: 12,
                                                     color: AppPalette.primary,
@@ -445,7 +579,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
                                   ),
                                   const SizedBox(height: 16),
                                   AppPillButton(
-                                    label: 'CREATE ACCOUNT',
+                                    label: l10n.createAccount,
                                     loading: _loading,
                                     onPressed: _loading ? null : _create,
                                     minHeight: 56,
@@ -505,7 +639,6 @@ class _CreateAccountChip extends StatelessWidget {
       ),
     );
   }
-}
 }
 
 /// Verification dialog with resend policy, countdown timer, and refresh button.
@@ -599,7 +732,7 @@ class _VerificationDialogState extends State<_VerificationDialog> {
       }
       showTopNotification(
         context,
-        'Verification email sent!',
+        AppL10n.of(context).verificationEmailSent,
         color: AppPalette.success,
       );
       _startCountdownTimer(); // Restart timer to show countdown
@@ -609,7 +742,7 @@ class _VerificationDialogState extends State<_VerificationDialog> {
       }
       showTopNotification(
         context,
-        result.errorMessage ?? 'Failed to send verification email.',
+        result.errorMessage ?? AppL10n.of(context).failedToSendVerification,
         color: AppPalette.danger,
       );
     }
@@ -626,7 +759,7 @@ class _VerificationDialogState extends State<_VerificationDialog> {
         if (_isEmailVerified) {
           showTopNotification(
             context,
-            'Email verified! You can now log in.',
+            AppL10n.of(context).emailVerifiedSuccess,
             color: AppPalette.success,
           );
           // Close dialog after a short delay
@@ -639,7 +772,7 @@ class _VerificationDialogState extends State<_VerificationDialog> {
         } else {
           showTopNotification(
             context,
-            'Email not verified yet. Please check your email.',
+            AppL10n.of(context).emailNotVerifiedYet,
             color: AppPalette.warning,
           );
         }
@@ -648,7 +781,7 @@ class _VerificationDialogState extends State<_VerificationDialog> {
       if (mounted) {
         showTopNotification(
           context,
-          'Failed to refresh status. Please try again.',
+          AppL10n.of(context).failedToRefreshStatus,
           color: AppPalette.danger,
         );
       }
@@ -660,27 +793,24 @@ class _VerificationDialogState extends State<_VerificationDialog> {
   }
 
   String _getResendButtonLabel() {
-    if (_isSending) {
-      return 'Sending...';
-    }
+    final l10n = AppL10n.of(context);
 
-    if (_isEmailVerified) {
-      return 'Email Verified';
-    }
+    if (_isSending) return l10n.sending;
+    if (_isEmailVerified) return l10n.emailVerified;
 
     final lockout = _controller.remainingLockout;
     if (lockout != null) {
       final formatted = VerifyEmailResendController.formatRemainingTime(lockout);
-      return 'Try again in $formatted';
+      return l10n.tryAgainIn(formatted);
     }
 
     final cooldown = _controller.remainingCooldown;
     if (cooldown != null) {
       final seconds = cooldown.inSeconds;
-      return 'Resend in ${seconds}s...';
+      return l10n.resendInSeconds(seconds);
     }
 
-    return 'Resend Email';
+    return l10n.resendEmail;
   }
 
   bool _isResendButtonDisabled() {
@@ -700,6 +830,7 @@ class _VerificationDialogState extends State<_VerificationDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppL10n.of(context);
     return Dialog(
       backgroundColor: Colors.transparent,
       child: AppGlassCard(
@@ -714,15 +845,13 @@ class _VerificationDialogState extends State<_VerificationDialog> {
             ),
             const SizedBox(height: 16),
             Text(
-              _isEmailVerified ? 'Email Verified!' : 'Verify your email',
+              _isEmailVerified ? l10n.emailVerified : l10n.verifyEmail,
               style: titleFont(context).copyWith(fontSize: 20),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 12),
             Text(
-              _isEmailVerified
-                  ? 'Your email has been verified. You can now log in to your account.'
-                  : 'A message has been sent to your email.\nPlease check your inbox (including the spam folder).',
+              _isEmailVerified ? l10n.emailVerifiedMsg : l10n.verifyEmailMsg,
               style: bodyFont(context),
               textAlign: TextAlign.center,
             ),
@@ -741,7 +870,7 @@ class _VerificationDialogState extends State<_VerificationDialog> {
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        'Tip: Check Inbox / Promotions / Spam for the verification email.',
+                        l10n.checkSpamTip,
                         style: bodyFont(context).copyWith(
                           fontSize: 12,
                           color: AppPalette.warning,
@@ -754,11 +883,10 @@ class _VerificationDialogState extends State<_VerificationDialog> {
             ],
             const SizedBox(height: 24),
             if (!_isEmailVerified) ...[
-              // Refresh status button
               SizedBox(
                 width: double.infinity,
                 child: AppPillButton(
-                  label: _isRefreshing ? 'Checking...' : 'Refresh Status',
+                  label: _isRefreshing ? l10n.checking : l10n.refreshStatus,
                   fill: Colors.white.withOpacity(0.08),
                   stroke: AppPalette.strokeStrong,
                   loading: _isRefreshing,
@@ -767,12 +895,11 @@ class _VerificationDialogState extends State<_VerificationDialog> {
               ),
               const SizedBox(height: 12),
             ],
-            // Resend email button
             SizedBox(
               width: double.infinity,
               child: AppPillButton(
                 label: _getResendButtonLabel(),
-                fill: _isEmailVerified 
+                fill: _isEmailVerified
                     ? AppPalette.success.withOpacity(0.2)
                     : Colors.white.withOpacity(0.08),
                 stroke: AppPalette.strokeStrong,
@@ -781,15 +908,14 @@ class _VerificationDialogState extends State<_VerificationDialog> {
               ),
             ),
             const SizedBox(height: 12),
-            // Go to Login button
             SizedBox(
               width: double.infinity,
               child: AppPillButton(
-                label: 'Go to Login',
+                label: l10n.goToLogin,
                 fill: AppPalette.primary,
                 onPressed: () {
                   Navigator.of(context).pop();
-                  Navigator.of(context).pop(); // Go back to login screen
+                  Navigator.of(context).pop();
                 },
               ),
             ),

@@ -61,6 +61,13 @@ class AuditService {
 
     try {
       final user = FirebaseAuth.instance.currentUser;
+      // Guard: user signed out between log() and flush — discard post-signout events
+      if (user == null) {
+        if (kDebugMode) {
+          debugPrint('[AUDIT] skipped — user signed out, discarding ${queueToWrite.length} events');
+        }
+        return;
+      }
       final batch = _firestore.batch();
       final slice = queueToWrite.take(50).toList();
       for (final entry in slice) {
@@ -68,7 +75,7 @@ class AuditService {
         batch.set(doc, {
           'eventName': entry['eventName'],
           'metadata': entry['metadata'],
-          'uid': user?.uid,
+          'uid': user.uid,
           'createdAt': FieldValue.serverTimestamp(),
         });
       }
@@ -77,14 +84,14 @@ class AuditService {
         _pendingQueue.addAll(queueToWrite.skip(slice.length));
       }
     } catch (e) {
-      _pendingQueue.insertAll(0, queueToWrite);
-      if (kDebugMode) {
-        final lower = e.toString().toLowerCase();
-        if (lower.contains('permission-denied')) {
-          _auditBlockedUntil = DateTime.now().add(const Duration(minutes: 5));
-        } else {
-          debugPrint('[AUDIT] Flush failed, events re-queued: $e');
-        }
+      final lower = e.toString().toLowerCase();
+      if (lower.contains('permission-denied')) {
+        // Permanent auth error — discard queue, do not retry
+        _pendingQueue.clear();
+        if (kDebugMode) debugPrint('[AUDIT] permission-denied, queue cleared');
+      } else {
+        _pendingQueue.insertAll(0, queueToWrite);
+        if (kDebugMode) debugPrint('[AUDIT] Flush failed, events re-queued: $e');
       }
     }
   }

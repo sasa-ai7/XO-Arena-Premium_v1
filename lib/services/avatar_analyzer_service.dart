@@ -52,21 +52,28 @@ class AvatarAnalyzerService {
     double defaultVerticalOffsetRatio = 0.04,
   }) async {
     if (_memoryCache.containsKey(assetPath)) {
+      // Silent hot path — avoid log spam every time a FullAvatarDisplay rebuilds.
       return _memoryCache[assetPath]!;
     }
 
     _prefs ??= await SharedPreferences.getInstance();
-    
+
     final cacheKey = '$_cacheKeyPrefix$assetPath';
     final cachedStr = _prefs!.getString(cacheKey);
     if (cachedStr != null) {
       try {
         final dim = AvatarDimension.fromJson(json.decode(cachedStr));
         _memoryCache[assetPath] = dim;
+        if (kDebugMode) {
+          debugPrint('[AVATAR_ANALYSIS] cache hit asset=$assetPath');
+        }
         return dim;
       } catch (e) {
         // ignore and re-analyze
       }
+    }
+    if (kDebugMode) {
+      debugPrint('[AVATAR_ANALYSIS] lazy analyze asset=$assetPath');
     }
 
     // Default fallback values based on original manual ratios
@@ -190,9 +197,11 @@ class AvatarAnalyzerService {
 
       _memoryCache[assetPath] = dim;
       await _prefs!.setString(cacheKey, json.encode(dim.toJson()));
-      
+
       if (kDebugMode) {
-        print('Analyzed $assetPath: center=(${dim.centerDxRatio}, ${dim.centerDyRatio}), r=${dim.radiusRatio}');
+        debugPrint('[AVATAR_ANALYSIS] analyzed asset=$assetPath '
+            'center=(${dim.centerDxRatio.toStringAsFixed(3)}, ${dim.centerDyRatio.toStringAsFixed(3)}) '
+            'r=${dim.radiusRatio.toStringAsFixed(3)}');
       }
       return dim;
 

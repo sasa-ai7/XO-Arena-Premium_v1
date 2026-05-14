@@ -5,8 +5,9 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/keys.dart';
-import '../main.dart' show LocalStore;
+import 'local_store.dart';
 import '../models/user_data.dart';
+import 'app_mode_service.dart';
 
 /// Repository for user data sync between SharedPreferences (cache) and Firestore.
 class UserRepo {
@@ -43,9 +44,6 @@ class UserRepo {
         debugPrint('[AUTH] UserRepo: pullServerToLocal start');
       }
       await pullServerToLocal(uid);
-      if (kDebugMode) {
-        debugPrint('[AUTH] UserRepo: pullServerToLocal OK');
-      }
     } catch (e, st) {
       if (kDebugMode) {
         debugPrint('[AUTH] UserRepo error: $e');
@@ -84,11 +82,18 @@ class UserRepo {
   }
 
   /// Pull Firestore data to SharedPreferences (cache).
-  Future<void> pullServerToLocal(String uid) async {
-    final data = await loadUserFromServer(uid);
-    if (kDebugMode) {
-      debugPrint('[AUTH] UserRepo: pullServerToLocal loaded ${data != null ? "ok" : "null"}');
+  /// Returns true if data was actually fetched; false if the guard blocked it.
+  Future<bool> pullServerToLocal(String uid) async {
+    // Allow during a controlled reconnect token (canUseOnlineServicesForReconnect
+    // is true when AppModeService.isReconnecting — the token is active).
+    if (!AppModeService.canUseOnlineServicesForReconnect) {
+      if (kDebugMode) {
+        debugPrint('[FIRESTORE] skipped pullServerToLocal mode=${AppModeService.current}');
+      }
+      return false;
     }
+
+    final data = await loadUserFromServer(uid);
     final p = await _sp();
 
     if (data != null) {
@@ -114,6 +119,14 @@ class UserRepo {
       await p.setString(Keys.ownedOColors, data.cosmetics.ownedOColors.join(','));
       await p.setInt(Keys.equippedAvatar, data.cosmetics.equippedAvatar);
       await p.setString(Keys.ownedAvatars, data.cosmetics.ownedAvatars.join(','));
+      final serverXSkins = data.cosmetics.ownedXSkins;
+      await p.setString(Keys.ownedXSkins,
+          serverXSkins.isNotEmpty ? serverXSkins.join(',') : 'default');
+      final serverOSkins = data.cosmetics.ownedOSkins;
+      await p.setString(Keys.ownedOSkins,
+          serverOSkins.isNotEmpty ? serverOSkins.join(',') : 'default');
+      await p.setString(Keys.selectedXSkin, data.cosmetics.selectedXSkin);
+      await p.setString(Keys.selectedOSkin, data.cosmetics.selectedOSkin);
       await p.setInt(Keys.levelGameCurrentLevel, data.progress.levelGameCurrentLevel);
       await p.setBool(Keys.levelGameCompleted, data.progress.levelGameCompleted);
 
@@ -123,9 +136,13 @@ class UserRepo {
         await LocalStore.setProfilePhotoUrl(photoUrl);
       }
     }
+    if (kDebugMode) {
+      debugPrint('[AUTH] UserRepo: pullServerToLocal success uid=$uid');
+    }
+    return true;
   }
 
-  /// Push local SharedPreferences data to Firestore (migration).
+  /// Push local SharedPreferences data to Firestore (first-run migration).
   Future<void> pushLocalToServer(String uid) async {
     final p = await _sp();
     final now = DateTime.now();
@@ -150,8 +167,16 @@ class UserRepo {
       oColor: p.getString(Keys.oColor) ?? 'ff0a84ff',
       ownedXColors: _parseOwned(p.getString(Keys.ownedXColors) ?? '0'),
       ownedOColors: _parseOwned(p.getString(Keys.ownedOColors) ?? '0'),
-      equippedAvatar: p.getInt(Keys.equippedAvatar) ?? 1,
-      ownedAvatars: _parseOwned(p.getString(Keys.ownedAvatars) ?? '1'),
+      // New accounts get NO avatar by default. All avatars (including
+      // Avatar__1) are paid store items. equippedAvatar=0 means "no avatar
+      // selected" — the UI falls back to the Google photo or local
+      // character portrait.
+      equippedAvatar: p.getInt(Keys.equippedAvatar) ?? 0,
+      ownedAvatars: _parseOwned(p.getString(Keys.ownedAvatars) ?? ''),
+      ownedXSkins: _parseSkinList(p.getString(Keys.ownedXSkins) ?? 'default'),
+      ownedOSkins: _parseSkinList(p.getString(Keys.ownedOSkins) ?? 'default'),
+      selectedXSkin: p.getString(Keys.selectedXSkin) ?? 'default',
+      selectedOSkin: p.getString(Keys.selectedOSkin) ?? 'default',
     );
     final progress = UserProgress(
       levelGameCurrentLevel: p.getInt(Keys.levelGameCurrentLevel) ?? 1,
@@ -171,7 +196,7 @@ class UserRepo {
           SetOptions(merge: true),
         );
 
-    // Migrate topup history to transactions subcollection
+    // Migrate topup history to transactions subcollection.
     final historyStr = p.getString(Keys.topupHistory) ?? '';
     if (historyStr.isNotEmpty) {
       final entries = historyStr.split(',');
@@ -191,7 +216,10 @@ class UserRepo {
   }
 
   List<int> _parseOwned(String s) {
-    if (s.isEmpty) return [0];
+    // Empty string means the user owns nothing yet. Returning [0] before
+    // implied "owns avatar 0" which was sometimes interpreted as the
+    // default Avatar__1 fallback. Return a true empty list.
+    if (s.isEmpty) return <int>[];
     return s
         .split(',')
         .map(int.tryParse)
@@ -201,32 +229,48 @@ class UserRepo {
       ..sort();
   }
 
-  /// Sync a partial update to Firestore. Call after LocalStore write.
+  List<String> _parseSkinList(String s) {
+    if (s.isEmpty) return <String>['default'];
+    final ids = s.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toSet();
+    if (!ids.contains('default')) ids.add('default');
+    return ids.toList();
+  }
+
+  /// Sync a partial update to Firestore. Passes through all game data keys.
   Future<void> syncToFirestore(String uid, Map<String, dynamic> updates) async {
     if (updates.isEmpty) return;
 
-    final ref = _firestore.collection('users').doc(uid);
     final data = <String, dynamic>{};
+    if (updates.containsKey('Profile'))   data['Profile']   = updates['Profile'];
+    if (updates.containsKey('Wallet'))    data['Wallet']    = updates['Wallet'];
+    if (updates.containsKey('Stats'))     data['Stats']     = updates['Stats'];
+    if (updates.containsKey('Cosmetics')) data['Cosmetics'] = updates['Cosmetics'];
+    if (updates.containsKey('Inventory')) data['Inventory'] = updates['Inventory'];
+    if (updates.containsKey('Progress'))  data['Progress']  = updates['Progress'];
+    if (updates.containsKey('Settings'))  data['Settings']  = updates['Settings'];
+    if (updates.containsKey('Session'))   data['Session']   = updates['Session'];
 
-    if (updates.containsKey('Wallet')) {
-      data['Wallet'] = updates['Wallet'];
-    }
-    if (updates.containsKey('Stats')) {
-      data['Stats'] = updates['Stats'];
-    }
-    if (updates.containsKey('Cosmetics')) {
-      data['Cosmetics'] = updates['Cosmetics'];
-    }
-    if (updates.containsKey('Progress')) {
-      data['Progress'] = updates['Progress'];
-    }
-    if (updates.containsKey('Profile')) {
-      data['Profile'] = updates['Profile'];
-    }
+    if (data.isEmpty) return;
 
-    if (data.isNotEmpty) {
-      await ref.set(data, SetOptions(merge: true));
-    }
+    await _firestore.collection('users').doc(uid).set(
+      data,
+      SetOptions(merge: true),
+    );
+  }
+
+  /// Write a wallet ledger entry to users/{uid}/wallet_ledger/{transactionId}.
+  /// Uses set (not add) so the transactionId acts as an idempotency key server-side.
+  Future<void> writeWalletLedger(
+    String uid,
+    String transactionId,
+    Map<String, dynamic> entry,
+  ) async {
+    await _firestore
+        .collection('users')
+        .doc(uid)
+        .collection('wallet_ledger')
+        .doc(transactionId)
+        .set(entry, SetOptions(merge: false));
   }
 
   /// Add a transaction record.

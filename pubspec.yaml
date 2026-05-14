@@ -1,9 +1,8 @@
-name: xo_game
+name: xo_arena_neon_clash
 
 version: 1.0.25+41
-description: XO Kings - Tic Tac Toe
+description: XO Arena Neon Clash - Premium Tic Tac Toe Arena
 publish_to: "none"
-
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -11,27 +10,40 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  audioplayers: ^6.0.0
-  google_fonts: ^6.2.1
+  flutter_localizations:
+    sdk: flutter
+
+  # Core
   shared_preferences: ^2.2.3
-  intl: ^0.19.0
+  intl: ^0.20.2
   url_launcher: ^6.3.0
+  connectivity_plus: ^6.0.5
+  app_links: ^6.1.1
+  crypto: ^3.0.5
+  http: ^1.2.0
+  device_info_plus: ^11.1.0
+
+  # Firebase
   firebase_core: ^4.4.0
   firebase_auth: ^6.1.4
   cloud_firestore: ^6.0.2
-  connectivity_plus: ^6.0.5
-  app_links: ^6.1.1
-  in_app_purchase: ^3.1.11
-  in_app_purchase_android: ^0.4.0
-  crypto: ^3.0.5
   cloud_functions: ^6.0.7
-  http: ^1.2.0
+  firebase_storage: ^13.0.6
+  firebase_app_check: ^0.4.1+4
+
+  # Auth
   google_sign_in: ^6.2.1
   flutter_signin_button: ^2.0.0
-  device_info_plus: ^11.1.0
+
+  # Payments / IAP
+  in_app_purchase: ^3.1.11
+  in_app_purchase_android: ^0.4.0
+
+  # UI / Media
+  audioplayers: ^6.0.0
+  google_fonts: ^6.2.1
   image_picker: ^1.1.2
   cached_network_image: ^3.3.1
-  firebase_storage: ^13.0.6
   flutter_colorpicker: ^1.1.0
 
 dev_dependencies:
@@ -47,6 +59,9 @@ flutter:
     - assets/avatar/
     - assets/game/
     - assets/coin/
+    - assets/x/
+    - assets/o/
+    - assets/account/
 
   fonts:
     - family: Inter
@@ -73,7 +88,7 @@ flutter:
 
 flutter_icons:
   android: true
-  ios: true
+  ios: false
   image_path: "assets/xo.png"
   adaptive_icon_background: "#0A0A0A"
   adaptive_icon_foreground: "assets/xo.png"

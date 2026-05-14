@@ -14,7 +14,11 @@ import '../services/avatar_analyzer_service.dart';
 /// use [CompositeAvatar] directly.
 class FullAvatarDisplay extends StatelessWidget {
   final double size;
-  final GameAvatar avatar;
+
+  /// Equipped paid-avatar frame. **Pass null** when the user has no avatar
+  /// equipped (e.g. new accounts, unequipped state) — Avatar__1 must NOT
+  /// be used as a fallback because it is a paid store item.
+  final GameAvatar? avatar;
   final String fallbackName;
 
   const FullAvatarDisplay({
@@ -27,19 +31,23 @@ class FullAvatarDisplay extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<String?>(
-      valueListenable: _ProfilePhotoPathNotifier.instance,
-      builder: (_, photoPath, __) => ValueListenableBuilder<String?>(
-        valueListenable: _ProfilePhotoNotifier.instance,
-        builder: (_, photoUrl, __) => CompositeAvatar(
-          assetPath: avatar.assetPath,
-          photoUrl: photoUrl,
-          photoPath: photoPath,
-          size: size,
-          fallbackName: fallbackName,
-          profileSizeRatio: avatar.previewScale,
-          frameScale: avatar.frameScale,
-          verticalOffset: avatar.verticalOffset,
-          innerCircleScale: avatar.innerCircleScale,
+      valueListenable: _OfflineAvatarAssetNotifier.instance,
+      builder: (_, offlineAsset, __) => ValueListenableBuilder<String?>(
+        valueListenable: _ProfilePhotoPathNotifier.instance,
+        builder: (_, photoPath, __) => ValueListenableBuilder<String?>(
+          valueListenable: _ProfilePhotoNotifier.instance,
+          builder: (_, photoUrl, __) => CompositeAvatar(
+            assetPath: avatar?.assetPath,
+            offlineAssetPath: offlineAsset,
+            photoUrl: photoUrl,
+            photoPath: photoPath,
+            size: size,
+            fallbackName: fallbackName,
+            profileSizeRatio: avatar?.previewScale ?? 0.80,
+            frameScale: avatar?.frameScale ?? 1.0,
+            verticalOffset: avatar?.verticalOffset ?? 0.0,
+            innerCircleScale: avatar?.innerCircleScale ?? 1.0,
+          ),
         ),
       ),
     );
@@ -53,6 +61,10 @@ class FullAvatarDisplay extends StatelessWidget {
 
   static void bindLocalPathNotifier(ValueNotifier<String?> notifier) {
     _ProfilePhotoPathNotifier._bound = notifier;
+  }
+
+  static void bindOfflineAvatarAssetNotifier(ValueNotifier<String?> notifier) {
+    _OfflineAvatarAssetNotifier._bound = notifier;
   }
 }
 
@@ -69,6 +81,14 @@ class _ProfilePhotoPathNotifier {
       _bound ?? ValueNotifier<String?>(null);
 }
 
+/// Notifier for the offline character portrait asset path (man.png / feminine.png).
+/// Non-null while in offline mode; null when online.
+class _OfflineAvatarAssetNotifier {
+  static ValueNotifier<String?>? _bound;
+  static ValueNotifier<String?> get instance =>
+      _bound ?? ValueNotifier<String?>(null);
+}
+
 /// Low-level compositing widget - single source of truth for avatar rendering.
 ///
 /// Stack architecture (bottom -> top):
@@ -78,6 +98,7 @@ class _ProfilePhotoPathNotifier {
 ///      shifted by [verticalOffset] via Transform.translate.
 class CompositeAvatar extends StatefulWidget {
   final String? assetPath;
+  final String? offlineAssetPath;
   final String? photoUrl;
   final String? photoPath;
   final double size;
@@ -90,6 +111,7 @@ class CompositeAvatar extends StatefulWidget {
   const CompositeAvatar({
     super.key,
     this.assetPath,
+    this.offlineAssetPath,
     this.photoUrl,
     this.photoPath,
     required this.size,
@@ -157,6 +179,7 @@ class _CompositeAvatarState extends State<CompositeAvatar> {
             size: widget.size,
             dim: dim,
             assetPath: widget.assetPath,
+            offlineAssetPath: widget.offlineAssetPath,
             photoUrl: widget.photoUrl,
             photoPath: widget.photoPath,
             fallbackName: widget.fallbackName,
@@ -175,6 +198,7 @@ class _AvatarContent extends StatelessWidget {
   final double size;
   final AvatarDimension dim;
   final String? assetPath;
+  final String? offlineAssetPath;
   final String? photoUrl;
   final String? photoPath;
   final String fallbackName;
@@ -186,6 +210,7 @@ class _AvatarContent extends StatelessWidget {
     required this.size,
     required this.dim,
     this.assetPath,
+    this.offlineAssetPath,
     this.photoUrl,
     this.photoPath,
     required this.fallbackName,
@@ -244,6 +269,33 @@ class _AvatarContent extends StatelessWidget {
         color: Color(0xFFFFFFFF),
       ),
     );
+
+    // Priority 0: offline character portrait asset — overrides everything.
+    if (offlineAssetPath != null && offlineAssetPath!.isNotEmpty) {
+      return Positioned(
+        left: dx,
+        top: dy,
+        child: SizedBox(
+          width: circleSize,
+          height: circleSize,
+          child: Stack(
+            children: [
+              whiteCircle,
+              ClipOval(
+                child: Image.asset(
+                  offlineAssetPath!,
+                  width: circleSize,
+                  height: circleSize,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) =>
+                      _InitialCircle(name: fallbackName, size: circleSize),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
 
     if (photoPath != null && photoPath!.isNotEmpty) {
       final file = File(photoPath!);

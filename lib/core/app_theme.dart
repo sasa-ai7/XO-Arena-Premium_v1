@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 class AppPalette {
   static const Color bgTop = Color(0xFF040A14);
@@ -88,7 +87,11 @@ TextStyle safeInter({
   double? letterSpacing,
   double? height,
 }) {
-  return GoogleFonts.rajdhani(
+  // Uses the locally bundled Inter family (registered in pubspec.yaml).
+  // The previous implementation fetched Rajdhani over the network via
+  // google_fonts, which spammed errors and crashed offline mode.
+  return TextStyle(
+    fontFamily: 'Inter',
     fontSize: fontSize,
     fontWeight: fontWeight,
     color: color,
@@ -196,7 +199,10 @@ TextStyle homeInter({
   double? letterSpacing,
   double? height,
 }) {
-  return GoogleFonts.rajdhani(
+  // Locally bundled Inter (see pubspec.yaml). Was GoogleFonts.rajdhani
+  // before, which caused offline crashes and zone errors.
+  return TextStyle(
+    fontFamily: 'Inter',
     fontSize: fontSize,
     fontWeight: fontWeight,
     color: color,

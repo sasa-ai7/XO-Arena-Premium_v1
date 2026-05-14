@@ -7,9 +7,8 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/keys.dart';
-import '../main.dart' show LocalStore;
+import '../services/local_store.dart';
 import '../services/auth_service.dart';
-import '../services/user_repo.dart';
 
 /// Repository for granting coins from purchases with idempotency protection.
 class CoinsRepo {
