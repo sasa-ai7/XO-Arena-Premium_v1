@@ -112,4 +112,10 @@ class Keys {
   static const offlineSelectedXSkin  = 'offline_selected_x_skin';
   static const offlineOwnedOSkins    = 'offline_owned_o_skins';
   static const offlineSelectedOSkin  = 'offline_selected_o_skin';
+
+  /// Notifications: fired once on first Home entry, then never again.
+  static const hasPromptedNotification = 'has_prompted_notification';
+
+  /// Daily reminder toggle state (Settings → Daily Reminders).
+  static const notificationsEnabled = 'notifications_enabled';
 }

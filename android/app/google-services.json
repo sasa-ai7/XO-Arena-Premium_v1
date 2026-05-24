@@ -1,6 +1,7 @@
 {
   "project_info": {
     "project_number": "928308967161",
+    "firebase_url": "https://xo-arenaneon-clash-default-rtdb.europe-west1.firebasedatabase.app",
     "project_id": "xo-arenaneon-clash",
     "storage_bucket": "xo-arenaneon-clash.firebasestorage.app"
   },
@@ -14,11 +15,35 @@
       },
       "oauth_client": [
         {
+          "client_id": "928308967161-0hkr35dgpipdgt27bf3d89qn9aeb415s.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.xoarena.neonclash",
+            "certificate_hash": "ec243314462971d14cb02b86d04dd4ffec6f86b5"
+          }
+        },
+        {
+          "client_id": "928308967161-7v2mmj4oklf66na1u3rpnj15tjv05i6c.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.xoarena.neonclash",
+            "certificate_hash": "9566f91b9bc8f47d0ffaad2d865c69be42bd1cd4"
+          }
+        },
+        {
           "client_id": "928308967161-msuac43opbvsup331subbii5n69b0c7p.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
             "package_name": "com.xoarena.neonclash",
             "certificate_hash": "e822d8b7fe473a6d3818550503ec79e8a508fc13"
+          }
+        },
+        {
+          "client_id": "928308967161-qab63c5co7ad9bi9klpnq23ctr17k7jb.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.xoarena.neonclash",
+            "certificate_hash": "43edde381b3ae1fe5fc1a66a5a707febf74e8fa7"
           }
         },
         {

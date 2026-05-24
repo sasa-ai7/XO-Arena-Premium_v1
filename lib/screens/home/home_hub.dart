@@ -24,17 +24,19 @@ import '../../services/auth_service.dart';
 import '../../services/audit_service.dart';
 import '../../services/connectivity_service.dart';
 import '../../services/local_store.dart';
+import '../../services/notification_service.dart';
+import '../../services/referral/pending_referral_reward_service.dart';
 import '../../services/session_service.dart';
 import '../../services/sound_service.dart';
 import '../../services/user_repo.dart';
 import '../../screens/login_screen.dart';
 import '../../screens/games/setup_page.dart';
 import '../../screens/games/friend_setup_page.dart';
-import '../../screens/games/coin_match_setup_page.dart';
-import '../../screens/games/coin_match_game_page.dart';
 import '../../screens/games/level_game_setup_page.dart';
+import '../../screens/arena/arena_page.dart';
 import '../../screens/store/store_page.dart';
 import '../../screens/settings/settings_page.dart';
+import '../../core/app_config.dart';
 import '../../utils/navigation_utils.dart';
 import '../../widgets/app_ui.dart';
 import '../../widgets/avatar_store_tab.dart';
@@ -113,6 +115,8 @@ class _HomeHubState extends State<HomeHub>
       }
       _scheduleIapInit();
       if (mounted) _checkNewUserOnboarding();
+      if (mounted) _checkPendingReferralRewards();
+      if (mounted) _maybePromptNotificationPermission();
     });
 
     // Staggered entrance: smooth 600ms sequence
@@ -245,6 +249,172 @@ class _HomeHubState extends State<HomeHub>
     );
   }
 
+  // ── Referral pending-reward popup ─────────────────────────────────────
+  //
+  // When User B accepts User A's invite code, a doc is written at
+  // `pending_referral_rewards/{A_B}` with seen:false. Next time User A opens
+  // the app, surface a centered popup that congratulates them and shows the
+  // remaining invite capacity. Tapping OK flips seen:true so it doesn't
+  // re-appear.
+
+  Future<void> _checkPendingReferralRewards() async {
+    if (_isGuest) return;
+    if (!AppConfig.kEnableReferralRewards) return;
+    if (!AppModeService.canUseOnlineServices) return;
+    try {
+      final rewards =
+          await PendingReferralRewardService.instance.fetchUnseenForCurrentUser();
+      if (rewards.isEmpty || !mounted) return;
+      // Look up the user's current validReferralCount for the "X invites
+      // remaining" line. Best-effort.
+      int remaining = 0;
+      try {
+        final uid = FirebaseAuth.instance.currentUser?.uid;
+        if (uid != null) {
+          final snap =
+              await FirebaseFirestore.instance.collection('users').doc(uid).get();
+          final referral = (snap.data() ?? const {})['Referral'];
+          if (referral is Map) {
+            final count =
+                (referral['validReferralCount'] as num?)?.toInt() ?? 0;
+            remaining = (10 - count).clamp(0, 10).toInt();
+          }
+        }
+      } catch (_) {}
+      for (final reward in rewards) {
+        if (!mounted) return;
+        await _showReferralAcceptedDialog(reward, remaining);
+        await PendingReferralRewardService.instance.markSeen(reward);
+        if (remaining > 0) remaining = remaining - 1;
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[REFERRAL] pending check failed: $e');
+      }
+    }
+  }
+
+  /// First-launch notification permission prompt. Fires once per install
+  /// when the user first reaches Home. Gated by [Keys.hasPromptedNotification]
+  /// so it never re-prompts. If granted, also schedules the daily 9 PM
+  /// reminder and flips [Keys.notificationsEnabled] so the Settings toggle
+  /// reflects the live state.
+  Future<void> _maybePromptNotificationPermission() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool(Keys.hasPromptedNotification) ?? false) return;
+      await NotificationService().init();
+      final granted =
+          await NotificationService().requestNotificationsPermission();
+      await prefs.setBool(Keys.hasPromptedNotification, true);
+      if (granted) {
+        await prefs.setBool(Keys.notificationsEnabled, true);
+        await NotificationService().scheduleDailyReminder();
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[NOTIF] first-launch permission prompt failed: $e');
+      }
+    }
+  }
+
+  Future<void> _showReferralAcceptedDialog(
+      PendingReferralReward reward, int remaining) async {
+    if (!mounted) return;
+    final hasPhoto = reward.inviteePhotoURL.isNotEmpty;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppPalette.panel,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+          side: const BorderSide(color: AppPalette.strokeStrong, width: 1),
+        ),
+        contentPadding: const EdgeInsets.fromLTRB(20, 24, 20, 8),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: AppPalette.gold, width: 1.6),
+                color: AppPalette.panelDeep,
+                image: hasPhoto
+                    ? DecorationImage(
+                        image: NetworkImage(reward.inviteePhotoURL),
+                        fit: BoxFit.cover,
+                      )
+                    : const DecorationImage(
+                        image: AssetImage('assets/account/man.png'),
+                        fit: BoxFit.cover,
+                      ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Your friend accepted your invite!',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: AppPalette.text,
+                fontSize: 16,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              reward.inviteeName.isEmpty
+                  ? 'Someone used your referral code.'
+                  : '${reward.inviteeName} used your referral code.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: AppPalette.textSubtle,
+                fontSize: 13,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'You earned ${reward.coins} coins.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: AppPalette.gold,
+                fontSize: 16,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            if (remaining > 0) ...[
+              const SizedBox(height: 6),
+              Text(
+                '$remaining invites remaining',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: AppPalette.textMuted,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          Center(
+            child: TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text(
+                'Claim',
+                style: TextStyle(
+                  color: AppPalette.primary,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _onGameReturned() async {
     if (!_isGuest) return;
     final prefs = await SharedPreferences.getInstance();
@@ -340,8 +510,8 @@ class _HomeHubState extends State<HomeHub>
   /// Handle internet loss — switch to offline profile cleanly, OR pause an active online match.
   ///
   /// If the user is currently in an online match, we must NOT switch to offline mode.
-  /// Instead, we set [AppMode.connectionLostDuringOnlineMatch] which causes the
-  /// [CoinMatchGamePage] to show its ConnectionLostMatchOverlay and block all results.
+  /// Instead, we set [AppMode.connectionLostDuringOnlineMatch] so the active
+  /// online match page shows its ConnectionLostMatchOverlay and blocks results.
   ///
   /// If the user is on home / store / settings, we switch to offline profile normally.
   /// Online account data (Google photo, Firestore coins) is never used offline.
@@ -355,7 +525,7 @@ class _HomeHubState extends State<HomeHub>
         debugPrint('[NETWORK] connection lost during online match');
         debugPrint('[MATCH] online match paused due to connection loss');
       }
-      // Block all Firestore writes/reads. CoinMatchGamePage shows the overlay.
+      // Block all Firestore writes/reads while the overlay is up.
       AppModeService.setMode(AppMode.connectionLostDuringOnlineMatch);
       return;
     }
@@ -1019,10 +1189,13 @@ class _HomeHubState extends State<HomeHub>
       return;
     }
 
-    if (_currentTab != 2) {
+    // Arena tab removed from bottom nav — Online Friends opens ArenaPage
+    // via the Home card instead. Settings is always at index 2.
+    const settingsIndex = 2;
+    if (_currentTab != settingsIndex) {
       setState(() {
-        _currentTab = 2;
-        _visitedTabs.add(2);
+        _currentTab = settingsIndex;
+        _visitedTabs.add(settingsIndex);
       });
     }
   }
@@ -1502,14 +1675,14 @@ class _HomeHubState extends State<HomeHub>
         },
       ),
       HomeModeConfig(
-        title: l10n.coinBattleTitle,
-        subtitle: l10n.coinBattleSubtitle,
-        badge: l10n.badgeRisk,
-        assetPath: 'assets/game/coin-ai.gif',
+        title: l10n.onlineFriendsTitle,
+        subtitle: l10n.onlineFriendsSubtitle,
+        badge: l10n.badgeMultiplayer,
+        assetPath: 'assets/game/online-money.gif',
         accent: AppPalette.homeGold,
         accentSecondary: AppPalette.homePink,
         onTap: () async {
-          await Navigator.of(context).push(_fadeRoute(const CoinMatchSetupPage()));
+          await Navigator.of(context).push(_fadeRoute(const ArenaPage()));
           _refresh();
           unawaited(_onGameReturned());
         },

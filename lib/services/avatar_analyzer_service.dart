@@ -33,9 +33,35 @@ class AvatarDimension {
       );
 }
 
+/// Hand-tuned dimension overrides for animated GIF avatars whose transparent
+/// hole is hard to detect automatically (antialiased edges, multi-frame codecs).
+///
+/// Values re-tuned 2026-05 so the inner profile photo sits centered and large
+/// enough to read clearly inside each GIF's transparent hole — matching the
+/// visual weight of the static PNG avatars. If you re-tune these, also bump
+/// [_cacheKeyPrefix] so devices on the old cache pick up the new values.
+///
+/// 2026-05-21: Avatar__7 (Inferno) and Avatar__8 (Celestial) were removed
+/// from the catalog — only Avatar__10 (Apex) remains as an animated avatar.
+/// See [kRemovedAvatarIds] in lib/models/game_avatar.dart for the fallback
+/// contract.
+const Map<String, AvatarDimension> _gifDimensionOverrides = {
+  'assets/avatar/Avatar__10.gif': AvatarDimension(
+    centerDxRatio: 0.50,
+    centerDyRatio: 0.50,
+    radiusRatio: 0.34,
+  ),
+};
+
 class AvatarAnalyzerService {
   static final Map<String, AvatarDimension> _memoryCache = {};
-  static const String _cacheKeyPrefix = 'avatar_dim_v2_';
+  // Bump suffix when [_gifDimensionOverrides] or fallback math changes so
+  // existing installs ignore their stale cached dimensions and pick up the
+  // new values on next launch.
+  // v5 (2026-05-21): Avatar__7 and Avatar__8 removed from the catalog;
+  // their stale SharedPreferences entries are now harmless but a prefix
+  // bump keeps the cache schema versioned.
+  static const String _cacheKeyPrefix = 'avatar_dim_v5_';
   static SharedPreferences? _prefs;
   static Future<void>? _initFuture;
 
@@ -52,8 +78,16 @@ class AvatarAnalyzerService {
     double defaultVerticalOffsetRatio = 0.04,
   }) async {
     if (_memoryCache.containsKey(assetPath)) {
-      // Silent hot path — avoid log spam every time a FullAvatarDisplay rebuilds.
       return _memoryCache[assetPath]!;
+    }
+
+    final override = _gifDimensionOverrides[assetPath];
+    if (override != null) {
+      _memoryCache[assetPath] = override;
+      if (kDebugMode) {
+        debugPrint('[AVATAR_ANALYSIS] using hardcoded override for $assetPath');
+      }
+      return override;
     }
 
     _prefs ??= await SharedPreferences.getInstance();
@@ -213,6 +247,13 @@ class AvatarAnalyzerService {
 
   static Future<void> preAnalyzeAll() async {
     await init();
+    // Clear stale cached dimensions for overridden GIF avatars so the
+    // hand-tuned values take precedence on next analysis pass.
+    for (final path in _gifDimensionOverrides.keys) {
+      final key = '$_cacheKeyPrefix$path';
+      _prefs?.remove(key);
+      _memoryCache.remove(path);
+    }
     for (final avatar in kGameAvatars) {
       await analyze(avatar.assetPath);
       await Future<void>.delayed(const Duration(milliseconds: 8));

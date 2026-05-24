@@ -241,6 +241,7 @@ class _AvatarContent extends StatelessWidget {
                     child: Image.asset(
                       assetPath!,
                       fit: BoxFit.contain,
+                      gaplessPlayback: true,
                       errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                     ),
                   ),

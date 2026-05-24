@@ -4,22 +4,45 @@ import 'board_utils.dart';
 
 final _rng = Random();
 
+/// Public 0..1 strength rating per difficulty tier.
+///
+/// - easy   ≈ 0.35: human-like, can miss blocks and own wins
+/// - medium ≈ 0.50: blocks obvious wins, still makes occasional mistakes
+/// - hard   ≈ 0.75: strong tactical play, small but real mistake chance
+///
+/// Used by [pickStrategicMove] to gate win-take, blocking, and best-move
+/// probabilities so even "Hard" remains beatable. (2026-05-24 — level
+/// rebalance.)
+double strengthForDifficulty(AIDifficulty difficulty) {
+  switch (difficulty) {
+    case AIDifficulty.easy:
+      return 0.35;
+    case AIDifficulty.medium:
+      return 0.50;
+    case AIDifficulty.hard:
+      return 0.75;
+  }
+}
+
 int aiThinkingDelayForDifficulty(
   AIDifficulty difficulty, {
   required int boardSize,
 }) {
+  // Tight delays — the level game should feel snappy. We keep a small
+  // natural pause so the move doesn't appear before the player's tap
+  // animation finishes, but no more than that. (2026-05-24.)
   final boardDelay = boardSize >= 5
-      ? 24
+      ? 12
       : boardSize == 4
-          ? 12
+          ? 6
           : 0;
   switch (difficulty) {
     case AIDifficulty.easy:
-      return 95 + boardDelay;
+      return 55 + boardDelay;
     case AIDifficulty.medium:
-      return 140 + boardDelay;
+      return 85 + boardDelay;
     case AIDifficulty.hard:
-      return 175 + boardDelay;
+      return 110 + boardDelay;
   }
 }
 
@@ -416,8 +439,20 @@ double scoreStrategicMove({
   if (preferredCenterIndices(boardSize).contains(moveIndex)) {
     score += boardSize.isOdd ? 22 : 18;
   }
+  // Corners: on 3×3 we deliberately ease the AI's bias for easy/medium so
+  // the player can still open with the classic corner trap at positions
+  // 1, 7, 9 (indices 0, 6, 8). Hard keeps the full corner score because
+  // it relies on minimax on 3×3 anyway. (2026-05-24 — level rebalance.)
   if (cornerIndices(boardSize).contains(moveIndex)) {
-    score += difficulty == AIDifficulty.easy ? 8 : 10;
+    if (boardSize == 3) {
+      score += switch (difficulty) {
+        AIDifficulty.easy => 3,
+        AIDifficulty.medium => 5,
+        AIDifficulty.hard => 10,
+      };
+    } else {
+      score += difficulty == AIDifficulty.easy ? 8 : 10;
+    }
   }
   if (perimeterEdgeIndices(boardSize).contains(moveIndex)) {
     score += boardSize >= 4 ? 4 : 5;
@@ -715,7 +750,6 @@ int pickStrategicMove({
     player: aiPlayer,
     winLength: winLength,
   );
-  if (win != -1) return win;
 
   final block = findWinningMoveForBoard(
     board: board,
@@ -724,34 +758,26 @@ int pickStrategicMove({
     winLength: winLength,
   );
 
-  switch (difficulty) {
-    case AIDifficulty.easy:
-      if (block != -1 && _rng.nextDouble() < 0.28) {
-        return block;
-      }
-      if (_rng.nextDouble() < (boardSize >= 4 ? 0.62 : 0.52)) {
-        return empties[_rng.nextInt(empties.length)];
-      }
-      break;
-    case AIDifficulty.medium:
-      if (block != -1) {
-        return block;
-      }
-      break;
-    case AIDifficulty.hard:
-      if (block != -1) {
-        return block;
-      }
-      // Perfect play for 3×3: minimax guarantees AI never loses.
-      if (boardSize == 3 && winLength == 3) {
-        return pickPerfectMove3x3(
-          board: board,
-          winningLines: winningLines,
-          aiPlayer: aiPlayer,
-          humanPlayer: humanPlayer,
-        );
-      }
-      break;
+  // Probability-gated tactical reflexes. Strength values drive each gate so
+  // the AI feels human, not robotic: easy can fumble its own wins and miss
+  // blocks; medium plays the percentages; hard is sharp but not perfect.
+  // (2026-05-24 — level rebalance.)
+  final takeWinChance = switch (difficulty) {
+    AIDifficulty.easy => 0.85,
+    AIDifficulty.medium => 0.96,
+    AIDifficulty.hard => 1.00,
+  };
+  if (win != -1 && _rng.nextDouble() < takeWinChance) {
+    return win;
+  }
+
+  final blockChance = switch (difficulty) {
+    AIDifficulty.easy => 0.50,
+    AIDifficulty.medium => 0.82,
+    AIDifficulty.hard => 0.95,
+  };
+  if (block != -1 && _rng.nextDouble() < blockChance) {
+    return block;
   }
 
   final scoredMoves = candidateMoves
@@ -777,35 +803,61 @@ int pickStrategicMove({
     return empties[_rng.nextInt(empties.length)];
   }
 
-  switch (difficulty) {
-    case AIDifficulty.easy:
-      final choices = scoredMoves.take(min(5, scoredMoves.length)).toList();
-      return choices[_rng.nextInt(choices.length)].key;
-    case AIDifficulty.medium:
-      final choices = scoredMoves.take(min(4, scoredMoves.length)).toList();
-      if (_rng.nextDouble() < 0.22) {
-        return choices[_rng.nextInt(choices.length)].key;
-      }
-      return choices.first.key;
-    case AIDifficulty.hard:
-      final finalists = scoredMoves.take(min(4, scoredMoves.length)).map((entry) {
-        final lookaheadScore = evaluateHardLookahead(
-          board: board,
-          winningLines: winningLines,
-          moveIndex: entry.key,
-          aiPlayer: aiPlayer,
-          humanPlayer: humanPlayer,
-          boardSize: boardSize,
-          winLength: winLength,
-        );
-        return MapEntry(entry.key, entry.value + lookaheadScore);
-      }).toList()
-        ..sort((left, right) => right.value.compareTo(left.value));
+  // Best-move chance roughly tracks strengthForDifficulty: at strength S the
+  // AI picks the heuristic best ~S of the time, otherwise it samples from
+  // the top‑N list so the player can still exploit common openings.
+  final bestMoveChance = switch (difficulty) {
+    AIDifficulty.easy => 0.35,
+    AIDifficulty.medium => 0.55,
+    AIDifficulty.hard => 0.78,
+  };
+  final fallbackSpread = switch (difficulty) {
+    AIDifficulty.easy => min(5, scoredMoves.length),
+    AIDifficulty.medium => min(4, scoredMoves.length),
+    AIDifficulty.hard => min(3, scoredMoves.length),
+  };
 
-      final bestScore = finalists.first.value;
-      final stableChoices = finalists
-          .where((entry) => entry.value >= bestScore - 3)
-          .toList();
-      return stableChoices.first.key;
+  if (_rng.nextDouble() >= bestMoveChance) {
+    final pool = scoredMoves.take(fallbackSpread).toList();
+    return pool[_rng.nextInt(pool.length)].key;
   }
+
+  if (difficulty == AIDifficulty.hard) {
+    // Hard 3×3: minimax gives perfect play. We invoke it only sometimes so
+    // the AI is dangerous without being unbeatable — classic corner traps
+    // (positions 1, 7, 9) must keep working for the player.
+    if (boardSize == 3 &&
+        winLength == 3 &&
+        _rng.nextDouble() < 0.55) {
+      return pickPerfectMove3x3(
+        board: board,
+        winningLines: winningLines,
+        aiPlayer: aiPlayer,
+        humanPlayer: humanPlayer,
+      );
+    }
+
+    final finalists =
+        scoredMoves.take(min(4, scoredMoves.length)).map((entry) {
+      final lookaheadScore = evaluateHardLookahead(
+        board: board,
+        winningLines: winningLines,
+        moveIndex: entry.key,
+        aiPlayer: aiPlayer,
+        humanPlayer: humanPlayer,
+        boardSize: boardSize,
+        winLength: winLength,
+      );
+      return MapEntry(entry.key, entry.value + lookaheadScore);
+    }).toList()
+      ..sort((left, right) => right.value.compareTo(left.value));
+
+    final bestScore = finalists.first.value;
+    final stableChoices = finalists
+        .where((entry) => entry.value >= bestScore - 3)
+        .toList();
+    return stableChoices.first.key;
+  }
+
+  return scoredMoves.first.key;
 }

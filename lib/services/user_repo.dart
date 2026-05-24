@@ -4,10 +4,12 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/app_config.dart';
 import '../core/keys.dart';
 import 'local_store.dart';
 import '../models/user_data.dart';
 import 'app_mode_service.dart';
+import 'referral/referral_service.dart';
 
 /// Repository for user data sync between SharedPreferences (cache) and Firestore.
 class UserRepo {
@@ -44,6 +46,20 @@ class UserRepo {
         debugPrint('[AUTH] UserRepo: pullServerToLocal start');
       }
       await pullServerToLocal(uid);
+
+      // Referral: ensure a 9-digit invite code exists. Cross-user reward
+      // writes are mediated by the `redeemReferralCode` Cloud Function, so
+      // there is no client-side drain step. Best-effort — failures do not
+      // block auth.
+      if (AppConfig.kEnableReferralRewards) {
+        try {
+          await ReferralService.instance.ensureCode(uid);
+        } catch (e) {
+          if (kDebugMode) {
+            debugPrint('[REFERRAL] initAfterAuth referral step failed: $e');
+          }
+        }
+      }
     } catch (e, st) {
       if (kDebugMode) {
         debugPrint('[AUTH] UserRepo error: $e');

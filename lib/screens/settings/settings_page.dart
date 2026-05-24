@@ -1,13 +1,9 @@
-import 'dart:io';
 import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show PlatformException;
-import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -15,17 +11,15 @@ import '../../core/app_config.dart';
 import '../../core/app_l10n.dart';
 import '../../core/language_switch_dialog.dart';
 import '../../core/app_theme.dart';
-import '../../core/coin_format.dart';
 import '../../core/keys.dart';
-import '../../core/responsive_metrics.dart';
 import '../../models/game_avatar.dart';
 import '../../services/auth_service.dart';
 import '../../services/connectivity_service.dart';
 import '../../services/local_store.dart';
+import '../../services/notification_service.dart';
 import '../../services/sound_service.dart';
 import '../../services/user_repo.dart';
 import '../../widgets/app_ui.dart';
-import '../../widgets/full_avatar_display.dart';
 import '../account_details_screen.dart';
 import '../store/store_page.dart';
 import '../../utils/navigation_utils.dart';
@@ -52,11 +46,8 @@ class _SettingsPageState extends State<SettingsPage>
   bool _editingName = false;
   bool _dangerExpanded = false;
   bool _isMusicEnabled = true;
-  // Re-entrancy guard for the avatar image picker. Tapping the change-avatar
-  // button while a picker is already open used to crash with
-  // PlatformException(already_active). We refuse the second call and log it.
-  bool _isPickingImage = false;
   double _musicVolume = 0.7;
+  bool _notificationsEnabled = false;
 
   // Username editing
   final TextEditingController _usernameController = TextEditingController();
@@ -125,8 +116,29 @@ class _SettingsPageState extends State<SettingsPage>
       _equippedAvatar = LocalStore.equippedAvatarNotifier.value;
       _isMusicEnabled = SoundService().isMusicEnabled;
       _musicVolume = SoundService().musicVolume;
+      _notificationsEnabled = p.getBool(Keys.notificationsEnabled) ?? false;
     });
     _usernameController.text = _username;
+  }
+
+  Future<void> _setDailyRemindersEnabled(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (enabled) {
+      final scheduled = await NotificationService().scheduleDailyReminder();
+      if (!scheduled) {
+        if (!mounted) return;
+        showTopNotification(
+            context, AppL10n.of(context).notificationPermissionDenied,
+            color: AppPalette.danger);
+        return;
+      }
+      await prefs.setBool(Keys.notificationsEnabled, true);
+      if (mounted) setState(() => _notificationsEnabled = true);
+    } else {
+      await NotificationService().cancelDaily();
+      await prefs.setBool(Keys.notificationsEnabled, false);
+      if (mounted) setState(() => _notificationsEnabled = false);
+    }
   }
 
   Future<void> _saveName() async {
@@ -170,203 +182,10 @@ class _SettingsPageState extends State<SettingsPage>
     showTopNotification(context, AppL10n.of(context).nameUpdated, color: AppPalette.success);
   }
 
-  Future<void> _showAvatarOptions() async {
-    // Re-entrancy guard: image_picker's native plugin throws
-    // PlatformException(already_active, ...) if pickImage is called while
-    // another picker is still open. Bail out cleanly on the second tap.
-    if (_isPickingImage) {
-      if (kDebugMode) debugPrint('[IMAGE_PICKER] already picking ignored');
-      return;
-    }
-    _isPickingImage = true;
-    if (kDebugMode) debugPrint('[IMAGE_PICKER] started');
-
-    final picker = ImagePicker();
-    final XFile? picked;
-    try {
-      picked = await picker.pickImage(
-        source: ImageSource.gallery,
-        maxWidth: 512,
-        maxHeight: 512,
-        imageQuality: 85,
-      );
-    } on PlatformException catch (e) {
-      // already_active can still race in if the native plugin has a stale
-      // session; surface it gracefully instead of crashing.
-      if (kDebugMode) {
-        debugPrint('[IMAGE_PICKER] PlatformException: ${e.code} ${e.message}');
-      }
-      _isPickingImage = false;
-      if (!mounted) return;
-      final l10n = AppL10n.of(context);
-      final msg = e.code == 'already_active'
-          ? l10n.imagePickerAlreadyOpen
-          : (e.code == 'photo_access_denied' || e.code == 'camera_access_denied')
-              ? l10n.permissionDenied
-              : l10n.uploadFailed;
-      showTopNotification(context, msg, color: AppPalette.warning);
-      return;
-    } catch (e) {
-      if (kDebugMode) debugPrint('[IMAGE_PICKER] error: $e');
-      _isPickingImage = false;
-      return;
-    }
-
-    if (picked == null) {
-      if (kDebugMode) debugPrint('[IMAGE_PICKER] cancelled');
-      _isPickingImage = false;
-      return;
-    }
-    if (!mounted) {
-      _isPickingImage = false;
-      return;
-    }
-    // Release the guard before any further async work — the picker itself
-    // is closed at this point, so re-opening from a retry button is fine.
-    _isPickingImage = false;
-    if (kDebugMode) debugPrint('[IMAGE_PICKER] finished');
-
-    final file = File(picked.path);
-    
-    // Validate file size (max 5MB)
-    final fileSizeInBytes = await file.length();
-    const maxSizeInBytes = 5 * 1024 * 1024; // 5MB
-    if (fileSizeInBytes > maxSizeInBytes) {
-      if (!mounted) return;
-      showTopNotification(context, AppL10n.of(context).imageTooLarge,
-        color: AppPalette.danger);
-      return;
-    }
-    
-    // Save locally first
-    await LocalStore.setProfilePhotoPath(file.path);
-
-    // Check connectivity before uploading
-    final isOnline = await ConnectivityService().online;
-    if (!isOnline) {
-      if (!mounted) return;
-      showTopNotification(context, AppL10n.of(context).noInternetPhotoSaved,
-        color: AppPalette.warning);
-      if (mounted) setState(() => _equippedAvatar = LocalStore.equippedAvatarNotifier.value);
-      return;
-    }
-
-    // Show loading dialog
-    if (!mounted) return;
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) => Dialog(
-        backgroundColor: Colors.transparent,
-        child: AppGlassCard(
-          padding: const EdgeInsets.all(24),
-          child: SizedBox(
-            height: 80,
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const CircularProgressIndicator(
-                  valueColor: AlwaysStoppedAnimation<Color>(AppPalette.primary),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  AppL10n.of(context).uploadingPhoto,
-                  style: TextStyle(
-                    fontFamily: 'Inter',
-                    fontSize: 14,
-                    color: Colors.white.withOpacity(0.9),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-
-    // Upload to Firebase Storage if user is signed in
-    final user = FirebaseAuth.instance.currentUser;
-    try {
-      if (user != null) {
-        // Stable path — overwrite on each update so old files don't accumulate.
-        final ref = FirebaseStorage.instance
-            .ref()
-            .child('profile_photos/${user.uid}/profile.jpg');
-        final metadata = SettableMetadata(
-          contentType: 'image/jpeg',
-          customMetadata: {
-            'uid': user.uid,
-            'updatedAt': DateTime.now().toIso8601String(),
-          },
-        );
-        final task = await ref.putFile(file, metadata);
-        final url = await task.ref.getDownloadURL();
-        await LocalStore.setProfilePhotoUrl(url);
-        await user.updatePhotoURL(url);
-        await UserRepo().syncToFirestore(user.uid, {
-          'Profile': {'photoURL': url}
-        });
-      }
-
-      // Close loading dialog
-      if (mounted) Navigator.pop(context);
-
-      // Show success
-      if (mounted) {
-        showTopNotification(context, AppL10n.of(context).photoUpdated,
-          color: AppPalette.success);
-        setState(() => _equippedAvatar = LocalStore.equippedAvatarNotifier.value);
-      }
-    } on FirebaseException catch (e) {
-      if (kDebugMode) debugPrint('[PHOTO] Firebase Storage error: code=${e.code} msg=${e.message}');
-
-      // Close loading dialog
-      if (mounted) Navigator.pop(context);
-
-      String userMsg;
-      final l10n = AppL10n.of(context);
-      if (e.code == 'storage/unauthorized' || e.code == 'unauthorized') {
-        userMsg = l10n.uploadNotAllowed;
-      } else if (e.code == 'storage/object-not-found' || e.code == 'object-not-found') {
-        userMsg = 'Storage bucket not found. Please enable Firebase Storage in the console.';
-      } else {
-        userMsg = l10n.uploadFailedCode(e.code);
-      }
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(userMsg),
-          backgroundColor: AppPalette.danger,
-          duration: const Duration(seconds: 5),
-          action: SnackBarAction(
-            label: 'Retry',
-            textColor: Colors.white,
-            onPressed: () => _showAvatarOptions(),
-          ),
-        ),
-      );
-    } catch (e) {
-      if (kDebugMode) debugPrint('[PHOTO] Upload failed: $e');
-
-      // Close loading dialog
-      if (mounted) Navigator.pop(context);
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(AppL10n.of(context).uploadFailed),
-          backgroundColor: AppPalette.danger,
-          duration: const Duration(seconds: 4),
-          action: SnackBarAction(
-            label: 'Retry',
-            textColor: Colors.white,
-            onPressed: () => _showAvatarOptions(),
-          ),
-        ),
-      );
-    }
-  }
+  // Custom profile-photo upload was removed 2026-05-20 — the app now uses
+  // the Google Sign-In photoURL exclusively (Firebase Storage was never
+  // enabled for this project). See AuthService._syncToLocalStore for the
+  // read side, and the helper text under the profile header in build().
 
   void _showChangePasswordDialog() {
     final l10n = AppL10n.of(context);
@@ -607,7 +426,7 @@ class _SettingsPageState extends State<SettingsPage>
                     Expanded(
                       child: AppPillButton(
                         label: "STAY",
-                        fill: Colors.white.withOpacity(0.08),
+                        fill: Colors.white.withValues(alpha: 0.08),
                         stroke: AppPalette.strokeStrong,
                         onPressed: () => Navigator.of(ctx).pop(),
                       ),
@@ -669,7 +488,7 @@ class _SettingsPageState extends State<SettingsPage>
         debugPrint('[URL] launch exception: $e');
       }
       if (!mounted) return;
-      showTopNotification(context, "Could not open link.",
+      showTopNotification(context, AppL10n.of(context).couldNotOpenLink,
           color: AppPalette.danger);
     }
   }
@@ -686,7 +505,7 @@ class _SettingsPageState extends State<SettingsPage>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text("Contact Support / Refunds",
+                Text(AppL10n.of(ctx).contactSupportTitle,
                     style: titleFont(ctx).copyWith(fontSize: 18)),
                 const SizedBox(height: 10),
                 Text(
@@ -700,8 +519,8 @@ class _SettingsPageState extends State<SettingsPage>
                 ),
                 const SizedBox(height: 14),
                 AppPillButton(
-                  label: "Send email",
-                  fill: Colors.white.withOpacity(0.08),
+                  label: AppL10n.of(ctx).sendEmailBtn,
+                  fill: Colors.white.withValues(alpha: 0.08),
                   stroke: AppPalette.strokeStrong,
                   onPressed: () async {
                     Navigator.pop(ctx);
@@ -725,7 +544,7 @@ class _SettingsPageState extends State<SettingsPage>
                 const SizedBox(height: 8),
                 AppPillButton(
                   label: AppL10n.of(context).ok,
-                  fill: Colors.white.withOpacity(0.06),
+                  fill: Colors.white.withValues(alpha: 0.06),
                   stroke: AppPalette.strokeStrong,
                   onPressed: () => Navigator.pop(ctx),
                 ),
@@ -871,7 +690,7 @@ class _SettingsPageState extends State<SettingsPage>
                                   BorderSide(color: AppPalette.primary),
                             ),
                             filled: true,
-                            fillColor: Colors.white.withOpacity(0.05),
+                            fillColor: Colors.white.withValues(alpha: 0.05),
                           ),
                           style: bodyFont(ctx2),
                           maxLines: 3,
@@ -883,7 +702,7 @@ class _SettingsPageState extends State<SettingsPage>
                       const SizedBox(height: 16),
                       AppPillButton(
                         label: dl10n.confirmDelete,
-                        fill: AppPalette.danger.withOpacity(0.90),
+                        fill: AppPalette.danger.withValues(alpha: 0.90),
                         onPressed: () {
                           // Validation
                           if (_deleteReason == null) {
@@ -912,7 +731,7 @@ class _SettingsPageState extends State<SettingsPage>
                       const SizedBox(height: 8),
                       AppPillButton(
                         label: dl10n.cancelBtn,
-                        fill: Colors.white.withOpacity(0.08),
+                        fill: Colors.white.withValues(alpha: 0.08),
                         stroke: AppPalette.strokeStrong,
                         onPressed: () => Navigator.pop(ctx),
                       ),
@@ -1066,7 +885,7 @@ class _SettingsPageState extends State<SettingsPage>
                       Expanded(
                         child: AppPillButton(
                           label: AppL10n.of(context).cancelBtn,
-                          fill: Colors.white.withOpacity(0.08),
+                          fill: Colors.white.withValues(alpha: 0.08),
                           stroke: AppPalette.strokeStrong,
                           onPressed: () => Navigator.pop(ctx, null),
                           icon: Icons.close,
@@ -1076,7 +895,7 @@ class _SettingsPageState extends State<SettingsPage>
                       Expanded(
                         child: AppPillButton(
                           label: "CONFIRM",
-                          fill: AppPalette.danger.withOpacity(0.9),
+                          fill: AppPalette.danger.withValues(alpha: 0.9),
                           onPressed: () {
                             Navigator.pop(ctx, passwordController.text);
                           },
@@ -1362,7 +1181,7 @@ class _SettingsPageState extends State<SettingsPage>
                     Expanded(
                       child: AppPillButton(
                         label: AppL10n.of(context).cancelBtn,
-                        fill: Colors.white.withOpacity(0.08),
+                        fill: Colors.white.withValues(alpha: 0.08),
                         stroke: AppPalette.strokeStrong,
                         onPressed: () => Navigator.pop(ctx, false),
                         icon: Icons.close,
@@ -1372,7 +1191,7 @@ class _SettingsPageState extends State<SettingsPage>
                     Expanded(
                       child: AppPillButton(
                         label: isGoogle ? "SIGN IN" : "CONFIRM",
-                        fill: AppPalette.danger.withOpacity(0.9),
+                        fill: AppPalette.danger.withValues(alpha: 0.9),
                         onPressed: () => Navigator.pop(ctx, true),
                         icon: isGoogle ? Icons.account_circle : Icons.check,
                       ),
@@ -1410,7 +1229,7 @@ class _SettingsPageState extends State<SettingsPage>
       if (!mounted) return;
       if (Navigator.of(context).canPop()) Navigator.of(context).pop();
       showTopNotification(
-          context, "Re-authentication failed. Please try again.",
+          context, AppL10n.of(context).reauthFailedRetry,
           color: AppPalette.danger);
     }
   }
@@ -1427,7 +1246,7 @@ class _SettingsPageState extends State<SettingsPage>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text("PRIVACY & TERMS",
+                Text(AppL10n.of(ctx).privacyAndTerms,
                     style: titleFont(ctx).copyWith(fontSize: 18)),
                 const SizedBox(height: 10),
                 Text(
@@ -1446,7 +1265,7 @@ class _SettingsPageState extends State<SettingsPage>
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   leading: const Icon(Icons.privacy_tip_outlined,
                       color: AppPalette.primary),
-                  title: Text("Privacy Policy",
+                  title: Text(AppL10n.of(ctx).privacyPolicyRow,
                       style:
                           bodyFont(ctx).copyWith(fontWeight: FontWeight.w700)),
                   trailing: const Icon(Icons.open_in_new,
@@ -1462,7 +1281,7 @@ class _SettingsPageState extends State<SettingsPage>
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   leading: const Icon(Icons.description_outlined,
                       color: AppPalette.primary),
-                  title: Text("Terms",
+                  title: Text(AppL10n.of(ctx).termsOfService,
                       style:
                           bodyFont(ctx).copyWith(fontWeight: FontWeight.w700)),
                   trailing: const Icon(Icons.open_in_new,
@@ -1478,7 +1297,7 @@ class _SettingsPageState extends State<SettingsPage>
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   leading: const Icon(Icons.delete_forever_outlined,
                       color: AppPalette.danger),
-                  title: Text("Delete Account Info",
+                  title: Text(AppL10n.of(ctx).accountDeletionInfo,
                       style:
                           bodyFont(ctx).copyWith(fontWeight: FontWeight.w700)),
                   trailing: const Icon(Icons.open_in_new,
@@ -1491,7 +1310,7 @@ class _SettingsPageState extends State<SettingsPage>
                 const SizedBox(height: 14),
                 AppPillButton(
                   label: AppL10n.of(context).ok,
-                  fill: Colors.white.withOpacity(0.08),
+                  fill: Colors.white.withValues(alpha: 0.08),
                   stroke: AppPalette.strokeStrong,
                   onPressed: () => Navigator.pop(ctx),
                 ),
@@ -1547,7 +1366,8 @@ class _SettingsPageState extends State<SettingsPage>
                     avatar: avatar,
                     editingName: _editingName,
                     usernameController: _usernameController,
-                    onCameraTap: _showAvatarOptions,
+                    // No camera tap: profile photo is synced from Google
+                    // Sign-In (2026-05). The helper text below explains it.
                     onEditName: () => setState(() => _editingName = true),
                     onCancelEdit: () {
                       _usernameController.text = _username;
@@ -1558,7 +1378,23 @@ class _SettingsPageState extends State<SettingsPage>
                 },
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
+            // Muted helper line so users understand why no edit button is
+            // visible — the photo is taken from their Google account.
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Text(
+                AppL10n.of(context).profilePhotoFromGoogle,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: AppPalette.textMuted.withValues(alpha: 0.85),
+                  fontSize: 11,
+                  height: 1.4,
+                  letterSpacing: 0.2,
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
             AppGlassCard(
               padding: const EdgeInsets.all(16),
               borderColor: AppPalette.strokeSoft,
@@ -1652,6 +1488,79 @@ class _SettingsPageState extends State<SettingsPage>
               ),
             ),
             const SizedBox(height: 12),
+            // ── NOTIFICATIONS SECTION ────────────────────────────────────
+            AppGlassCard(
+              padding: const EdgeInsets.all(16),
+              borderColor: AppPalette.strokeSoft,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.notifications_active_rounded,
+                          color: AppPalette.primary, size: 16),
+                      const SizedBox(width: 8),
+                      Text(AppL10n.of(context).dailyRemindersLabel,
+                          style: safeOrbitron(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: AppPalette.goldHighlight,
+                              letterSpacing: 2)),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      const Icon(Icons.notifications_outlined,
+                          color: Colors.white, size: 20),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                          AppL10n.of(context)
+                                              .dailyRemindersLabel,
+                                          style: safeOrbitron(
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.w700,
+                                              color: Colors.white)),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                          AppL10n.of(context)
+                                              .dailyRemindersSubtitle,
+                                          style: safeInter(
+                                              fontSize: 11,
+                                              color: Colors.white
+                                                  .withValues(alpha: 0.6),
+                                              fontWeight: FontWeight.w500)),
+                                    ],
+                                  ),
+                                ),
+                                Switch(
+                                  value: _notificationsEnabled,
+                                  activeColor: AppPalette.primary,
+                                  onChanged: (val) =>
+                                      _setDailyRemindersEnabled(val),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
             // ── LANGUAGE SECTION ─────────────────────────────────────────
             ValueListenableBuilder<Locale>(
               valueListenable: LocalStore.localeNotifier,
@@ -1673,12 +1582,12 @@ class _SettingsPageState extends State<SettingsPage>
                         trailing: Container(
                           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                           decoration: BoxDecoration(
-                            color: AppPalette.primary.withOpacity(0.12),
+                            color: AppPalette.primary.withValues(alpha: 0.12),
                             borderRadius: BorderRadius.circular(999),
-                            border: Border.all(color: AppPalette.primary.withOpacity(0.35)),
+                            border: Border.all(color: AppPalette.primary.withValues(alpha: 0.35)),
                           ),
                           child: Text(
-                            isAr ? 'EN' : 'عر',
+                            isAr ? 'en' : 'ع',
                             style: safeOrbitron(
                               fontSize: 12,
                               fontWeight: FontWeight.w700,
@@ -1735,6 +1644,13 @@ class _SettingsPageState extends State<SettingsPage>
                     label: AppL10n.of(context).contactSupportRow,
                     subtitle: AppL10n.of(context).contactSupportSubtitle,
                     onTap: _contactSupport,
+                  ),
+                  const SizedBox(height: 8),
+                  SettingTile(
+                    icon: Icons.link_rounded,
+                    label: AppL10n.of(context).contactLinkLabel,
+                    subtitle: AppL10n.of(context).contactLinkSubtitle,
+                    onTap: () => _openUrl(AppConfig.contactUrl),
                   ),
                   const SizedBox(height: 8),
                   SettingTile(

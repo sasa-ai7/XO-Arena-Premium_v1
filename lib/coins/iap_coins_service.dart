@@ -15,6 +15,10 @@ import '../services/audit_service.dart';
 import 'coins_catalog.dart';
 import 'coins_repo.dart';
 import 'coins_verification_service.dart';
+import 'premium_avatar_service.dart';
+
+/// Type of product a [PurchaseGrantResult] describes.
+enum PurchaseProductType { coins, avatar, unknown }
 
 /// Result of a purchase grant operation.
 class PurchaseGrantResult {
@@ -24,6 +28,8 @@ class PurchaseGrantResult {
   final String? message;
   final String? error;
   final String productId;
+  final PurchaseProductType productType;
+  final String? avatarId;
 
   PurchaseGrantResult({
     required this.ok,
@@ -32,6 +38,8 @@ class PurchaseGrantResult {
     this.message,
     this.error,
     required this.productId,
+    this.productType = PurchaseProductType.coins,
+    this.avatarId,
   });
 }
 
@@ -253,13 +261,18 @@ class IapCoinsService {
         productDetails: product,
       );
 
-      // autoConsume: false - We will consume after server verification
-      // This prevents the purchase from being automatically consumed by Google Play
-      // and allows us to verify on the server first, then consume via API
-      final success = await _iap.buyConsumable(
-        purchaseParam: purchaseParam,
-        autoConsume: false,
-      ).timeout(
+      final isAvatar = CoinsCatalog.isAvatarProduct(product.id);
+
+      // Coins: autoConsume:false → we consume after server verification.
+      // Avatar (non-consumable): use buyNonConsumable so Google Play remembers
+      // ownership and allows restore. NEVER autoConsume the avatar.
+      final success = await (isAvatar
+              ? _iap.buyNonConsumable(purchaseParam: purchaseParam)
+              : _iap.buyConsumable(
+                  purchaseParam: purchaseParam,
+                  autoConsume: false,
+                ))
+          .timeout(
         const Duration(seconds: 10),
         onTimeout: () {
           if (kDebugMode) {
@@ -270,7 +283,8 @@ class IapCoinsService {
       );
 
       if (kDebugMode) {
-        debugPrint('[IAP] Buy initiated: $success for ${product.id}${isRetry ? ' (retry)' : ''}');
+        debugPrint('[IAP] Buy initiated: $success for ${product.id}'
+            '${isRetry ? ' (retry)' : ''} avatar=$isAvatar');
       }
 
       return success;
@@ -291,23 +305,53 @@ class IapCoinsService {
           errorMessage.contains('already_owned') ||
           errorMessage.contains('item_already_owned');
       
-      // Handle "already owned" error: clean up and retry once
+      // For the non-consumable avatar, "already owned" means the user
+      // already paid for the entitlement. We should NOT cleanup/consume
+      // — instead surface a friendly notification and refresh ownership
+      // from past purchases. The verification stream handles the grant.
+      if (alreadyOwned && CoinsCatalog.isAvatarProduct(product.id)) {
+        if (kDebugMode) {
+          debugPrint('[IAP] Avatar already owned for ${product.id} — restoring entitlement');
+        }
+        try {
+          await _iap.restorePurchases();
+        } catch (_) {}
+        final avatarCatalogId =
+            CoinsCatalog.avatarIdForProductId(product.id) ??
+                CoinsCatalog.premiumAvatarId;
+        final entitlement = CoinsCatalog.entitlementForProductId(product.id) ??
+            CoinsCatalog.premiumAvatarEntitlement;
+        _coinGrantController.add(PurchaseGrantResult(
+          ok: true,
+          coinsAdded: 0,
+          message: 'Premium avatar already owned — restored.',
+          productId: product.id,
+          productType: PurchaseProductType.avatar,
+          avatarId: entitlement,
+        ));
+        // Mark locally so the shop hides the card immediately.
+        unawaited(
+            PremiumAvatarService.instance.markOwnedLocally(avatarCatalogId));
+        return true;
+      }
+
+      // Handle "already owned" error for consumables: clean up and retry once
       if (alreadyOwned && !isRetry) {
         if (kDebugMode) {
           debugPrint('[IAP] ITEM_ALREADY_OWNED detected for ${product.id} - cleaning up and retrying once');
         }
-        
+
         try {
           // SAFE cleanup: verify/grant then consume
           await consumePendingPurchases();
-          
+
           // Small delay to allow cleanup to complete
           await Future.delayed(const Duration(milliseconds: 300));
-          
+
           if (kDebugMode) {
             debugPrint('[IAP] Retrying purchase for ${product.id} after cleanup');
           }
-          
+
           // Retry purchase ONCE (with retry flag to prevent infinite loops)
           return await buy(product, isRetry: true);
         } catch (retryError) {
@@ -476,6 +520,7 @@ class IapCoinsService {
   /// Google removes the product from user's account, allowing infinite recurring purchases.
   Future<void> _processPurchased(PurchaseDetails purchase) async {
     final productId = purchase.productID;
+    final isAvatar = CoinsCatalog.isAvatarProduct(productId);
     try {
     final purchaseToken = purchase.verificationData.serverVerificationData;
     final orderId = purchase.purchaseID;
@@ -495,8 +540,8 @@ class IapCoinsService {
     // 1) Idempotency check (local)
     final alreadyProcessed = await CoinsRepo.isPurchaseProcessed(productId, purchaseToken);
     if (alreadyProcessed) {
-      // If already processed: just Consume + Complete to allow repurchase
-      if (Platform.isAndroid) {
+      // Coins: consume so the user can re-purchase. Avatar: acknowledge only.
+      if (Platform.isAndroid && !isAvatar) {
         try {
           final androidAddition = _iap.getPlatformAddition<InAppPurchaseAndroidPlatformAddition>();
           await androidAddition.consumePurchase(purchase);
@@ -515,18 +560,34 @@ class IapCoinsService {
           }
         }
       }
+      // Re-assert local entitlement so the shop card hides on cold start.
+      if (isAvatar) {
+        await PremiumAvatarService.instance
+            .markOwnedLocally(CoinsCatalog.avatarIdForProductId(productId));
+      }
       _coinGrantController.add(PurchaseGrantResult(
         ok: true,
         coinsAdded: 0,
-        message: 'Purchase already processed',
+        message: isAvatar
+            ? 'Premium avatar already owned.'
+            : 'Purchase already processed',
         productId: productId,
+        productType: isAvatar
+            ? PurchaseProductType.avatar
+            : PurchaseProductType.coins,
+        avatarId: isAvatar
+            ? (CoinsCatalog.entitlementForProductId(productId) ??
+                CoinsCatalog.premiumAvatarEntitlement)
+            : null,
       ));
       return;
     }
 
-    // 1. Immediate Consumption (CRITICAL)
-    // We consume immediately so Google removes the product from the user's account and allows them to recharge
-    if (Platform.isAndroid) {
+    // 1. Immediate Consumption (CRITICAL — coin packs only)
+    // We consume immediately so Google removes the product from the user's
+    // account and allows them to recharge. NEVER call this for the avatar
+    // entitlement — that would void the user's ownership.
+    if (Platform.isAndroid && !isAvatar) {
       try {
         final androidAddition = _iap.getPlatformAddition<InAppPurchaseAndroidPlatformAddition>();
         await androidAddition.consumePurchase(purchase);
@@ -566,6 +627,9 @@ class IapCoinsService {
     final newBalance = (result['balanceAfter'] ?? result['newBalance']) as int?;
     final message = result['message'] as String?;
     final error = result['error'] as String?;
+    final productType = result['productType'] as String?;
+    final avatarId = result['avatarId'] as String?;
+    final serverIsAvatar = isAvatar || productType == 'avatar';
     // Detect ALREADY_PROCESSED from both old format (ok:true, alreadyProcessed:true)
     // and new format (ok:false, error:'ALREADY_PROCESSED')
     final serverAlreadyProcessed = result['alreadyProcessed'] == true
@@ -579,6 +643,10 @@ class IapCoinsService {
       }
       // Mark as processed locally to stay in sync
       await CoinsRepo.markPurchaseProcessed(productId, purchaseToken);
+      if (serverIsAvatar) {
+        await PremiumAvatarService.instance
+            .markOwnedLocally(CoinsCatalog.avatarIdForProductId(productId));
+      }
 
       // Complete purchase to allow future purchases
       if (purchase.pendingCompletePurchase) {
@@ -595,8 +663,18 @@ class IapCoinsService {
         ok: true,
         coinsAdded: 0,
         newBalance: newBalance,
-        message: message ?? 'Purchase already processed',
+        message: message ?? (serverIsAvatar
+            ? 'Premium avatar already owned.'
+            : 'Purchase already processed'),
         productId: productId,
+        productType: serverIsAvatar
+            ? PurchaseProductType.avatar
+            : PurchaseProductType.coins,
+        avatarId: serverIsAvatar
+            ? (avatarId ??
+                CoinsCatalog.entitlementForProductId(productId) ??
+                CoinsCatalog.premiumAvatarEntitlement)
+            : null,
       ));
       return;
     }
@@ -606,34 +684,49 @@ class IapCoinsService {
       LocalStore.setCoins(newBalance);
     }
 
-    // FALLBACK: If server verification fails, grant coins locally to ensure the user gets what they paid for.
+    // FALLBACK: If server verification fails, grant locally so the user
+    // gets what they paid for. Avatar is a flat entitlement; coins fall
+    // back to the catalog amount.
     if (!ok) {
       if (kDebugMode) {
         debugPrint('[IAP] Server verification failed. Falling back to local grant.');
       }
 
-      final preBalance = LocalStore.coinsNotifier.value;
-      final int amountToGrant = CoinsCatalog.coinsForProductId(productId);
-
-      final localSuccess = await CoinsRepo.grantCoins(
-        amount: amountToGrant,
-        productId: productId,
-        purchaseToken: purchaseToken,
-        orderId: orderId,
-        previousBalance: preBalance,
-      );
-
-      if (localSuccess) {
-        ok = true; // Override to true since we granted it locally
-        coinsAdded = amountToGrant; // Set the added coins
+      if (serverIsAvatar) {
+        await PremiumAvatarService.instance
+            .markOwnedLocally(CoinsCatalog.avatarIdForProductId(productId));
+        await CoinsRepo.markPurchaseProcessed(productId, purchaseToken);
+        ok = true;
+        coinsAdded = 0;
       } else {
-        _coinGrantController.add(PurchaseGrantResult(
-          ok: false,
-          error: 'Failed to grant coins locally (might be already processed).',
+        final preBalance = LocalStore.coinsNotifier.value;
+        final int amountToGrant = CoinsCatalog.coinsForProductId(productId);
+
+        final localSuccess = await CoinsRepo.grantCoins(
+          amount: amountToGrant,
           productId: productId,
-        ));
-        return;
+          purchaseToken: purchaseToken,
+          orderId: orderId,
+          previousBalance: preBalance,
+        );
+
+        if (localSuccess) {
+          ok = true;
+          coinsAdded = amountToGrant;
+        } else {
+          _coinGrantController.add(PurchaseGrantResult(
+            ok: false,
+            error: 'Failed to grant coins locally (might be already processed).',
+            productId: productId,
+          ));
+          return;
+        }
       }
+    } else if (serverIsAvatar) {
+      // Server granted the avatar — sync local ownership immediately so the
+      // shop card hides without waiting for the Firestore listener.
+      await PremiumAvatarService.instance
+          .markOwnedLocally(CoinsCatalog.avatarIdForProductId(productId));
     }
 
     // 3) completePurchase
@@ -655,22 +748,42 @@ class IapCoinsService {
     }
 
     // 4b) Audit log
-    if (ok && coinsAdded != null && coinsAdded > 0) {
-      AuditService.log('purchase_completed', {
-        'productId': productId,
-        'coinsAdded': coinsAdded,
-        'orderId': orderId ?? 'unknown',
-      });
+    if (ok) {
+      if (serverIsAvatar) {
+        AuditService.log('avatar_purchase_completed', {
+          'productId': productId,
+          'avatarId': avatarId ??
+              CoinsCatalog.entitlementForProductId(productId) ??
+              CoinsCatalog.premiumAvatarEntitlement,
+          'orderId': orderId ?? 'unknown',
+        });
+      } else if (coinsAdded != null && coinsAdded > 0) {
+        AuditService.log('purchase_completed', {
+          'productId': productId,
+          'coinsAdded': coinsAdded,
+          'orderId': orderId ?? 'unknown',
+        });
+      }
     }
 
-    // 5) Record purchase history with pre-balance
-    if (ok && coinsAdded != null && coinsAdded > 0) {
+    // 5) Record purchase history
+    if (ok && serverIsAvatar) {
+      await LocalStore.addTopupHistory(
+        usd: 0.0,
+        coins: 0,
+        type: 'avatar',
+        source: 'avatar_purchase',
+        description: 'Premium Arena Avatar',
+        transactionId: orderId ?? purchaseToken,
+      );
+    } else if (ok && coinsAdded != null && coinsAdded > 0) {
       final serverPreviousBalance = (result['balanceBefore'] ?? result['previousBalance']) as int?;
       final serverBalanceAfter = (result['balanceAfter'] ?? result['newBalance']) as int?;
       await LocalStore.addTopupHistory(
         usd: 0.0,
         coins: coinsAdded,
         type: 'recharge',
+        source: 'iap_purchase',
         description: 'Coin Purchase',
         transactionId: orderId,
         balanceBefore: serverPreviousBalance,
@@ -686,6 +799,14 @@ class IapCoinsService {
       message: message,
       error: ok ? null : (error ?? 'Verification failed'),
       productId: productId,
+      productType: serverIsAvatar
+          ? PurchaseProductType.avatar
+          : PurchaseProductType.coins,
+      avatarId: serverIsAvatar
+          ? (avatarId ??
+              CoinsCatalog.entitlementForProductId(productId) ??
+              CoinsCatalog.premiumAvatarEntitlement)
+          : null,
     ));
     } finally {
       // Always remove dedup key when done

@@ -25,10 +25,10 @@ class NotificationService {
     // Get device timezone and set it as local location
     // This ensures notifications schedule at 9:00 AM in device's local time (not UTC)
     try {
-      final tzInfo = await FlutterTimezone.getLocalTimezone();
-      tz.setLocalLocation(tz.getLocation(tzInfo.identifier));
+      final tzName = await FlutterTimezone.getLocalTimezone();
+      tz.setLocalLocation(tz.getLocation(tzName));
       if (kDebugMode) {
-        debugPrint('[NOTIF] Timezone initialized: ${tzInfo.identifier}');
+        debugPrint('[NOTIF] Timezone initialized: $tzName');
       }
     } catch (e) {
       if (kDebugMode) {
@@ -131,18 +131,18 @@ class NotificationService {
     // Cancel any existing daily notification first
     await _notifications.cancel(0);
 
-    // Schedule for 9:00 AM local time, repeating daily
+    // Schedule for 9:00 PM local time, repeating daily.
     final now = tz.TZDateTime.now(tz.local);
     var scheduledDate = tz.TZDateTime(
       tz.local,
       now.year,
       now.month,
       now.day,
-      9,
+      21,
       0,
     );
 
-    // If 9 AM has already passed today, schedule for tomorrow
+    // If 9 PM has already passed today, schedule for tomorrow.
     if (scheduledDate.isBefore(now)) {
       scheduledDate = scheduledDate.add(const Duration(days: 1));
     }

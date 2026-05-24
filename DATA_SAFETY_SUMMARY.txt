@@ -58,7 +58,7 @@ Deletion Process:
 - Firebase Authentication account deleted
 - Deletion feedback (reason) may be collected before deletion (stored in deletion_feedback/{uid})
 Deletion Timing: Immediate upon user confirmation
-Account Deletion URL: https://sites.google.com/view/xo-game-policies/account-deletion
+Account Deletion URL: https://sites.google.com/view/xo-arena-policies/account-deletion
 
 ===========================================
 SECURITY
@@ -72,6 +72,8 @@ Access Control: Users can only access their own data (enforced by Firestore secu
 POLICY URLs
 ===========================================
 
-Privacy Policy: https://sites.google.com/view/xo-game-policies/privacy-policy
-Terms of Service: https://sites.google.com/view/xo-game-policies/terms
-Account Deletion: https://sites.google.com/view/xo-game-policies/account-deletion
+Privacy Policy: https://sites.google.com/view/xo-arena-policies/privacy-policy
+Terms of Service: https://sites.google.com/view/xo-arena-policies/terms-of-service
+Account Deletion: https://sites.google.com/view/xo-arena-policies/account-deletion
+Contact: https://sites.google.com/view/xo-arena-policies/contact
+Policies Home: https://sites.google.com/view/xo-arena-policies/home

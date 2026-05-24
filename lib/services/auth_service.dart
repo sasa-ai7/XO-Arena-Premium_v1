@@ -254,9 +254,12 @@ class AuthService {
     String email,
     String password,
     String username, {
-    required int age,
+    required bool isAdultConfirmed,
   }) async {
     lastSyncFailed = false;
+    if (!isAdultConfirmed) {
+      throw Exception('You must be at least 13 years old to use this app.');
+    }
     try {
       final userCredential = await _auth.createUserWithEmailAndPassword(
         email: email.trim(),
@@ -278,7 +281,9 @@ class AuthService {
         await _saveUserToFirestore(
           user,
           name: username.trim(),
-          age: age,
+          ageVerified: true,
+          minimumAgePassed: true,
+          ageVerifiedAtServer: true,
           provider: 'email',
         );
         await _syncToLocalStore(user, name: username.trim());
@@ -531,7 +536,7 @@ class AuthService {
     required String name,
     required String password,
     required String characterType,
-    required DateTime birthDate,
+    required bool isAdultConfirmed,
     bool acceptedTerms = false,
   }) async {
     var user = _auth.currentUser;
@@ -543,24 +548,14 @@ class AuthService {
       throw Exception('User email not found. Please try signing in again.');
     }
 
-    // Exact age calculation — never use inDays ~/ 365.
-    final now = DateTime.now();
-    int age = now.year - birthDate.year;
-    if (now.month < birthDate.month ||
-        (now.month == birthDate.month && now.day < birthDate.day)) {
-      age--;
-    }
-    if (age < 13) {
+    if (!isAdultConfirmed) {
       throw Exception('You must be at least 13 years old to use this app.');
     }
-
-    final birthDateStr =
-        '${birthDate.year.toString().padLeft(4, '0')}-${birthDate.month.toString().padLeft(2, '0')}-${birthDate.day.toString().padLeft(2, '0')}';
 
     try {
       if (kDebugMode) {
         debugPrint('[AUTH] Completing Google profile for ${user.email}');
-        debugPrint('[ONBOARDING] birthDate=$birthDateStr age=$age');
+        debugPrint('[ONBOARDING] ageVerified=true');
         debugPrint('[ONBOARDING] Creating Google profile...');
       }
 
@@ -610,11 +605,10 @@ class AuthService {
       await _saveUserToFirestore(
         user!,
         name: name.trim(),
-        age: age,
         characterType: characterType,
-        birthDate: birthDate,
         ageVerified: true,
         minimumAgePassed: true,
+        ageVerifiedAtServer: true,
         provider: 'google',
       );
 
@@ -943,8 +937,9 @@ class AuthService {
   }
 
   Future<void> _saveUserToFirestore(User user,
-      {String? name, int? age, String? characterType, DateTime? birthDate,
+      {String? name, String? characterType,
        bool? ageVerified, bool? minimumAgePassed,
+       bool ageVerifiedAtServer = false,
        required String provider, String? photoUrl}) async {
     try {
       final displayName =
@@ -961,7 +956,6 @@ class AuthService {
         final userData = UserData(
           profile: UserProfile(
             name: displayName,
-            age: age,
             email: user.email ?? '',
             provider: provider,
             createdAt: now,
@@ -970,7 +964,6 @@ class AuthService {
             welcomeGiftClaimed: true,
             photoURL: resolvedPhotoUrl,
             characterType: characterType,
-            birthDate: birthDate,
             ageVerified: ageVerified,
             minimumAgePassed: minimumAgePassed,
           ),
@@ -992,11 +985,17 @@ class AuthService {
         );
         await ref.set(userData.toFirestore(), SetOptions(merge: true));
         // Overwrite updatedAt and createdAt with server timestamp for accuracy.
+        // Stamp ageVerifiedAt server-side on first create when the caller
+        // confirmed the age gate (ageVerifiedAtServer = true).
+        final timestampOverrides = <String, dynamic>{
+          'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        };
+        if (ageVerifiedAtServer) {
+          timestampOverrides['ageVerifiedAt'] = FieldValue.serverTimestamp();
+        }
         await ref.set({
-          'Profile': {
-            'createdAt': FieldValue.serverTimestamp(),
-            'updatedAt': FieldValue.serverTimestamp(),
-          },
+          'Profile': timestampOverrides,
         }, SetOptions(merge: true));
       } else {
         // Existing user: update Profile and check for pending welcome gift.
@@ -1011,7 +1010,6 @@ class AuthService {
 
         final mergedProfile = UserProfile(
           name: name ?? existingProfile.name,
-          age: age ?? existingProfile.age,
           email: user.email ?? existingProfile.email,
           provider: provider,
           createdAt: existingProfile.createdAt,
@@ -1020,9 +1018,9 @@ class AuthService {
           welcomeGiftClaimed: shouldGrantWelcomeGift ? true : existingProfile.welcomeGiftClaimed,
           photoURL: resolvedPhotoUrl ?? existingProfile.photoURL,
           characterType: characterType ?? existingProfile.characterType,
-          birthDate: birthDate ?? existingProfile.birthDate,
           ageVerified: ageVerified ?? existingProfile.ageVerified,
           minimumAgePassed: minimumAgePassed ?? existingProfile.minimumAgePassed,
+          ageVerifiedAt: existingProfile.ageVerifiedAt,
         );
 
         final updates = <String, dynamic>{
@@ -1038,10 +1036,19 @@ class AuthService {
         }
 
         await ref.set(updates, SetOptions(merge: true));
-        // Overwrite updatedAt with server timestamp for accuracy.
-        await ref.set({
-          'Profile': {'updatedAt': FieldValue.serverTimestamp()},
-        }, SetOptions(merge: true));
+        // Overwrite updatedAt with server timestamp for accuracy, and
+        // passively scrub legacy DOB / age fields from any pre-release
+        // profile on next sign-in. Stamp ageVerifiedAt server-side when the
+        // caller confirmed the age gate on this login.
+        final postUpdates = <String, dynamic>{
+          'Profile.updatedAt': FieldValue.serverTimestamp(),
+          'Profile.birthDate': FieldValue.delete(),
+          'Profile.age': FieldValue.delete(),
+        };
+        if (ageVerifiedAtServer) {
+          postUpdates['Profile.ageVerifiedAt'] = FieldValue.serverTimestamp();
+        }
+        await ref.update(postUpdates);
       }
     } on FirebaseException catch (e) {
       _logException(e, null);
@@ -1068,6 +1075,62 @@ class AuthService {
     if (resolvedPhoto != null && resolvedPhoto.isNotEmpty) {
       await p.setString(Keys.profilePhotoUrl, resolvedPhoto);
       LocalStore.profilePhotoUrlNotifier.value = resolvedPhoto;
+      // Mirror the photo URL into Firestore so other devices / the arena
+      // room writes pick up the latest Google photo. Only write when the
+      // stored value differs from the Auth value — saves a Firestore write
+      // on every sign-in once the photo is stable. Best-effort: failures
+      // here must not block sign-in.
+      unawaited(_syncProfileToFirestoreIfChanged(
+        uid: user.uid,
+        photoUrl: resolvedPhoto,
+        displayName: user.displayName,
+        email: user.email,
+      ));
+    }
+  }
+
+  /// Conditional Firestore write of `users/{uid}.Profile.photoURL` so the
+  /// Google photo stays current across devices. Reads first, writes only on
+  /// change. Used since 2026-05 when the custom photo upload feature was
+  /// removed in favor of Google Sign-In photoURL as the single source of
+  /// truth (Firebase Storage was never enabled for this project).
+  Future<void> _syncProfileToFirestoreIfChanged({
+    required String uid,
+    required String photoUrl,
+    String? displayName,
+    String? email,
+  }) async {
+    try {
+      final docRef = FirebaseFirestore.instance.collection('users').doc(uid);
+      final snap = await docRef.get();
+      final data = snap.data() ?? const <String, dynamic>{};
+      final profile = data['Profile'];
+      final storedPhoto = (profile is Map) ? profile['photoURL'] as String? : null;
+      final storedName = (profile is Map) ? profile['displayName'] as String? : null;
+      final photoChanged = storedPhoto != photoUrl;
+      final nameChanged = displayName != null &&
+          displayName.isNotEmpty &&
+          storedName != displayName;
+      if (!photoChanged && !nameChanged) return;
+      final patch = <String, dynamic>{
+        'photoURL': photoUrl,
+        if (displayName != null && displayName.isNotEmpty)
+          'displayName': displayName,
+        if (email != null && email.isNotEmpty) 'email': email,
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+      await docRef.set(
+        <String, dynamic>{'Profile': patch},
+        SetOptions(merge: true),
+      );
+      if (kDebugMode) {
+        debugPrint(
+            '[AUTH] Profile.photoURL synced to Firestore changed=photo:$photoChanged name:$nameChanged');
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[AUTH] Profile sync to Firestore failed (non-fatal): $e');
+      }
     }
   }
 

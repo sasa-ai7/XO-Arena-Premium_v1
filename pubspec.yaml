@@ -1,6 +1,6 @@
 name: xo_arena_neon_clash
 
-version: 1.0.25+41
+version: 1.0.26+44
 description: XO Arena Neon Clash - Premium Tic Tac Toe Arena
 publish_to: "none"
 
@@ -28,8 +28,13 @@ dependencies:
   firebase_auth: ^6.1.4
   cloud_firestore: ^6.0.2
   cloud_functions: ^6.0.7
-  firebase_storage: ^13.0.6
+  # firebase_storage intentionally removed 2026-05-20 — custom profile photo
+  # upload was dropped in favor of Google Sign-In photoURL only.
   firebase_app_check: ^0.4.1+4
+  firebase_database: ^12.0.1
+
+  # Sharing
+  share_plus: ^10.1.2
 
   # Auth
   google_sign_in: ^6.2.1
@@ -42,9 +47,15 @@ dependencies:
   # UI / Media
   audioplayers: ^6.0.0
   google_fonts: ^6.2.1
-  image_picker: ^1.1.2
+  # image_picker intentionally removed 2026-05-20 — only consumer was the
+  # custom profile photo upload feature, which now uses Google photoURL only.
   cached_network_image: ^3.3.1
   flutter_colorpicker: ^1.1.0
+
+  # Local notifications (daily 9 PM reminder)
+  flutter_local_notifications: ^17.2.3
+  flutter_timezone: ^3.0.1
+  timezone: ^0.9.4
 
 dev_dependencies:
   flutter_launcher_icons: ^0.13.1

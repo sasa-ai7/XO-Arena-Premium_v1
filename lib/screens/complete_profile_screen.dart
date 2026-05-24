@@ -32,10 +32,8 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
   bool _termsAccepted = false;
   final _auth = AuthService();
 
-  // Birth date state
-  int? _selectedYear;
-  int? _selectedMonth;
-  int? _selectedDay;
+  // Age gate state: null = unanswered, true = Yes (13+), false = No.
+  bool? _isAdultConfirmed;
 
   @override
   void initState() {
@@ -70,68 +68,15 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
     super.dispose();
   }
 
-  // ── Birth date helpers ───────────────────────────────────────────────────
-  DateTime? get _birthDate {
-    if (_selectedYear == null || _selectedMonth == null || _selectedDay == null) {
-      return null;
-    }
-    return DateTime(_selectedYear!, _selectedMonth!, _selectedDay!);
-  }
-
-  int _calculateAge(DateTime birthDate) {
-    final now = DateTime.now();
-    int age = now.year - birthDate.year;
-    if (now.month < birthDate.month ||
-        (now.month == birthDate.month && now.day < birthDate.day)) {
-      age--;
-    }
-    return age;
-  }
-
-  int _daysInMonth(int year, int month) => DateTime(year, month + 1, 0).day;
-
-  void _onYearChanged(int? year) {
-    setState(() {
-      _selectedYear = year;
-      _clampDay();
-    });
-  }
-
-  void _onMonthChanged(int? month) {
-    setState(() {
-      _selectedMonth = month;
-      _clampDay();
-    });
-  }
-
-  void _clampDay() {
-    if (_selectedYear != null && _selectedMonth != null && _selectedDay != null) {
-      final maxDay = _daysInMonth(_selectedYear!, _selectedMonth!);
-      if (_selectedDay! > maxDay) _selectedDay = null;
-    }
-  }
-
   // ── Submit ───────────────────────────────────────────────────────────────
   Future<void> _completeProfile() async {
     final l10n = AppL10n.of(context);
     FocusScope.of(context).unfocus();
     if (!(_form.currentState?.validate() ?? false)) return;
 
-    if (_birthDate == null) {
-      showTopNotification(context, l10n.selectBirthDate,
+    if (_isAdultConfirmed != true) {
+      showTopNotification(context, l10n.ageGateRequired,
           color: AppPalette.danger);
-      return;
-    }
-
-    final age = _calculateAge(_birthDate!);
-    if (kDebugMode) {
-      final bd = _birthDate!;
-      debugPrint(
-          '[ONBOARDING] birthDate=${bd.year.toString().padLeft(4, '0')}-${bd.month.toString().padLeft(2, '0')}-${bd.day.toString().padLeft(2, '0')} age=$age');
-    }
-
-    if (age < 13) {
-      _showAgeRestrictionDialog();
       return;
     }
 
@@ -148,7 +93,7 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
         name: _name.text.trim(),
         password: _password.text,
         characterType: widget.characterType,
-        birthDate: _birthDate!,
+        isAdultConfirmed: true,
         acceptedTerms: _termsAccepted,
       );
       if (!mounted) return;
@@ -182,7 +127,7 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
           errorMessage.toLowerCase().contains('invalid-email')) {
         errorMessage = l10n.invalidEmailError;
       } else if (errorMessage.toLowerCase().contains('at least 13')) {
-        errorMessage = l10n.ageRestriction13Msg;
+        errorMessage = l10n.ageRestrictionMsgAlt;
       }
 
       showTopNotification(context, errorMessage, color: AppPalette.danger);
@@ -230,72 +175,9 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
     );
   }
 
-  // ── Birth date UI builder ────────────────────────────────────────────────
-  Widget _buildBirthDateRow() {
+  // ── Age gate UI builder ──────────────────────────────────────────────────
+  Widget _buildAgeGateRow() {
     final l10n = AppL10n.of(context);
-    final currentYear = DateTime.now().year;
-    final years = List.generate(101, (i) => currentYear - i);
-    final maxDay = (_selectedYear != null && _selectedMonth != null)
-        ? _daysInMonth(_selectedYear!, _selectedMonth!)
-        : 31;
-    final days = List.generate(maxDay, (i) => i + 1);
-    final monthNames = l10n.monthNames;
-
-    final dropdownDecoration = BoxDecoration(
-      color: AppPalette.panelDeep.withOpacity(0.9),
-      borderRadius: BorderRadius.circular(14),
-      border: Border.all(
-        color: AppPalette.homeStroke.withOpacity(0.35),
-        width: 1.2,
-      ),
-    );
-
-    Widget styledDropdown<T>({
-      required String hint,
-      required T? value,
-      required List<T> items,
-      required String Function(T) label,
-      required void Function(T?) onChanged,
-      int flex = 1,
-    }) {
-      return Expanded(
-        flex: flex,
-        child: Container(
-          decoration: dropdownDecoration,
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<T>(
-              value: value,
-              isExpanded: true,
-              dropdownColor: AppPalette.panelDeep,
-              icon: const Icon(Icons.keyboard_arrow_down,
-                  color: AppPalette.primary, size: 18),
-              hint: Text(
-                hint,
-                style: safeInter(
-                  fontSize: 12,
-                  color: Colors.white.withOpacity(0.45),
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              style: safeInter(
-                fontSize: 13,
-                color: Colors.white,
-                fontWeight: FontWeight.w600,
-              ),
-              items: items
-                  .map((item) => DropdownMenuItem<T>(
-                        value: item,
-                        child: Text(label(item)),
-                      ))
-                  .toList(),
-              onChanged: onChanged,
-            ),
-          ),
-        ),
-      );
-    }
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -304,7 +186,7 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
             const Icon(Icons.cake_outlined, size: 16, color: AppPalette.primary),
             const SizedBox(width: 6),
             Text(
-              l10n.birthDateLabel,
+              l10n.ageGateQuestion,
               style: sectionFont(context).copyWith(fontSize: 11),
             ),
           ],
@@ -312,31 +194,30 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
         const SizedBox(height: 8),
         Row(
           children: [
-            styledDropdown<int>(
-              hint: l10n.yearHint,
-              value: _selectedYear,
-              items: years,
-              label: (y) => y.toString(),
-              onChanged: _onYearChanged,
-              flex: 3,
+            Expanded(
+              child: AppPillButton(
+                label: l10n.ageGateYes,
+                fill: _isAdultConfirmed == true
+                    ? AppPalette.success
+                    : AppPalette.panelElevated,
+                onPressed: () =>
+                    setState(() => _isAdultConfirmed = true),
+                minHeight: 48,
+              ),
             ),
-            const SizedBox(width: 8),
-            styledDropdown<int>(
-              hint: l10n.monthHint,
-              value: _selectedMonth,
-              items: List.generate(12, (i) => i + 1),
-              label: (m) => monthNames[m - 1],
-              onChanged: _onMonthChanged,
-              flex: 3,
-            ),
-            const SizedBox(width: 8),
-            styledDropdown<int>(
-              hint: l10n.dayHint,
-              value: _selectedDay,
-              items: days,
-              label: (d) => d.toString().padLeft(2, '0'),
-              onChanged: (d) => setState(() => _selectedDay = d),
-              flex: 2,
+            const SizedBox(width: 10),
+            Expanded(
+              child: AppPillButton(
+                label: l10n.ageGateNo,
+                fill: _isAdultConfirmed == false
+                    ? AppPalette.danger
+                    : AppPalette.panelElevated,
+                onPressed: () {
+                  setState(() => _isAdultConfirmed = false);
+                  _showAgeRestrictionDialog();
+                },
+                minHeight: 48,
+              ),
             ),
           ],
         ),
@@ -530,8 +411,8 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
 
                                   const SizedBox(height: 16),
 
-                                  // Birth date
-                                  _buildBirthDateRow(),
+                                  // Age gate (replaces full DOB collection)
+                                  _buildAgeGateRow(),
 
                                   const SizedBox(height: 16),
 

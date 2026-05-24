@@ -252,7 +252,7 @@ class _LoginScreenState extends State<LoginScreen>
                               ),
                             ),
                             child: Text(
-                              isAr ? 'EN' : 'عر',
+                              isAr ? 'en' : 'ع',
                               style: safeOrbitron(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w700,

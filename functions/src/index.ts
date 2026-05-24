@@ -13,18 +13,43 @@ const db = admin.firestore();
 
 const EXPECTED_PACKAGE_NAME = "com.xoarena.neonclash";
 
-/** Coins granted per IAP product. Only defined here — never sent from client. */
+/**
+ * Coins granted per consumable IAP product. Only defined server-side — the
+ * client never sends a coin amount. Values include the bonus advertised on
+ * the shop card so the UI label and the credit are guaranteed to match.
+ *
+ * CATALOG_SYNC: 2026-05-24 — XO Arena shop redesign.
+ */
 const PRODUCT_COINS_MAP: Record<string, number> = {
-  "coins_pack_200": 200,
-  "coins_pack_400": 400,
-  "coins_pack_600": 600,
-  "coins_pack_800": 800,
-  "coins_pack_1000": 1000,
-  "coins_pack_2000": 2000,
-  "coins_pack_3000": 3000,
-  "coins_pack_5000": 5000,
-  "coins_pack_10000": 10000,
-  "coins_pack_20000": 20000,
+  "xo_arena_2000": 2000,
+  "xo_arena_4000": 4000,
+  "xo_arena_6000": 6000,
+  "xo_arena_8000": 8000,
+  "xo_arena_10000": 10000,
+  "xo_arena_20000": 22000,   // 20,000 + 2,000 bonus
+  "xo_arena_30000": 33000,   // 30,000 + 3,000 bonus
+  "xo_arena_50000": 57500,   // 50,000 + 7,500 bonus
+  "xo_arena_100000": 120000, // 100,000 + 20,000 bonus
+  "xo_arena_200000": 240000, // 200,000 + 40,000 bonus
+};
+
+/**
+ * Non-consumable products. Each entry describes a one-time entitlement that
+ * is acknowledged with Google Play but never consumed, so the user's "owned"
+ * status persists across reinstalls and restored purchases.
+ */
+const NON_CONSUMABLE_ENTITLEMENTS: Record<
+  string,
+  { entitlementId: string; inventoryAvatarId: string }
+> = {
+  xo_avatar_premium: {
+    entitlementId: "premium_avatar_7",
+    inventoryAvatarId: "premium_avatar_7",
+  },
+  xo_avatar_premium_apex: {
+    entitlementId: "premium_avatar_10",
+    inventoryAvatarId: "premium_avatar_10",
+  },
 };
 
 /**
@@ -268,9 +293,12 @@ async function _verifyAndGrantCoins(
     );
   }
 
-  // Server-side coins mapping — client never sends coin amount
+  // Resolve the product: either a coin pack (consumable) or a one-time
+  // entitlement (non-consumable). Coin amount is taken from the server map
+  // only — the client never sends it.
   const coinsToAdd = PRODUCT_COINS_MAP[productId];
-  if (!coinsToAdd) {
+  const entitlement = NON_CONSUMABLE_ENTITLEMENTS[productId];
+  if (!coinsToAdd && !entitlement) {
     throw new functions.https.HttpsError(
       "invalid-argument",
       `Unknown product ID: ${productId}`
@@ -278,7 +306,7 @@ async function _verifyAndGrantCoins(
   }
 
   // Verify with Google Play Developer API
-  let purchase: { purchaseState?: number | null; consumptionState?: number | null };
+  let purchase: { purchaseState?: number | null; consumptionState?: number | null; acknowledgementState?: number | null };
   try {
     const androidPublisher = getAndroidPublisher();
     const response = await androidPublisher.purchases.products.get({
@@ -320,11 +348,14 @@ async function _verifyAndGrantCoins(
       coinsAdded: 0,
       newBalance: currentBalance,
       consumed: purchase.consumptionState === 1,
+      restored: !!entitlement,
+      productType: entitlement ? "avatar" : "coins",
+      avatarId: entitlement?.entitlementId,
       message: "Purchase already processed",
     };
   }
 
-  // Run Firestore transaction to grant coins atomically
+  // Run Firestore transaction to grant the product atomically.
   const userRef = db.collection("users").doc(uid);
   let newBalance = 0;
 
@@ -333,8 +364,63 @@ async function _verifyAndGrantCoins(
     const wallet = (userDoc.data()?.Wallet ?? {}) as Record<string, number>;
     const currentCoins = (wallet.coins ?? 0) as number;
     const currentLifetime = (wallet.lifetimeEarned ?? 0) as number;
-    newBalance = currentCoins + coinsToAdd;
 
+    if (entitlement) {
+      // ── Non-consumable entitlement (premium avatar) ────────────────────
+      const inventory = (userDoc.data()?.Inventory ?? {}) as Record<string, unknown>;
+      const ownedAvatars = ((inventory.avatars ?? []) as string[]);
+      const alreadyOwned = ownedAvatars.includes(entitlement.inventoryAvatarId);
+      const nextAvatars = alreadyOwned
+        ? ownedAvatars
+        : [...ownedAvatars, entitlement.inventoryAvatarId];
+
+      const updates: admin.firestore.UpdateData<admin.firestore.DocumentData> = {
+        "Inventory.avatars": nextAvatars,
+        [`Entitlements.${entitlement.entitlementId}`]: {
+          productId,
+          status: "active",
+          orderId: orderId ?? null,
+          purchaseTokenHash: tokenHash,
+          grantedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+      };
+      tx.update(userRef, updates);
+
+      tx.set(iapRef, {
+        uid,
+        productId,
+        productType: "avatar",
+        entitlementId: entitlement.entitlementId,
+        avatarId: entitlement.inventoryAvatarId,
+        coinsAdded: 0,
+        purchaseToken,
+        purchaseTokenHash: tokenHash,
+        processedAt: admin.firestore.FieldValue.serverTimestamp(),
+        consumed: false, // never consumed
+        orderId: orderId ?? null,
+      });
+
+      const txDocRef = userRef.collection("transactions").doc();
+      tx.set(txDocRef, {
+        type: "avatar_purchase",
+        amount: 0,
+        balanceBefore: currentCoins,
+        balanceAfter: currentCoins,
+        productId,
+        purchaseTokenHash: tokenHash,
+        itemId: entitlement.inventoryAvatarId,
+        itemName: "Premium Arena Avatar",
+        matchId: null,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        source: "cloud_function",
+      });
+
+      newBalance = currentCoins; // unchanged
+      return;
+    }
+
+    // ── Consumable coin pack ───────────────────────────────────────────
+    newBalance = currentCoins + coinsToAdd;
     tx.update(userRef, {
       "Wallet.coins": newBalance,
       "Wallet.lifetimeEarned": currentLifetime + coinsToAdd,
@@ -343,6 +429,7 @@ async function _verifyAndGrantCoins(
     tx.set(iapRef, {
       uid,
       productId,
+      productType: "coins",
       coinsAdded: coinsToAdd,
       purchaseToken,
       purchaseTokenHash: tokenHash,
@@ -367,35 +454,64 @@ async function _verifyAndGrantCoins(
     });
   });
 
-  console.log(`[verifyPurchase] Granted ${coinsToAdd} coins to uid=${uid} for ${productId}. New balance: ${newBalance}`);
+  if (entitlement) {
+    console.log(`[verifyPurchase] Granted entitlement ${entitlement.entitlementId} to uid=${uid} for ${productId}.`);
+  } else {
+    console.log(`[verifyPurchase] Granted ${coinsToAdd} coins to uid=${uid} for ${productId}. New balance: ${newBalance}`);
+  }
 
-  // Consume the purchase via Google Play
+  // Post-grant Google Play housekeeping.
   let consumed = false;
   try {
     const androidPublisher = getAndroidPublisher();
-    if (purchase.consumptionState === 0) {
-      await androidPublisher.purchases.products.consume({
-        packageName,
-        productId,
-        token: purchaseToken,
-      });
-      consumed = true;
+    if (entitlement) {
+      // Non-consumable: acknowledge only — NEVER consume.
+      if (purchase.acknowledgementState === 0) {
+        await androidPublisher.purchases.products.acknowledge({
+          packageName,
+          productId,
+          token: purchaseToken,
+          requestBody: { developerPayload: "" },
+        });
+      }
+      consumed = false;
     } else {
+      // Consumable: consume so the user can buy it again.
+      if (purchase.consumptionState === 0) {
+        await androidPublisher.purchases.products.consume({
+          packageName,
+          productId,
+          token: purchaseToken,
+        });
+      }
       consumed = true;
     }
     await iapRef.update({ consumed });
   } catch (consumeError: any) {
     if (consumeError.code === 410) {
-      consumed = true;
-      await iapRef.update({ consumed: true }).catch(() => {});
+      consumed = !entitlement;
+      await iapRef.update({ consumed }).catch(() => {});
     } else {
-      console.error(`[verifyPurchase] Consume error (non-fatal) for uid=${uid}:`, consumeError);
+      console.error(`[verifyPurchase] Consume/acknowledge error (non-fatal) for uid=${uid}:`, consumeError);
     }
   }
 
-  writeAuditLog(uid, "iap_purchase", { productId, coinsAdded: coinsToAdd, tokenHash }).catch(() => {});
+  writeAuditLog(
+    uid,
+    entitlement ? "avatar_iap" : "iap_purchase",
+    entitlement
+      ? { productId, entitlementId: entitlement.entitlementId, tokenHash }
+      : { productId, coinsAdded: coinsToAdd, tokenHash }
+  ).catch(() => {});
 
-  return { ok: true, coinsAdded: coinsToAdd, newBalance, consumed };
+  return {
+    ok: true,
+    coinsAdded: entitlement ? 0 : coinsToAdd,
+    newBalance,
+    consumed,
+    productType: entitlement ? "avatar" : "coins",
+    avatarId: entitlement?.entitlementId,
+  };
 }
 
 /**
@@ -830,4 +946,205 @@ export const deleteMyAccount = functions.https.onCall(async (data, context) => {
       "Account deletion failed: " + (e.message || "Unknown error")
     );
   }
+});
+
+// ============================================================
+// FUNCTION: redeemReferralCode
+// ============================================================
+//
+// Atomically credits the invitee (+100) and the referrer (+100), writes
+// idempotent wallet_ledger records for both sides, creates
+// /referrals/{inviteeUid}, and increments the referrer's
+// Referral.validReferralCount + Referral.totalReferralCoinsEarned.
+//
+// Client cannot do this directly because it would require writing a
+// different user's document; rules forbid that. The CF runs as admin.
+//
+// Idempotent: re-running with the same caller returns already-exists.
+
+const REFERRAL_REWARD = 100;
+const REFERRAL_MAX_FRIENDS = 10;
+
+export const redeemReferralCode = functions.https.onCall(async (data, context) => {
+  requireAppCheck(context);
+  const callerUid = requireAuth(context);
+  const { code } = (data ?? {}) as { code?: string };
+
+  if (!code || typeof code !== "string" || !/^[0-9]{9}$/.test(code)) {
+    throw new functions.https.HttpsError(
+      "invalid-argument",
+      "Referral code must be exactly 9 digits."
+    );
+  }
+
+  const codeRef = db.collection("referral_codes").doc(code);
+  const referralRef = db.collection("referrals").doc(callerUid);
+  const inviteeRef = db.collection("users").doc(callerUid);
+
+  // Pre-transaction reads to fail fast with a useful error before paying for
+  // a transaction.
+  const codeSnap = await codeRef.get();
+  if (!codeSnap.exists) {
+    throw new functions.https.HttpsError("not-found", "Referral code not found.");
+  }
+  const referrerUid = (codeSnap.data()?.uid ?? "") as string;
+  if (!referrerUid) {
+    throw new functions.https.HttpsError("not-found", "Referral code is invalid.");
+  }
+  if (referrerUid === callerUid) {
+    throw new functions.https.HttpsError(
+      "failed-precondition",
+      "You cannot redeem your own invite code."
+    );
+  }
+
+  const referrerRef = db.collection("users").doc(referrerUid);
+  const inviteeLedgerId = `ref_${callerUid}_invitee`;
+  const referrerLedgerId = `ref_${callerUid}_referrer`;
+  const inviteeLedgerRef = inviteeRef.collection("wallet_ledger").doc(inviteeLedgerId);
+  const referrerLedgerRef = referrerRef.collection("wallet_ledger").doc(referrerLedgerId);
+
+  let newReferrerCount = 0;
+  let inviteeAfter = 0;
+  let referrerAfter = 0;
+
+  try {
+    await db.runTransaction(async (tx) => {
+      const existingReferral = await tx.get(referralRef);
+      if (existingReferral.exists) {
+        throw new functions.https.HttpsError(
+          "already-exists",
+          "This invite code has already been redeemed."
+        );
+      }
+
+      const [inviteeSnap, referrerSnap, inviteeLedgerSnap, referrerLedgerSnap] =
+        await Promise.all([
+          tx.get(inviteeRef),
+          tx.get(referrerRef),
+          tx.get(inviteeLedgerRef),
+          tx.get(referrerLedgerRef),
+        ]);
+
+      if (inviteeLedgerSnap.exists || referrerLedgerSnap.exists) {
+        throw new functions.https.HttpsError(
+          "already-exists",
+          "This referral reward has already been applied."
+        );
+      }
+
+      const inviteeReferral = (inviteeSnap.data()?.Referral ?? {}) as Record<string, unknown>;
+      if (inviteeReferral.referralUsed === true) {
+        throw new functions.https.HttpsError(
+          "already-exists",
+          "You have already redeemed an invite code."
+        );
+      }
+
+      const referrerReferral = (referrerSnap.data()?.Referral ?? {}) as Record<string, unknown>;
+      const currentCount = (referrerReferral.validReferralCount as number | undefined) ?? 0;
+      if (currentCount >= REFERRAL_MAX_FRIENDS) {
+        throw new functions.https.HttpsError(
+          "resource-exhausted",
+          "Referrer has reached the maximum number of invited friends."
+        );
+      }
+
+      const inviteeBefore = ((inviteeSnap.data()?.Wallet?.coins as number | undefined) ?? 0);
+      const referrerBefore = ((referrerSnap.data()?.Wallet?.coins as number | undefined) ?? 0);
+      inviteeAfter = inviteeBefore + REFERRAL_REWARD;
+      referrerAfter = referrerBefore + REFERRAL_REWARD;
+      newReferrerCount = currentCount + 1;
+      const newTotal =
+        ((referrerReferral.totalReferralCoinsEarned as number | undefined) ?? 0) +
+        REFERRAL_REWARD;
+
+      const now = admin.firestore.FieldValue.serverTimestamp();
+
+      tx.set(referralRef, {
+        inviteeUid: callerUid,
+        referrerUid,
+        code,
+        rewardCoins: REFERRAL_REWARD,
+        createdAt: now,
+      });
+
+      tx.set(
+        inviteeRef,
+        {
+          Wallet: { coins: inviteeAfter },
+          Referral: {
+            referredBy: referrerUid,
+            referralUsed: true,
+            updatedAt: now,
+          },
+        },
+        { merge: true }
+      );
+
+      tx.set(
+        referrerRef,
+        {
+          Wallet: { coins: referrerAfter },
+          Referral: {
+            validReferralCount: newReferrerCount,
+            totalReferralCoinsEarned: newTotal,
+            updatedAt: now,
+          },
+        },
+        { merge: true }
+      );
+
+      tx.set(inviteeLedgerRef, {
+        uid: callerUid,
+        type: "referral_invitee_reward",
+        source: "redeemReferralCode",
+        delta: REFERRAL_REWARD,
+        before: inviteeBefore,
+        after: inviteeAfter,
+        transactionId: inviteeLedgerId,
+        code,
+        referrerUid,
+        createdAt: now,
+      });
+
+      tx.set(referrerLedgerRef, {
+        uid: referrerUid,
+        type: "referral_referrer_reward",
+        source: "redeemReferralCode",
+        delta: REFERRAL_REWARD,
+        before: referrerBefore,
+        after: referrerAfter,
+        transactionId: referrerLedgerId,
+        code,
+        inviteeUid: callerUid,
+        createdAt: now,
+      });
+    });
+  } catch (e: any) {
+    if (e instanceof functions.https.HttpsError) throw e;
+    console.error(`[redeemReferralCode] tx failed uid=${callerUid} code=${code}:`, e);
+    throw new functions.https.HttpsError(
+      "internal",
+      "Referral redemption failed: " + (e.message || "Unknown error")
+    );
+  }
+
+  writeAuditLog(
+    callerUid,
+    "referral_redeemed",
+    { code, referrerUid, reward: REFERRAL_REWARD, referrerCount: newReferrerCount }
+  ).catch(() => {});
+
+  console.log(
+    `[redeemReferralCode] uid=${callerUid} referrer=${referrerUid} code=${code} count=${newReferrerCount}`
+  );
+
+  return {
+    ok: true,
+    inviteeReward: REFERRAL_REWARD,
+    referrerReward: REFERRAL_REWARD,
+    inviteeBalance: inviteeAfter,
+    referrerCount: newReferrerCount,
+  };
 });

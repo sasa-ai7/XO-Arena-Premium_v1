@@ -539,6 +539,21 @@ class _AvatarActionButton extends StatelessWidget {
       );
     }
 
+    if (avatar.isPremiumIap) {
+      // Premium IAP avatars are unlocked from the coin store, not with coins.
+      return AppPillButton(
+        label: 'PREMIUM',
+        fill: AppPalette.goldDeep,
+        stroke: AppPalette.goldHighlight.withOpacity(0.6),
+        onPressed: busy ? null : () => onBuyAvatar(avatar),
+        icon: Icons.workspace_premium_outlined,
+        iconColor: AppPalette.goldHighlight,
+        fitLabel: true,
+        labelFontSize: metrics.buttonFontSize,
+        labelLetterSpacing: metrics.buttonLetterSpacing,
+      );
+    }
+
     if (avatar.price == 0) {
       return AppPillButton(
         label: l10n.unlockFreeLabel,
@@ -680,18 +695,6 @@ class _AvatarPresentation {
           rarity: 'Legendary',
           subtitle: 'Shadow-tier premium collectible',
           color: AppPalette.rarityLegendary,
-        );
-      case 7:
-        return const _AvatarPresentation(
-          rarity: 'Animated',
-          subtitle: 'Reactive premium arena frame',
-          color: AppPalette.rarityAnimated,
-        );
-      case 8:
-        return const _AvatarPresentation(
-          rarity: 'Animated',
-          subtitle: 'Celestial collector showcase',
-          color: AppPalette.rarityAnimated,
         );
       case 9:
         return const _AvatarPresentation(

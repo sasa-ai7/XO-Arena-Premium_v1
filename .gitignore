@@ -26,5 +26,11 @@ analyze_out.txt
 # Secrets / signing keys
 *.keystore
 *.jks
+*.pem
 key.properties
 android/key.properties
+
+# Local backups / release artifacts
+*.zip
+*.aab
+*.apk

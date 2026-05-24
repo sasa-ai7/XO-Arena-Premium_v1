@@ -13,6 +13,7 @@ import '../models/game_avatar.dart';
 import '../models/offline_profile.dart';
 import '../models/user_data.dart';
 import '../services/app_mode_service.dart';
+import '../services/arena/arena_cosmetics_loader.dart';
 import '../services/auth_service.dart';
 import '../services/connectivity_service.dart';
 import '../services/user_repo.dart';
@@ -621,6 +622,7 @@ class LocalStore {
           {'Cosmetics': _cosmeticsPayload(p, equippedAvatar: id)});
       if (kDebugMode) debugPrint('[INVENTORY_SYNC] setEquippedAvatar → $id');
     }
+    syncCurrentCosmeticsToActiveArenaRoom();
   }
 
   // ── XO Image Skin methods ─────────────────────────────────────────────────
@@ -649,6 +651,7 @@ class LocalStore {
         debugPrint('[INVENTORY_SYNC] Firestore Cosmetics synced');
       }
     }
+    syncCurrentCosmeticsToActiveArenaRoom();
   }
 
   static Future<void> setSelectedOSkin(String id) async {
@@ -665,6 +668,7 @@ class LocalStore {
         debugPrint('[INVENTORY_SYNC] Firestore Cosmetics synced');
       }
     }
+    syncCurrentCosmeticsToActiveArenaRoom();
   }
 
   static Future<List<String>> ownedXSkins() async {
@@ -950,6 +954,30 @@ class LocalStore {
         'levelGameCompleted': false,
       }
     });
+  }
+
+  // ── Adaptive-easing fail streak per level ────────────────────────────────
+  //
+  // Persisted, per-level loss counter used by LevelGamePage to silently ease
+  // the AI after repeated failures. Local-only — never synced to Firestore;
+  // this is a UX nudge, not progress state. (2026-05-24 — level rebalance.)
+  static String _levelFailStreakKey(int level) => 'levelFailStreak_$level';
+
+  static Future<int> getLevelFailStreak(int level) async {
+    final p = await _p();
+    return p.getInt(_levelFailStreakKey(level)) ?? 0;
+  }
+
+  static Future<int> incrementLevelFailStreak(int level) async {
+    final p = await _p();
+    final next = (p.getInt(_levelFailStreakKey(level)) ?? 0) + 1;
+    await p.setInt(_levelFailStreakKey(level), next);
+    return next;
+  }
+
+  static Future<void> clearLevelFailStreak(int level) async {
+    final p = await _p();
+    await p.remove(_levelFailStreakKey(level));
   }
 
   // ── Online character type cache ──────────────────────────────────────────

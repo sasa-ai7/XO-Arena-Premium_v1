@@ -53,6 +53,16 @@ class _LevelGamePageState extends State<LevelGamePage> {
   bool _musicDucked = false;
   int _continueCount = 0;
 
+  /// Per-level consecutive-loss counter. Sourced from
+  /// [LocalStore.getLevelFailStreak] so it survives the "lost → reset to
+  /// level 1" path (the player grinds back and the streak is still
+  /// remembered). After [_kAdaptiveEaseThreshold] losses on the same level
+  /// we drop the difficulty by one rung; after [_kAdaptiveEaseDeepThreshold]
+  /// we drop two. The player is never told. (2026-05-24 — level rebalance.)
+  int _consecutiveLossesOnLevel = 0;
+  static const int _kAdaptiveEaseThreshold = 3;
+  static const int _kAdaptiveEaseDeepThreshold = 6;
+
   /// Stable matchId for the current level attempt. Regenerated whenever the
   /// player advances, retries, or continues — so each row in
   /// `match_rewards` corresponds to exactly one resolved level.
@@ -85,6 +95,7 @@ class _LevelGamePageState extends State<LevelGamePage> {
     await Future.wait<void>([
       _duckGameplayMusic(),
       _loadMeta(),
+      _refreshAdaptiveEasing(),
     ]);
     if (!mounted) return;
     if (playerChar == "O") {
@@ -92,10 +103,20 @@ class _LevelGamePageState extends State<LevelGamePage> {
     }
   }
 
+  /// Loads the persisted fail-streak for [_currentLevel] and recomputes
+  /// [_difficulty] so the adaptive easing takes effect on this match's first
+  /// AI move. Silent — never shown to the player.
+  Future<void> _refreshAdaptiveEasing() async {
+    final streak = await LocalStore.getLevelFailStreak(_currentLevel);
+    if (!mounted) return;
+    _consecutiveLossesOnLevel = streak;
+    setState(_updateLevelConfig);
+  }
+
   Future<void> _duckGameplayMusic() async {
-    if (_musicDucked) return;
-    _musicDucked = true;
-    await SoundService().duckMusic();
+    // Intentionally a no-op: gameplay must not auto-lower the user's chosen
+    // music volume. _musicDucked stays false so _restoreGameplayMusic also
+    // short-circuits, leaving the SoundService volume untouched.
   }
 
   Future<void> _restoreGameplayMusic() async {
@@ -116,25 +137,63 @@ class _LevelGamePageState extends State<LevelGamePage> {
   }
 
   void _updateLevelConfig() {
+    // Board size keeps the original campaign progression intact:
+    //   levels 1-8   → 3×3 (3 in a row)
+    //   levels 9-15  → 4×4 (4 in a row)
+    //   levels 16-20 → 5×5 (5 in a row)
     if (_currentLevel <= 8) {
       _boardSize = 3;
       _winCondition = 3;
-      final diffIndex = (_currentLevel - 1) % 3;
-      _difficulty = [
-        AIDifficulty.easy,
-        AIDifficulty.medium,
-        AIDifficulty.hard
-      ][diffIndex];
     } else if (_currentLevel <= 15) {
       _boardSize = 4;
       _winCondition = 4;
-      _difficulty = AIDifficulty.hard;
     } else {
       _boardSize = 5;
       _winCondition = 5;
-      _difficulty = AIDifficulty.hard;
+    }
+
+    // Base difficulty per level range — tuned 2026-05-24 so the campaign
+    // feels fair and progressive. The AI engine clamps even "hard" to
+    // ~75% strength with probabilistic minimax, so no level is unbeatable.
+    //   Levels  1- 3 → Easy   (35% — learn the game, win comfortably)
+    //   Levels  4-14 → Medium (50% — blocks wins, fair fight)
+    //   Levels 15-17 → Medium (50% — still medium; the bigger 5×5 board
+    //                          provides the natural difficulty ramp)
+    //   Levels 18-20 → Hard   (75% — sharp but beatable)
+    final baseDifficulty = _currentLevel <= 3
+        ? AIDifficulty.easy
+        : _currentLevel <= 17
+            ? AIDifficulty.medium
+            : AIDifficulty.hard;
+
+    // Silent adaptive easing — never surfaced to the player.
+    //   3+ consecutive failures on this level → drop one rung
+    //   6+ consecutive failures → drop two rungs (Hard → Easy fallback)
+    // Easy is the floor; it stays easy.
+    if (_consecutiveLossesOnLevel >= _kAdaptiveEaseDeepThreshold) {
+      _difficulty = _easeDifficulty(_easeDifficulty(baseDifficulty));
+    } else if (_consecutiveLossesOnLevel >= _kAdaptiveEaseThreshold) {
+      _difficulty = _easeDifficulty(baseDifficulty);
+    } else {
+      _difficulty = baseDifficulty;
+    }
+
+    if (kDebugMode) {
+      debugPrint('[LEVEL_AI] level=$_currentLevel base=$baseDifficulty '
+          'losses=$_consecutiveLossesOnLevel actual=$_difficulty');
     }
     board = List.filled(_boardSize * _boardSize, "");
+  }
+
+  AIDifficulty _easeDifficulty(AIDifficulty base) {
+    switch (base) {
+      case AIDifficulty.hard:
+        return AIDifficulty.medium;
+      case AIDifficulty.medium:
+        return AIDifficulty.easy;
+      case AIDifficulty.easy:
+        return AIDifficulty.easy;
+    }
   }
 
   Future<void> _loadMeta() async {
@@ -221,6 +280,12 @@ class _LevelGamePageState extends State<LevelGamePage> {
     final modeStr = AppModeService.isStableOnline ? 'online' : 'offline';
 
     if (winner == aiChar) {
+      // Track losses for adaptive easing — increment BEFORE prompting for
+      // a continue. The persisted streak survives the "lost → reset to
+      // level 1" path so the AI can ease the next time the player reaches
+      // this level. Silent — never surfaced to the player.
+      _consecutiveLossesOnLevel += 1;
+      unawaited(LocalStore.incrementLevelFailStreak(_currentLevel));
       if (!mounted) return;
       if (_currentLevel >= 3 &&
           LocalStore.coinsNotifier.value >= 100 * (1 << _continueCount)) {
@@ -229,6 +294,7 @@ class _LevelGamePageState extends State<LevelGamePage> {
         _doLoss(resultStr);
       }
     } else if (draw) {
+      // Draws don't increase the loss counter but don't reset it either.
       if (!mounted) return;
       _showEndDialog(
         title: "DRAW",
@@ -245,6 +311,10 @@ class _LevelGamePageState extends State<LevelGamePage> {
       });
       _persistLevelResult(resultStr, 0);
     } else {
+      // Win → adaptive easing counter clears for the next level (both
+      // in-memory and persisted).
+      _consecutiveLossesOnLevel = 0;
+      unawaited(LocalStore.clearLevelFailStreak(_currentLevel));
       final reward = GameRewardService.rewardForLevel(
         level: _currentLevel,
         result: resultStr,
@@ -491,11 +561,16 @@ class _LevelGamePageState extends State<LevelGamePage> {
           if (resetLevel) {
             _currentLevel = 1;
             _continueCount = 0;
+            _consecutiveLossesOnLevel = 0;
             _updateLevelConfig();
           } else if (!isDraw) {
             final nextLevel =
                 _currentLevel < 20 ? _currentLevel + 1 : _currentLevel;
             _currentLevel = nextLevel;
+            _consecutiveLossesOnLevel = 0;
+            _updateLevelConfig();
+          } else {
+            // Draw → replay same level, keep loss counter as-is.
             _updateLevelConfig();
           }
           // Fresh match attempt — new matchId, reset guards.
@@ -510,6 +585,9 @@ class _LevelGamePageState extends State<LevelGamePage> {
             currentTurn = playerChar;
             isAIMoving = false;
           });
+          // Reload the persisted fail streak for the (possibly new) level so
+          // adaptive easing carries across the loss → level-1 reset path.
+          unawaited(_refreshAdaptiveEasing());
           if (currentTurn == aiChar) _aiMove();
         },
         onHome: () {
@@ -668,7 +746,11 @@ class _LevelGamePageState extends State<LevelGamePage> {
       child: Scaffold(
         body: SafeArea(
           child: AppBackground(
-            child: LayoutBuilder(
+            // Force LTR for the entire gameplay UI so Arabic locale never
+            // mirrors the board cells, score bar, or layout.
+            child: Directionality(
+              textDirection: TextDirection.ltr,
+              child: LayoutBuilder(
               builder: (context, constraints) {
                 final landscape = constraints.maxWidth > constraints.maxHeight;
 
@@ -832,7 +914,9 @@ class _LevelGamePageState extends State<LevelGamePage> {
                           AppPalette.panelDeep.withValues(alpha: 0.99),
                         ],
                       ),
-                      child: GridView.builder(
+                      child: Directionality(
+                        textDirection: TextDirection.ltr,
+                        child: GridView.builder(
                         physics: const NeverScrollableScrollPhysics(),
                         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: _boardSize,
@@ -906,6 +990,7 @@ class _LevelGamePageState extends State<LevelGamePage> {
                           );
                         },
                       ),
+                      ),
                     ),
                   );
                 }
@@ -972,6 +1057,7 @@ class _LevelGamePageState extends State<LevelGamePage> {
                   ],
                 );
               },
+            ),
             ),
           ),
         ),

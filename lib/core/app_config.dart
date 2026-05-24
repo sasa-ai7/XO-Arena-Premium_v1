@@ -2,8 +2,14 @@
 class AppConfig {
   // ── Runtime feature flags ─────────────────────────────────────────────────
 
-  /// Cloud Functions are deployed and active (requires Blaze plan).
-  static const bool kUseCloudFunctions = true;
+  /// Currently unreferenced; kept for future gating.
+  /// NOTE: The IAP verification service (`CoinsVerificationService`) always
+  /// attempts a Cloud Function call when [kEnableRealPurchases] is true and
+  /// falls back to a local catalog-amount grant if the call fails (e.g.
+  /// Cloud Functions not deployed because the Firebase project is on Spark).
+  /// The user-facing flows shipped here therefore work whether or not
+  /// Cloud Functions are deployed.
+  static const bool kUseCloudFunctions = false;
 
   /// Google Play IAP products are live. IAP purchases go through server verification.
   static const bool kEnableRealPurchases = true;
@@ -26,7 +32,7 @@ class AppConfig {
   /// **The CF must NOT mutate Wallet.coins** — see functions/src/index.ts.
   /// Set to false if the CF is not deployed; the client wallet remains
   /// authoritative either way.
-  static const bool kEnableMatchStatsCloudFunction = true;
+  static const bool kEnableMatchStatsCloudFunction = false;
 
   // ── Firestore sync flags ──────────────────────────────────────────────────
 
@@ -47,6 +53,23 @@ class AppConfig {
 
   /// Write Session info to Firestore on sign-in.
   static const bool kEnableFirestoreSessionWrite = true;
+
+  // ── Arena (private friend rooms) flags ────────────────────────────────────
+
+  /// Enable the Arena tab + private friend rooms (6-digit codes via RTDB).
+  static const bool kEnableArenaRooms = true;
+
+  /// Enable the optional coin-bet flow inside Arena rooms.
+  ///
+  /// Re-enabled: the Create Room screen exposes a "Play with Coins" toggle
+  /// + preset chips (10, 25, 50, 100, 250, 500, 1k, 2k, 5k, 10k) and the
+  /// existing multi-layer payout idempotency (RTDB transaction on
+  /// `payoutApplied` + Firestore wallet transaction + SharedPrefs flag)
+  /// settles bets atomically at end-of-match.
+  static const bool kEnableFriendRoomBetting = true;
+
+  /// Enable the referral system (9-digit invite codes + 100 coins/friend).
+  static const bool kEnableReferralRewards = true;
   /// Support account email for the game. Used for Contact Support and policies.
   static const String supportEmail = "xandomanger@gmail.com";
 
@@ -59,14 +82,20 @@ class AppConfig {
       "• Eligibility: Refunds may apply per our terms and store policy.\n"
       "• Response: We will reply within a few business days.";
 
+  /// Policies home page (overview of all XO Arena legal pages).
+  static const String policiesHomeUrl = "https://sites.google.com/view/xo-arena-policies/home";
+
   /// Privacy Policy URL
-  static const String privacyPolicyUrl = "https://sites.google.com/view/xo-game-policies/privacy-policy";
+  static const String privacyPolicyUrl = "https://sites.google.com/view/xo-arena-policies/privacy-policy";
 
   /// Terms of Service URL
-  static const String termsUrl = "https://sites.google.com/view/xo-game-policies/terms";
+  static const String termsUrl = "https://sites.google.com/view/xo-arena-policies/terms-of-service";
 
   /// Account Deletion Information URL
-  static const String accountDeletionUrl = "https://sites.google.com/view/xo-game-policies/account-deletion";
+  static const String accountDeletionUrl = "https://sites.google.com/view/xo-arena-policies/account-deletion";
+
+  /// Contact page URL (web form / mailbox info).
+  static const String contactUrl = "https://sites.google.com/view/xo-arena-policies/contact";
 
   /// Google Policies URL
   static const String googlePoliciesUrl = "https://www.termsfeed.com/live/27d1303a-4c17-4d58-a16b-6d032142b26a";

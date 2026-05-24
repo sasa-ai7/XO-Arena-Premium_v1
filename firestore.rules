@@ -17,13 +17,100 @@ service cloud.firestore {
         && request.auth.token.email == 'adminarena77@gmail.com';
     }
 
+    function validReferralCode(code) {
+      return code is string && code.matches('^[0-9]{9}$');
+    }
+
+    function referralCodeOwnerMatches(code, referrerUid) {
+      return validReferralCode(code)
+        && exists(/databases/$(database)/documents/referral_codes/$(code))
+        && get(/databases/$(database)/documents/referral_codes/$(code)).data.uid == referrerUid;
+    }
+
+    // Temporary no-Cloud-Functions referral fallback:
+    // lets the invitee create one verified referral doc, then allows only the
+    // matching referrer's Wallet.coins to increase by exactly 100 coins.
+    function isReferralReferrerCredit(uid) {
+      return signedIn()
+        && uid != request.auth.uid
+        && existsAfter(/databases/$(database)/documents/referrals/$(request.auth.uid))
+        && getAfter(/databases/$(database)/documents/referrals/$(request.auth.uid)).data.referrerUid == uid
+        && getAfter(/databases/$(database)/documents/referrals/$(request.auth.uid)).data.rewardAmount == 100
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['Wallet', 'Referral'])
+        && resource.data.Wallet is map
+        && resource.data.Wallet.coins is int
+        && request.resource.data.Wallet is map
+        && request.resource.data.Wallet.coins == resource.data.Wallet.coins + 100
+        && request.resource.data.Referral is map
+        && request.resource.data.Referral.validReferralCount is int
+        && request.resource.data.Referral.totalReferralCoinsEarned is int;
+    }
+
     // ── /users/{uid} ──────────────────────────────────────────────────────────
     // Owner can read and write their own user document and all subcollections.
     // Admin can read/write all users.
+    //
+    // Subcollections written under this rule (non-exhaustive):
+    //   • wallet_ledger/{transactionId}  — coin debit/credit audit trail.
+    //                                      Document id = deterministic
+    //                                      transactionId so duplicate writes
+    //                                      collapse to one row (set, not add).
+    //   • onlineRoomHistory/{matchId}    — friend-room summary mirror.
+    //   • user_logs/{autoId}             — per-event activity log.
+    //
+    // Cross-user wallet mutations (e.g. paying a referrer) are NEVER performed
+    // by the client; the `redeemReferralCode` Cloud Function runs as admin and
+    // writes the other user's wallet + ledger via the admin SDK, bypassing
+    // these rules. Clients writing another user's path will be denied.
+
+    // Wallet shape guard:
+    //  - Wallet.coins must be an int in [0, 999999999]
+    //  - Wallet must remain a map and cannot be deleted once present
+    //  - uid field (if present) cannot change
+    // Notes:
+    //  - Bet debit / prize credit are still client-authoritative today.
+    //    TODO: move Wallet writes + wallet_ledger creates into a trusted
+    //    Cloud Function so the client cannot author arbitrary deltas.
+    function walletShapeOk() {
+      return !('Wallet' in request.resource.data)
+        || (
+          request.resource.data.Wallet is map
+          && (
+            !('coins' in request.resource.data.Wallet)
+            || (
+              request.resource.data.Wallet.coins is int
+              && request.resource.data.Wallet.coins >= 0
+              && request.resource.data.Wallet.coins <= 999999999
+            )
+          )
+        );
+    }
+    function walletNotDropped() {
+      return !(resource != null && 'Wallet' in resource.data)
+        || 'Wallet' in request.resource.data;
+    }
+    function uidNotChanged() {
+      return !('uid' in request.resource.data)
+        || resource == null
+        || !('uid' in resource.data)
+        || request.resource.data.uid == resource.data.uid;
+    }
 
     match /users/{uid} {
-      allow read, create, update, delete: if isMe(uid) || isAdmin();
+      allow read, delete: if isMe(uid) || isAdmin();
+      allow create, update: if (
+          ((isMe(uid) || isAdmin())
+            && walletShapeOk()
+            && walletNotDropped()
+            && uidNotChanged())
+          || isReferralReferrerCredit(uid)
+        );
 
+      // Subcollections (wallet_ledger, onlineRoomHistory, user_logs,
+      // transactions, purchase_counts, Arena) remain owner-writable.
+      // wallet_ledger entries are idempotent by transactionId doc id.
+      // TODO: tighten wallet_ledger to create-only (no update/delete) once
+      // all writers have migrated to set-by-id, then move to Cloud Functions.
       match /{subPath=**} {
         allow read, create, update, delete: if isMe(uid) || isAdmin();
       }
@@ -103,6 +190,87 @@ service cloud.firestore {
     match /leaderboard/{document=**} {
       allow read: if true;
       allow create, update: if signedIn();
+      allow delete: if isAdmin();
+    }
+
+    // ── Arena: referral codes (9-digit invite codes) ──────────────────────────
+    match /referral_codes/{code} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && validReferralCode(code)
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.code == code
+        && !exists(/databases/$(database)/documents/referral_codes/$(code));
+      allow update, delete: if isAdmin();
+    }
+
+    // ── Arena: referrals (one doc per invitee) ────────────────────────────────
+    match /referrals/{inviteeUid} {
+      allow read: if signedIn()
+        && (request.auth.uid == inviteeUid
+            || request.auth.uid == resource.data.referrerUid
+            || isAdmin());
+      allow create: if signedIn()
+        && request.auth.uid == inviteeUid
+        && request.resource.data.inviteeUid == request.auth.uid
+        && request.resource.data.referrerUid is string
+        && request.resource.data.referrerUid != request.auth.uid
+        && request.resource.data.code is string
+        && referralCodeOwnerMatches(request.resource.data.code, request.resource.data.referrerUid)
+        && request.resource.data.rewardAmount == 100
+        && !exists(/databases/$(database)/documents/referrals/$(inviteeUid));
+      allow update, delete: if isAdmin();
+    }
+
+    // ── Arena: pending referral rewards (popup queue for the referrer) ───────
+    //
+    // Doc id is deterministic: `{referrerUid}_{inviteeUid}` so duplicate
+    // notifications collapse to one row.
+    //
+    // create: invitee writes this immediately after redeeming the code.
+    //         data.uid == data.referrerUid (the popup target) and must differ
+    //         from request.auth.uid (the invitee writing it).
+    // update: only the referrer themselves can flip seen:false → true.
+    // read:   only the referrer (uid) can read their own queue.
+    match /pending_referral_rewards/{rewardId} {
+      allow read: if signedIn()
+        && (request.auth.uid == resource.data.uid || isAdmin());
+      allow create: if signedIn()
+        && request.resource.data.inviteeUid == request.auth.uid
+        && request.resource.data.referrerUid is string
+        && request.resource.data.referrerUid != request.auth.uid
+        && request.resource.data.uid == request.resource.data.referrerUid
+        && request.resource.data.coins == 100
+        && request.resource.data.seen == false;
+      allow update: if signedIn()
+        && request.auth.uid == resource.data.uid
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly(['seen', 'seenAt'])
+        && resource.data.seen == false
+        && request.resource.data.seen == true;
+      allow delete: if isAdmin();
+    }
+
+    // ── Arena: online room history (friend rooms) ─────────────────────────────
+    match /online_room_history/{matchId} {
+      allow read: if signedIn()
+        && (request.auth.uid == resource.data.hostUid
+            || request.auth.uid == resource.data.guestUid
+            || isAdmin());
+      allow create, update: if signedIn()
+        && (request.auth.uid == request.resource.data.hostUid
+            || request.auth.uid == request.resource.data.guestUid);
+      allow delete: if isAdmin();
+    }
+
+    // ── Arena: legacy match summaries (kept for back-compat with v1 build) ───
+    match /matches/{matchId} {
+      allow read: if signedIn()
+        && (request.auth.uid == resource.data.hostUid
+            || request.auth.uid == resource.data.guestUid
+            || isAdmin());
+      allow create, update: if signedIn()
+        && (request.auth.uid == request.resource.data.hostUid
+            || request.auth.uid == request.resource.data.guestUid);
       allow delete: if isAdmin();
     }
 

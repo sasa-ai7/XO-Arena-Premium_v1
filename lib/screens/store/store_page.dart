@@ -19,6 +19,7 @@ import '../../utils/navigation_utils.dart';
 import '../../widgets/app_ui.dart';
 import '../../widgets/avatar_store_tab.dart';
 import '../../coins/coins_screen.dart';
+import '../../coins/premium_avatar_service.dart';
 import 'colors_tab.dart';
 import 'skins_tab.dart';
 
@@ -54,13 +55,21 @@ class _StorePageState extends State<StorePage>
     super.initState();
     _selectedTab = widget.initialTab;
     LocalStore.coinsNotifier.addListener(_onCoinsChanged);
+    PremiumAvatarService.instance.owned.addListener(_onPremiumAvatarChanged);
+    // Bind premium avatar entitlement listener so ownership is fresh.
+    PremiumAvatarService.instance.bind();
     _load();
   }
 
   @override
   void dispose() {
     LocalStore.coinsNotifier.removeListener(_onCoinsChanged);
+    PremiumAvatarService.instance.owned.removeListener(_onPremiumAvatarChanged);
     super.dispose();
+  }
+
+  void _onPremiumAvatarChanged() {
+    if (mounted) _load();
   }
 
   void _onCoinsChanged() {
@@ -589,6 +598,17 @@ class _StorePageState extends State<StorePage>
         await _equipAvatar(avatar.id);
         if (kDebugMode) debugPrint('[STORE] avatar equipped: ${avatar.name}');
       }
+      return;
+    }
+    // Premium IAP avatar: route to the coin shop tab. It cannot be bought
+    // with coins — only via Google Play Billing.
+    if (avatar.isPremiumIap) {
+      showTopNotification(
+        context,
+        'Unlock from the Coin Store',
+        color: AppPalette.gold,
+      );
+      setState(() => _selectedTab = 2);
       return;
     }
     if (avatar.price > 0 && _coins < avatar.price) {

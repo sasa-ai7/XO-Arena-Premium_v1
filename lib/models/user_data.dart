@@ -1,9 +1,10 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import 'game_avatar.dart';
+
 /// Profile data stored in Firestore.
 class UserProfile {
   final String name;
-  final int? age;
   final String email;
   final String provider; // "email" | "google"
   final DateTime? createdAt;
@@ -11,14 +12,13 @@ class UserProfile {
   final bool? welcomeGiftClaimed;
   final String? photoURL;
   final String? characterType; // 'male' | 'female'
-  final DateTime? birthDate;
   final bool? ageVerified;
   final bool? minimumAgePassed;
+  final DateTime? ageVerifiedAt;
   final DateTime? updatedAt;
 
   const UserProfile({
     required this.name,
-    this.age,
     required this.email,
     required this.provider,
     this.createdAt,
@@ -26,15 +26,14 @@ class UserProfile {
     this.welcomeGiftClaimed,
     this.photoURL,
     this.characterType,
-    this.birthDate,
     this.ageVerified,
     this.minimumAgePassed,
+    this.ageVerifiedAt,
     this.updatedAt,
   });
 
   Map<String, dynamic> toMap() => {
         'name': name,
-        if (age != null) 'age': age,
         'email': email,
         'provider': provider,
         if (createdAt != null) 'createdAt': Timestamp.fromDate(createdAt!),
@@ -42,9 +41,9 @@ class UserProfile {
         if (welcomeGiftClaimed != null) 'welcomeGiftClaimed': welcomeGiftClaimed,
         if (photoURL != null) 'photoURL': photoURL,
         if (characterType != null) 'characterType': characterType,
-        if (birthDate != null) 'birthDate': '${birthDate!.year.toString().padLeft(4, '0')}-${birthDate!.month.toString().padLeft(2, '0')}-${birthDate!.day.toString().padLeft(2, '0')}',
         if (ageVerified != null) 'ageVerified': ageVerified,
         if (minimumAgePassed != null) 'minimumAgePassed': minimumAgePassed,
+        if (ageVerifiedAt != null) 'ageVerifiedAt': Timestamp.fromDate(ageVerifiedAt!),
         if (updatedAt != null) 'updatedAt': Timestamp.fromDate(updatedAt!),
       };
 
@@ -54,7 +53,6 @@ class UserProfile {
     }
     return UserProfile(
       name: m['name'] as String? ?? 'PLAYER',
-      age: (m['age'] as num?)?.toInt(),
       email: m['email'] as String? ?? '',
       provider: m['provider'] as String? ?? 'email',
       createdAt: (m['createdAt'] as Timestamp?)?.toDate(),
@@ -62,9 +60,9 @@ class UserProfile {
       welcomeGiftClaimed: m['welcomeGiftClaimed'] as bool?,
       photoURL: m['photoURL'] as String?,
       characterType: m['characterType'] as String?,
-      birthDate: m['birthDate'] != null ? DateTime.tryParse(m['birthDate'] as String) : null,
       ageVerified: m['ageVerified'] as bool?,
       minimumAgePassed: m['minimumAgePassed'] as bool?,
+      ageVerifiedAt: (m['ageVerifiedAt'] as Timestamp?)?.toDate(),
       updatedAt: (m['updatedAt'] as Timestamp?)?.toDate(),
     );
   }
@@ -187,10 +185,14 @@ class UserCosmetics {
         : const <int>[];
     final rawEquipped = (m['equippedAvatar'] as num?)?.toInt() ?? 0;
     // Sanitize: if the equipped avatar is not actually owned, force 0.
-    // This is the safety net for legacy accounts that were auto-granted
-    // avatar 1 before the paid-only fix landed.
+    // Also reset to 0 if the id was removed from the catalog (see
+    // [kRemovedAvatarIds] — currently ids 7 and 8). The owned list is kept
+    // intact so a future re-introduction wouldn't need a re-grant, but the
+    // UI never sees the removed id.
     int equipped;
     if (rawEquipped <= 0) {
+      equipped = 0;
+    } else if (kRemovedAvatarIds.contains(rawEquipped)) {
       equipped = 0;
     } else if (!parsedOwnedAvatars.contains(rawEquipped)) {
       equipped = 0;

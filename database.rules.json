@@ -1,0 +1,353 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "rooms": {
+      ".read": false,
+      ".write": false,
+
+      "$code": {
+        ".read": "auth != null",
+
+        ".write": "auth != null && $code.matches(/^[0-9]{6}$/) && ( (!data.exists() && newData.exists() && newData.child('hostUid').val() == auth.uid) || (data.exists() && !newData.exists() && (data.child('hostUid').val() == auth.uid || data.child('guestUid').val() == auth.uid)) || (data.exists() && newData.exists() && (data.child('hostUid').val() == auth.uid || data.child('guestUid').val() == auth.uid || (!data.child('guestUid').exists() && newData.child('guestUid').val() == auth.uid))) )",
+
+        ".validate": "!newData.exists() || (newData.hasChildren(['roomCode','hostUid','status','boardSize','roundsCount','createdAt','expiresAt']) && newData.child('roomCode').isString() && newData.child('roomCode').val().matches(/^[0-9]{6}$/))",
+
+        "roomCode": {
+          ".validate": "newData.isString() && newData.val().matches(/^[0-9]{6}$/) && newData.val() == $code && (!data.exists() || data.val() == newData.val())"
+        },
+
+        "hostUid": {
+          ".validate": "newData.isString() && (!data.exists() || data.val() == newData.val())"
+        },
+
+        "hostName": {
+          ".validate": "!newData.exists() || newData.isString()"
+        },
+
+        "hostPhoto": {
+          ".validate": "!newData.exists() || newData.isString()"
+        },
+
+        "hostPhotoURL": {
+          ".validate": "!newData.exists() || newData.isString()"
+        },
+
+        "hostReady": {
+          ".validate": "!newData.exists() || newData.isBoolean()"
+        },
+
+        "guestUid": {
+          ".validate": "!newData.exists() || newData.isString()"
+        },
+
+        "guestName": {
+          ".validate": "!newData.exists() || newData.isString()"
+        },
+
+        "guestPhoto": {
+          ".validate": "!newData.exists() || newData.isString()"
+        },
+
+        "guestPhotoURL": {
+          ".validate": "!newData.exists() || newData.isString()"
+        },
+
+        "guestReady": {
+          ".validate": "!newData.exists() || newData.isBoolean()"
+        },
+
+        "status": {
+          ".validate": "newData.isString() && (newData.val() == 'waiting' || newData.val() == 'ready' || newData.val() == 'countdown' || newData.val() == 'playing' || newData.val() == 'round_end' || newData.val() == 'finished' || newData.val() == 'abandoned' || newData.val() == 'expired' || newData.val() == 'cancelled')"
+        },
+
+        "boardSize": {
+          ".validate": "newData.isNumber() && (newData.val() == 3 || newData.val() == 4 || newData.val() == 5)"
+        },
+
+        "board": {
+          "$idx": {
+            ".read": "auth != null",
+            ".write": "auth != null",
+            ".validate": "!newData.exists() || (newData.isString() && (newData.val() == '' || newData.val() == 'X' || newData.val() == 'O' || newData.val() == 'x' || newData.val() == 'o'))"
+          }
+        },
+
+        "roundsCount": {
+          ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 8 && (!data.exists() || data.val() == newData.val())"
+        },
+
+        "rounds": {
+          ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= 1 && newData.val() <= 8 && (!data.exists() || data.val() == newData.val()))"
+        },
+
+        "currentRound": {
+          ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= 1 && newData.val() <= 8)"
+        },
+
+        "currentRoundIndex": {
+          ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= 0 && newData.val() <= 7)"
+        },
+
+        "roundMaps": {
+          "$idx": {
+            ".validate": "!newData.exists() || newData.isString() || newData.hasChildren()"
+          }
+        },
+
+        "maps": {
+          "$idx": {
+            ".validate": "!newData.exists() || newData.isString() || newData.hasChildren()"
+          }
+        },
+
+        "score": {
+          ".read": "auth != null",
+          ".write": "auth != null",
+
+          "$scoreKey": {
+            ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= 0 && newData.val() <= 8)"
+          }
+        },
+
+        "xUid": {
+          ".validate": "!newData.exists() || (newData.isString() && (!data.exists() || data.val() == newData.val() || data.val() == '__pending__'))"
+        },
+
+        "oUid": {
+          ".validate": "!newData.exists() || (newData.isString() && (!data.exists() || data.val() == newData.val() || data.val() == '__pending__'))"
+        },
+
+        "turnUid": {
+          ".validate": "!newData.exists() || newData.isString()"
+        },
+
+        "roundWinnerUid": {
+          ".validate": "!newData.exists() || newData.isString()"
+        },
+
+        "winnerUid": {
+          ".validate": "!newData.exists() || newData.isString()"
+        },
+
+        "loserUid": {
+          ".validate": "!newData.exists() || newData.isString()"
+        },
+
+        "roomWinnerUid": {
+          ".validate": "!newData.exists() || newData.isString()"
+        },
+
+        "result": {
+          ".validate": "!newData.exists() || newData.isString()"
+        },
+
+        "finalResult": {
+          ".validate": "!newData.exists() || newData.isString()"
+        },
+
+        "createdAt": {
+          ".validate": "newData.isNumber() && (!data.exists() || data.val() == newData.val())"
+        },
+
+        "updatedAt": {
+          ".validate": "!newData.exists() || newData.isNumber()"
+        },
+
+        "startedAt": {
+          ".validate": "!newData.exists() || newData.isNumber()"
+        },
+
+        "expiresAt": {
+          ".validate": "newData.isNumber() && newData.val() > 0 && (!data.exists() || data.val() == newData.val())"
+        },
+
+        "finishedAt": {
+          ".validate": "!newData.exists() || newData.isNumber()"
+        },
+
+        "matchId": {
+          ".validate": "!newData.exists() || newData.isString()"
+        },
+
+        "cleanupAfter": {
+          ".write": "auth != null && data.parent().child('hostUid').val() == auth.uid",
+          ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= data.parent().child('createdAt').val())"
+        },
+
+        "cancelledByUid": {
+          ".validate": "!newData.exists() || newData.isString()"
+        },
+
+        "cancelledAt": {
+          ".validate": "!newData.exists() || newData.isNumber()"
+        },
+
+        "leftByUid": {
+          ".validate": "!newData.exists() || newData.isString()"
+        },
+
+        "leftAt": {
+          ".validate": "!newData.exists() || newData.isNumber()"
+        },
+
+        "betEnabled": {
+          ".validate": "!newData.exists() || (newData.isBoolean() && (!data.exists() || data.val() == newData.val()))"
+        },
+
+        "playWithCoins": {
+          ".validate": "!newData.exists() || newData.isBoolean()"
+        },
+
+        "betAmount": {
+          ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000 && (!data.exists() || data.val() == newData.val()))"
+        },
+
+        "prizePool": {
+          ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= 0 && newData.val() <= 20000)"
+        },
+
+        "potAmount": {
+          ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= 0 && newData.val() <= 20000)"
+        },
+
+        "coinsLocked": {
+          ".validate": "!newData.exists() || (newData.isBoolean() && (!data.exists() || data.val() == false || newData.val() == true))"
+        },
+
+        "payoutApplied": {
+          ".validate": "!newData.exists() || (newData.isBoolean() && (!data.exists() || data.val() == false || newData.val() == true))"
+        },
+
+        "prizePaid": {
+          ".validate": "!newData.exists() || (newData.isBoolean() && (!data.exists() || data.val() == false || newData.val() == true))"
+        },
+
+        "betLocks": {
+          "$lockUid": {
+            ".read": "auth != null",
+            ".write": "auth != null && auth.uid == $lockUid",
+            ".validate": "!newData.exists() || newData.isBoolean() || newData.hasChildren()"
+          }
+        },
+
+        "bets": {
+          "$betUid": {
+            ".read": "auth != null",
+            ".write": "auth != null && auth.uid == $betUid",
+            ".validate": "!newData.exists() || newData.isNumber() || newData.isBoolean() || newData.hasChildren()"
+          }
+        },
+
+        "moves": {
+          "$moveId": {
+            ".read": "auth != null",
+            ".write": "auth != null",
+            ".validate": "!newData.exists() || (newData.hasChildren(['uid','cell','round','createdAt']) && newData.child('uid').val() == auth.uid)",
+
+            "uid": {
+              ".validate": "newData.isString() && newData.val() == auth.uid"
+            },
+
+            "cell": {
+              ".validate": "newData.isNumber()"
+            },
+
+            "round": {
+              ".validate": "newData.isNumber()"
+            },
+
+            "createdAt": {
+              ".validate": "newData.isNumber()"
+            },
+
+            "$other": {
+              ".validate": true
+            }
+          }
+        },
+
+        "players": {
+          "$uid": {
+            ".read": "auth != null",
+            ".write": "auth != null && ($uid == auth.uid || data.parent().parent().child('hostUid').val() == auth.uid || data.parent().parent().child('guestUid').val() == auth.uid)",
+            ".validate": "!newData.exists() || (newData.hasChild('uid') && newData.hasChild('name'))",
+
+            "uid": {
+              ".validate": "newData.isString() && newData.val() == $uid"
+            },
+
+            "name": {
+              ".validate": "newData.isString()"
+            },
+
+            "photoURL": {
+              ".validate": "!newData.exists() || newData.isString()"
+            },
+
+            "selectedAvatar": {
+              ".validate": "!newData.exists() || newData.isString() || newData.isNumber()"
+            },
+
+            "selectedXSkin": {
+              ".validate": "!newData.exists() || newData.isString()"
+            },
+
+            "selectedOSkin": {
+              ".validate": "!newData.exists() || newData.isString()"
+            },
+
+            "coinsAtJoin": {
+              ".validate": "!newData.exists() || newData.isNumber()"
+            },
+
+            "ready": {
+              ".validate": "!newData.exists() || newData.isBoolean()"
+            },
+
+            "$other": {
+              ".validate": false
+            }
+          }
+        },
+
+        "winnerLine": {
+          ".validate": "!newData.exists() || newData.hasChildren()"
+        },
+
+        "roundWinners": {
+          ".validate": "!newData.exists() || newData.hasChildren()"
+        },
+
+        "lastMove": {
+          ".validate": "!newData.exists() || newData.hasChildren()"
+        },
+
+        "$other": {
+          ".validate": false
+        }
+      }
+    },
+
+    "presence": {
+      "$uid": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.uid == $uid",
+        ".validate": "!newData.exists() || newData.hasChildren(['online','updatedAt'])",
+
+        "online": {
+          ".validate": "newData.isBoolean()"
+        },
+
+        "updatedAt": {
+          ".validate": "newData.isNumber()"
+        },
+
+        "$other": {
+          ".validate": true
+        }
+      }
+    }
+  }
+}

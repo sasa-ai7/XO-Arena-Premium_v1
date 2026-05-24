@@ -133,9 +133,9 @@ class _GamePageState extends State<GamePage> {
   }
 
   Future<void> _duckGameplayMusic() async {
-    if (_musicDucked) return;
-    _musicDucked = true;
-    await SoundService().duckMusic();
+    // Intentionally a no-op: gameplay must not auto-lower the user's chosen
+    // music volume. _musicDucked stays false so _restoreGameplayMusic also
+    // short-circuits, leaving the SoundService volume untouched.
   }
 
   Future<void> _restoreGameplayMusic() async {
@@ -612,7 +612,11 @@ class _GamePageState extends State<GamePage> {
         backgroundColor: AppPalette.bgDepth,
         body: SafeArea(
           child: AppBackground(
-            child: LayoutBuilder(
+            // Force LTR for the entire gameplay UI so Arabic locale never
+            // mirrors the board cells, score bar, or layout.
+            child: Directionality(
+              textDirection: TextDirection.ltr,
+              child: LayoutBuilder(
               builder: (context, constraints) {
                 final landscape = constraints.maxWidth > constraints.maxHeight;
                 final buttonHeight = landscape ? 48.0 : 52.0;
@@ -797,7 +801,9 @@ class _GamePageState extends State<GamePage> {
                           AppPalette.panelDeep.withValues(alpha: 0.99),
                         ],
                       ),
-                      child: GridView.builder(
+                      child: Directionality(
+                        textDirection: TextDirection.ltr,
+                        child: GridView.builder(
                         physics: const NeverScrollableScrollPhysics(),
                         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: _boardConfig.boardSize,
@@ -872,6 +878,7 @@ class _GamePageState extends State<GamePage> {
                             ),
                           );
                         },
+                      ),
                       ),
                     ),
                   );
@@ -1005,6 +1012,7 @@ class _GamePageState extends State<GamePage> {
                   ],
                 );
               },
+            ),
             ),
           ),
         ),
@@ -1266,7 +1274,7 @@ class EndDialog extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Image.asset(
-                        'assets/coin/dollar .png',
+                        'assets/coin/dollar.png',
                         height: 28,
                         fit: BoxFit.contain,
                       ),

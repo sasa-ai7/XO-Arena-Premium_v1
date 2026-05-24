@@ -17,12 +17,15 @@ class ProfileHeader extends StatelessWidget {
   final GameAvatar? avatar;
   final bool editingName;
   final TextEditingController usernameController;
-  final VoidCallback onCameraTap;
+  /// When null, the camera-icon overlay is not rendered. Set to null since
+  /// 2026-05 — profile photo now comes from Google Sign-In photoURL only.
+  final VoidCallback? onCameraTap;
   final VoidCallback onEditName;
   final VoidCallback onCancelEdit;
   final Future<void> Function() onSaveName;
 
   const ProfileHeader({
+    super.key,
     required this.username,
     required this.email,
     required this.provider,
@@ -34,7 +37,7 @@ class ProfileHeader extends StatelessWidget {
     required this.avatar,
     required this.editingName,
     required this.usernameController,
-    required this.onCameraTap,
+    this.onCameraTap,
     required this.onEditName,
     required this.onCancelEdit,
     required this.onSaveName,
@@ -56,40 +59,44 @@ class ProfileHeader extends StatelessWidget {
               fallbackName: username,
             ),
           ),
-          Positioned(
-            bottom: 4,
-            right: 4,
-            child: Container(
-              width: 28,
-              height: 28,
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [AppPalette.primary2, AppPalette.primary],
-                ),
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: AppPalette.gold.withValues(alpha: 0.40),
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppPalette.primary.withValues(alpha: 0.30),
-                    blurRadius: 20,
-                    spreadRadius: 2,
+          // Camera-icon overlay — only rendered if a tap handler was passed.
+          // The handler is currently null app-wide (profile photo is taken
+          // from Google Sign-In since 2026-05), so this branch never runs.
+          if (onCameraTap != null)
+            Positioned(
+              bottom: 4,
+              right: 4,
+              child: Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [AppPalette.primary2, AppPalette.primary],
                   ),
-                ],
-              ),
-              child: IconButton(
-                padding: EdgeInsets.zero,
-                constraints:
-                    const BoxConstraints.tightFor(width: 28, height: 28),
-                onPressed: onCameraTap,
-                icon:
-                    const Icon(Icons.camera_alt, size: 18, color: Colors.white),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: AppPalette.gold.withValues(alpha: 0.40),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppPalette.primary.withValues(alpha: 0.30),
+                      blurRadius: 20,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+                child: IconButton(
+                  padding: EdgeInsets.zero,
+                  constraints:
+                      const BoxConstraints.tightFor(width: 28, height: 28),
+                  onPressed: onCameraTap,
+                  icon: const Icon(Icons.camera_alt,
+                      size: 18, color: Colors.white),
+                ),
               ),
             ),
-          ),
         ],
       ),
     );

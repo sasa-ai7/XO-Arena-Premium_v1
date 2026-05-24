@@ -31,50 +31,8 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
   bool _privacyConsent = false;
   final _auth = AuthService();
 
-  // Birth date state
-  int? _selectedYear;
-  int? _selectedMonth;
-  int? _selectedDay;
-
-  DateTime? get _birthDate {
-    if (_selectedYear == null || _selectedMonth == null || _selectedDay == null) {
-      return null;
-    }
-    return DateTime(_selectedYear!, _selectedMonth!, _selectedDay!);
-  }
-
-  int _calculateAge(DateTime birthDate) {
-    final now = DateTime.now();
-    int age = now.year - birthDate.year;
-    if (now.month < birthDate.month ||
-        (now.month == birthDate.month && now.day < birthDate.day)) {
-      age--;
-    }
-    return age;
-  }
-
-  int _daysInMonth(int year, int month) => DateTime(year, month + 1, 0).day;
-
-  void _onBirthYearChanged(int? year) {
-    setState(() {
-      _selectedYear = year;
-      _clampBirthDay();
-    });
-  }
-
-  void _onBirthMonthChanged(int? month) {
-    setState(() {
-      _selectedMonth = month;
-      _clampBirthDay();
-    });
-  }
-
-  void _clampBirthDay() {
-    if (_selectedYear != null && _selectedMonth != null && _selectedDay != null) {
-      final maxDay = _daysInMonth(_selectedYear!, _selectedMonth!);
-      if (_selectedDay! > maxDay) _selectedDay = null;
-    }
-  }
+  // Age gate state: null = unanswered, true = Yes (13+), false = No.
+  bool? _isAdultConfirmed;
 
   Future<void> _create() async {
     FocusScope.of(context).unfocus();
@@ -88,15 +46,9 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
       return;
     }
 
-    // Validate birth date (required for COPPA compliance)
-    if (_birthDate == null) {
-      showTopNotification(context, l10n.selectBirthDate, color: AppPalette.danger);
-      return;
-    }
-
-    final age = _calculateAge(_birthDate!);
-    if (age < 13) {
-      _showAgeRestrictionDialog();
+    // Age gate (replaces full DOB collection — policy-safe).
+    if (_isAdultConfirmed != true) {
+      showTopNotification(context, l10n.ageGateRequired, color: AppPalette.danger);
       return;
     }
 
@@ -106,7 +58,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
         _email.text.trim(),
         _pass.text,
         _username.text.trim(),
-        age: age,
+        isAdultConfirmed: true,
       );
       if (!mounted) return;
       if (user != null) {
@@ -254,70 +206,8 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
     }
   }
 
-  Widget _buildBirthDateRow() {
+  Widget _buildAgeGateRow() {
     final l10n = AppL10n.of(context);
-    final currentYear = DateTime.now().year;
-    final years = List.generate(101, (i) => currentYear - i);
-    final maxDay = (_selectedYear != null && _selectedMonth != null)
-        ? _daysInMonth(_selectedYear!, _selectedMonth!)
-        : 31;
-    final days = List.generate(maxDay, (i) => i + 1);
-
-    final dropdownDecoration = BoxDecoration(
-      color: AppPalette.panelDeep.withOpacity(0.9),
-      borderRadius: BorderRadius.circular(14),
-      border: Border.all(
-        color: AppPalette.homeStroke.withOpacity(0.35),
-        width: 1.2,
-      ),
-    );
-
-    Widget styledDropdown<T>({
-      required String hint,
-      required T? value,
-      required List<T> items,
-      required String Function(T) label,
-      required void Function(T?) onChanged,
-      int flex = 1,
-    }) {
-      return Expanded(
-        flex: flex,
-        child: Container(
-          decoration: dropdownDecoration,
-          padding: const EdgeInsets.symmetric(horizontal: 10),
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<T>(
-              value: value,
-              isExpanded: true,
-              dropdownColor: AppPalette.panelDeep,
-              icon: const Icon(Icons.keyboard_arrow_down,
-                  color: AppPalette.primary, size: 18),
-              hint: Text(
-                hint,
-                style: safeInter(
-                  fontSize: 12,
-                  color: Colors.white.withOpacity(0.45),
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              style: safeInter(
-                fontSize: 13,
-                color: Colors.white,
-                fontWeight: FontWeight.w600,
-              ),
-              items: items
-                  .map((item) => DropdownMenuItem<T>(
-                        value: item,
-                        child: Text(label(item)),
-                      ))
-                  .toList(),
-              onChanged: onChanged,
-            ),
-          ),
-        ),
-      );
-    }
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -326,7 +216,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
             const Icon(Icons.cake_outlined, size: 16, color: AppPalette.primary),
             const SizedBox(width: 6),
             Text(
-              l10n.birthDateLabel,
+              l10n.ageGateQuestion,
               style: sectionFont(context).copyWith(fontSize: 11),
             ),
           ],
@@ -334,31 +224,30 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
         const SizedBox(height: 8),
         Row(
           children: [
-            styledDropdown<int>(
-              hint: l10n.yearHint,
-              value: _selectedYear,
-              items: years,
-              label: (y) => y.toString(),
-              onChanged: _onBirthYearChanged,
-              flex: 3,
+            Expanded(
+              child: AppPillButton(
+                label: l10n.ageGateYes,
+                fill: _isAdultConfirmed == true
+                    ? AppPalette.success
+                    : AppPalette.panelElevated,
+                onPressed: () =>
+                    setState(() => _isAdultConfirmed = true),
+                minHeight: 48,
+              ),
             ),
-            const SizedBox(width: 8),
-            styledDropdown<int>(
-              hint: l10n.monthHint,
-              value: _selectedMonth,
-              items: List.generate(12, (i) => i + 1),
-              label: (m) => l10n.monthNames[m - 1],
-              onChanged: _onBirthMonthChanged,
-              flex: 3,
-            ),
-            const SizedBox(width: 8),
-            styledDropdown<int>(
-              hint: l10n.dayHint,
-              value: _selectedDay,
-              items: days,
-              label: (d) => d.toString().padLeft(2, '0'),
-              onChanged: (d) => setState(() => _selectedDay = d),
-              flex: 2,
+            const SizedBox(width: 10),
+            Expanded(
+              child: AppPillButton(
+                label: l10n.ageGateNo,
+                fill: _isAdultConfirmed == false
+                    ? AppPalette.danger
+                    : AppPalette.panelElevated,
+                onPressed: () {
+                  setState(() => _isAdultConfirmed = false);
+                  _showAgeRestrictionDialog();
+                },
+                minHeight: 48,
+              ),
             ),
           ],
         ),
@@ -483,7 +372,7 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
                                     },
                                   ),
                                   const SizedBox(height: 12),
-                                  _buildBirthDateRow(),
+                                  _buildAgeGateRow(),
                                   const SizedBox(height: 12),
                                   AuthField(
                                     controller: _email,

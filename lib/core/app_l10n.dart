@@ -56,10 +56,6 @@ class AppL10n {
   String get emailHint => isAr ? 'البريد الإلكتروني' : 'Email';
   String get passwordHint => isAr ? 'كلمة المرور' : 'PASSWORD';
   String get confirmPasswordHint => isAr ? 'تأكيد كلمة المرور' : 'CONFIRM PASSWORD';
-  String get birthDateLabel => isAr ? 'تاريخ الميلاد' : 'BIRTH DATE';
-  String get yearHint => isAr ? 'السنة' : 'Year';
-  String get monthHint => isAr ? 'الشهر' : 'Month';
-  String get dayHint => isAr ? 'اليوم' : 'Day';
 
   String get agreeToTerms => isAr
       ? 'أوافق على الشروط والسياسات'
@@ -86,8 +82,6 @@ class AppL10n {
       isAr ? 'الرجاء تأكيد كلمة المرور' : 'Confirm your password';
   String get passwordsDoNotMatch =>
       isAr ? 'كلمتا المرور غير متطابقتين' : 'Passwords do not match';
-  String get selectBirthDate =>
-      isAr ? 'الرجاء اختيار تاريخ الميلاد.' : 'Please select your birth date.';
   String get acceptTermsRequired =>
       isAr ? 'الرجاء قبول الشروط والسياسات للمتابعة.' : 'Please accept the Terms & Privacy Policy to continue.';
   String get acceptPrivacyRequired =>
@@ -102,6 +96,32 @@ class AppL10n {
       ? 'يجب أن يكون عمرك 13 سنة على الأقل لاستخدام هذا التطبيق.'
       : 'You must be at least 13 years old to use this app.';
   String get ok => isAr ? 'حسناً' : 'OK';
+
+  // ── Age gate (Yes/No 13+ confirmation) ─────────────────────────────────
+  String get ageGateQuestion =>
+      isAr ? 'هل عمرك 13 سنة أو أكثر؟' : 'Are you 13 or older?';
+  String get ageGateYes =>
+      isAr ? 'نعم، عمري 13 أو أكثر' : 'Yes, I am 13 or older';
+  String get ageGateNo => isAr ? 'لا' : 'No';
+  String get ageGateRequired => isAr
+      ? 'الرجاء تأكيد عمرك للمتابعة.'
+      : 'Please confirm your age to continue.';
+
+  // ── Online Friends (Home card replacing Coin Battle) ───────────────────
+  String get onlineFriendsTitle => isAr ? 'أصدقاء أونلاين' : 'ONLINE FRIENDS';
+  String get onlineFriendsSubtitle => isAr
+      ? 'العب 1 ضد 1 برمز غرفة خاص.'
+      : 'Play 1v1 with a private room code.';
+  String get badgeMultiplayer => isAr ? 'متعدد اللاعبين' : 'MULTIPLAYER';
+
+  // ── Daily Reminders (Settings toggle) ──────────────────────────────────
+  String get dailyRemindersLabel =>
+      isAr ? 'تذكيرات يومية' : 'Daily Reminders';
+  String get dailyRemindersSubtitle =>
+      isAr ? 'إشعار يومي الساعة 9 مساءً' : '9 PM notification to play';
+  String get notificationPermissionDenied => isAr
+      ? 'تم رفض إذن الإشعارات.'
+      : 'Notification permission denied.';
 
   // ── Login screen ───────────────────────────────────────────────────────
   String get signIn => isAr ? 'تسجيل الدخول' : 'SIGN IN';
@@ -145,17 +165,6 @@ class AppL10n {
   String get activateProfileDesc => isAr
       ? 'أكمل الإعداد حتى يبقى تقدمك وإضافاتك ورصيدك مرتبطاً في كل مكان.'
       : 'Finish setup so your progress, cosmetics, and balance stay linked everywhere.';
-
-  // ── Month names ────────────────────────────────────────────────────────
-  List<String> get monthNames => isAr
-      ? [
-          'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
-          'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر',
-        ]
-      : [
-          'January', 'February', 'March', 'April', 'May', 'June',
-          'July', 'August', 'September', 'October', 'November', 'December',
-        ];
 
   // ── Verification dialog ────────────────────────────────────────────────
   String get verifyEmail => isAr ? 'تحقق من بريدك الإلكتروني' : 'Verify your email';
@@ -202,13 +211,10 @@ class AppL10n {
   String get vsAiSubtitle => isAr ? 'تدرب، تحدى، تسيطر' : 'Train, challenge, dominate';
   String get vsFriendTitle => isAr ? 'ضد صديق' : 'VS FRIEND';
   String get vsFriendSubtitle => isAr ? '1v1 على نفس الجهاز' : '1v1 on one device';
-  String get coinBattleTitle => isAr ? 'معركة العملات' : 'COIN BATTLE';
-  String get coinBattleSubtitle => isAr ? 'راهن بعملاتك واربح أكثر' : 'Risk coins, win bigger';
   String get levelsTitle => isAr ? 'المستويات' : 'LEVELS';
   String get levelsSubtitle => isAr ? 'تخطَّ المراحل، افتح المكافآت' : 'Beat stages, unlock rewards';
   String get badgeAi => isAr ? 'ذكاء' : 'AI';
   String get badgeHot => isAr ? 'رائج' : 'HOT';
-  String get badgeRisk => isAr ? 'مجازفة' : 'RISK';
   String get badgeReward => isAr ? 'مكافأة' : 'REWARD';
   String get saveYourProgress => isAr ? 'احفظ تقدمك' : 'SAVE YOUR PROGRESS';
   String get saveYourProgressDesc => isAr
@@ -294,8 +300,6 @@ class AppL10n {
       isAr ? 'يجب أن يطابق البريد بريدك في Google.' : 'Email must match your Google account email.';
   String get passwordAlreadyLinked =>
       isAr ? 'كلمة المرور هذه مرتبطة بحساب آخر.' : 'This password is already linked to another account.';
-  String get ageRestriction13Msg =>
-      isAr ? 'يجب أن يكون عمرك 13 سنة على الأقل.' : 'You must be at least 13 years old.';
   String tryAgainIn(String formatted) =>
       isAr ? 'أعد المحاولة خلال $formatted' : 'Try again in $formatted';
   String resendInSeconds(int s) =>
@@ -385,14 +389,31 @@ class AppL10n {
   String get nameTooLong20 =>
       isAr ? 'الاسم طويل جداً (الحد الأقصى 20 حرفاً).' : 'Name is too long (max 20 characters).';
   String get nameUpdated => isAr ? 'تم تحديث الاسم!' : 'Name updated!';
+  // ── Profile photo (Google-only since 2026-05) ────────────────────────────
+  // Custom photo upload was removed in favor of Google Sign-In photoURL only.
+  // The strings below are kept for now (marked deprecated) so any leftover
+  // compile site still resolves — but no live code path surfaces them.
+
+  /// Helper text shown in Settings explaining that the profile photo comes
+  /// from the user's Google account and cannot be edited in-app.
+  String get profilePhotoFromGoogle => isAr
+      ? 'تتم مزامنة صورة الملف الشخصي من حساب Google.'
+      : 'Profile photo is synced from your Google account.';
+
+  @Deprecated('Custom photo upload removed — Google photoURL only.')
   String get imageTooLarge =>
       isAr ? 'الصورة كبيرة جداً (الحد الأقصى 5 ميجابايت)' : 'Image too large (max 5MB)';
+  @Deprecated('Custom photo upload removed — Google photoURL only.')
   String get noInternetPhotoSaved =>
       isAr ? 'لا يوجد اتصال. تم حفظ الصورة محلياً.' : 'No internet connection. Photo saved locally.';
+  @Deprecated('Custom photo upload removed — Google photoURL only.')
   String get uploadingPhoto => isAr ? 'جارٍ رفع الصورة...' : 'Uploading photo...';
+  @Deprecated('Custom photo upload removed — Google photoURL only.')
   String get uploadNotAllowed =>
       isAr ? 'الرفع غير مسموح. تحقق من قواعد التخزين.' : 'Upload not allowed. Please check Storage rules.';
+  @Deprecated('Custom photo upload removed — Google photoURL only.')
   String get uploadFailed => isAr ? 'فشل الرفع. حاول مرة أخرى.' : 'Upload failed. Please try again.';
+  @Deprecated('Custom photo upload removed — Google photoURL only.')
   String get photoUpdated => isAr ? 'تم تحديث الصورة!' : 'Photo updated!';
   String get couldNotOpenLink => isAr ? 'تعذّر فتح الرابط.' : 'Could not open link.';
   String get mailNotAvailable => isAr ? 'تطبيق البريد غير متاح.' : 'Mail app not available.';
@@ -411,6 +432,7 @@ class AppL10n {
   String get otherReason => isAr ? 'أخرى (اكتب سببك)' : 'Other (write your reason)';
   String get accountDeletedSuccessfully =>
       isAr ? 'تم حذف الحساب بنجاح.' : 'Account deleted successfully.';
+  @Deprecated('Custom photo upload removed — Google photoURL only.')
   String uploadFailedCode(String code) =>
       isAr ? 'فشل الرفع ($code). حاول مرة أخرى.' : 'Upload failed ($code). Please try again.';
 
@@ -496,8 +518,6 @@ class AppL10n {
   // ── B1 — Exit match dialogs ───────────────────────────────────────────
   String get exitMatchTitle =>
       isAr ? 'الخروج من المباراة؟' : 'Exit Match?';
-  String get exitCoinBattleTitle =>
-      isAr ? 'الخروج من معركة العملات؟' : 'Exit Coin Battle?';
   String get exitLevelRunTitle =>
       isAr ? 'الخروج من جولة المستوى؟' : 'Exit Level Run?';
   String get exitMatchBody => isAr
@@ -506,9 +526,6 @@ class AppL10n {
   String get exitLevelBody => isAr
       ? 'إذا غادرت الآن سيتم إعادة ضبط جولتك الحالية من البداية.'
       : 'Leave now and your current campaign run resets back to the start.';
-  String leaveCoinMatchBody(int fee) => isAr
-      ? 'المغادرة الآن تعني خسارة هذه الجولة ورسوم الدخول البالغة $fee عملة.'
-      : 'Leaving now forfeits this run and the $fee coin entry for this battle.';
   String get stayBtn  => isAr ? 'البقاء'  : 'STAY';
   String get leaveBtn => isAr ? 'مغادرة' : 'LEAVE';
 
@@ -525,26 +542,9 @@ class AppL10n {
   String startingLevel(int n) =>
       isAr ? 'جارٍ بدء المستوى $n...' : 'Starting level $n...';
 
-  // ── B3 — Coin battle setup screen ────────────────────────────────────
-  String get playCoinAi =>
-      isAr ? 'العب مباراة عملات ضد الذكاء الاصطناعي' : 'PLAY COIN AI';
-  String get coinArena => isAr ? 'ساحة العملات' : 'COIN ARENA';
-  String get highStakesMatch =>
-      isAr ? 'مباراة عالية الرهان' : 'HIGH STAKES MATCH';
-  String get highStakesSubtitle => isAr
-      ? 'اختر رمزك وحدد قيمة الدخول ثم ابدأ مباراة مميزة ضد الذكاء الاصطناعي، وسيتم تحديث المحفظة مباشرة بعد النتيجة.'
-      : 'Pick your side, lock an entry fee, and enter a premium AI match where the wallet updates instantly on result.';
-  String get selectEntry =>
-      isAr ? 'اختر قيمة الدخول' : 'SELECT ENTRY';
-  String entryCoinsLabel(int fee) =>
-      isAr ? 'دخول: $fee عملة' : 'ENTRY $fee COINS';
-  String get availableLabel => isAr ? 'المتاح'     : 'AVAILABLE';
+  // ── Setup screens shared labels ───────────────────────────────────────
   String get boardSizeLabel => isAr ? 'حجم اللوحة' : 'BOARD SIZE';
-  String get boardSizeDesc  => isAr
-      ? 'مباريات العملات تمنحك تحديًا أعلى دون تغيير قواعد الرهان.'
-      : 'Coin battles scale the arena without changing the stake rules.';
   String get chooseSymbol    => isAr ? 'اختر الرمز'    : 'CHOOSE SYMBOL';
-  String get coinAmountLabel => isAr ? 'مقدار العملات' : 'COIN AMOUNT';
   String get coinAmountDesc  => isAr
       ? 'يتم خصم العملات عند بدء المباراة وإعادتها تلقائيًا في حالة التعادل.'
       : 'Funds are deducted when the match begins and refunded automatically on draws.';
@@ -786,6 +786,246 @@ class AppL10n {
 
   String get stayOffline =>
       isAr ? 'البقاء أوفلاين' : 'Stay Offline';
+
+  // ── Arena (private friend rooms) ───────────────────────────────────────
+  String get arenaTab => isAr ? 'الساحة' : 'Arena';
+  String get inviteFriendsTitle => isAr ? 'دعوة الأصدقاء' : 'Invite Friends';
+  String get inviteFriendsBody => isAr
+      ? 'ادعو 10 من أصدقائك واكسب 1000 كوين.\nتكسب 100 كوين عن كل صديق جديد يدخل كود الدعوة الخاص بك.'
+      : 'Invite 10 friends and earn 1000 coins.\nYou earn 100 coins for each new friend who enters your invite code.';
+  String get shareInvite => isAr ? 'مشاركة الدعوة' : 'Share Invite';
+  String get enterInviteCode => isAr ? 'إدخال كود الدعوة' : 'Enter Invite Code';
+  String get playWithFriend => isAr ? 'العب مع صديق' : 'Play With Friend';
+  String get createRoom => isAr ? 'إنشاء روم' : 'Create Room';
+  String get joinRoom => isAr ? 'دخول روم' : 'Join Room';
+  String get roomCode => isAr ? 'كود الروم' : 'Room Code';
+  String get rounds => isAr ? 'الجولات' : 'Rounds';
+  String get boardLabel => isAr ? 'الخريطة' : 'Board';
+  String get notReadyLabel => isAr ? 'غير جاهز' : 'Not Ready';
+  String get startRoom => isAr ? 'بدء الروم' : 'Start Room';
+  String get shareRoom => isAr ? 'مشاركة الروم' : 'Share Room';
+  String get waitingForFriend => isAr ? 'في انتظار صديقك' : 'Waiting for friend';
+  String get leaveRoom => isAr ? 'مغادرة الروم' : 'Leave Room';
+  String get cancelRoom => isAr ? 'إلغاء الروم' : 'Cancel Room';
+  String get roomNotFound => isAr ? 'الروم غير موجود.' : 'Room not found.';
+  String get roomIsFull => isAr ? 'الروم ممتلئ.' : 'Room is full.';
+  String get roomExpired => isAr ? 'انتهت صلاحية الروم.' : 'Room expired.';
+  String get cantJoinOwnRoom => isAr
+      ? 'لا يمكنك دخول الروم الخاص بك كلاعب ثاني.'
+      : 'You cannot join your own room.';
+  String get alreadyInActiveRoom => isAr
+      ? 'أنت بالفعل داخل روم نشط.'
+      : 'You are already in an active room.';
+  String get drawReplayRound => isAr
+      ? 'تعادل! سيتم إعادة نفس الجولة.'
+      : 'Draw! Replay this round.';
+  String get opponentLeftYouWin => isAr
+      ? 'غادر الخصم الروم. لقد فزت.'
+      : 'Opponent left the room. You win.';
+  String get leaveCountsAsLoss => isAr
+      ? 'إذا خرجت الآن سيتم احتسابها خسارة. هل تريد المتابعة؟'
+      : 'Leaving now will count as a loss. Continue?';
+  String get leaveRoomTitle => isAr ? 'مغادرة الروم؟' : 'Leave Room?';
+  String get leaveRoomConfirm => isAr
+      ? 'هل أنت متأكد أنك تريد الخروج؟'
+      : 'Are you sure you want to leave?';
+  String get cancelRoomTitle => isAr ? 'إلغاء الروم؟' : 'Cancel Room?';
+  String get cancelRoomConfirm => isAr
+      ? 'سيتم إلغاء الروم وخروج جميع اللاعبين. هل تريد المتابعة؟'
+      : 'The room will be cancelled and all players removed. Continue?';
+  String get fightWord => isAr ? 'ابدأ' : 'Fight';
+  String get keypadDelete => isAr ? 'مسح' : 'Delete';
+  String get keypadEnter => isAr ? 'دخول' : 'Enter';
+  String get hostLabel => isAr ? 'المضيف' : 'Host';
+  String get guestLabel => isAr ? 'الضيف' : 'Guest';
+  String get timeLeftLabel => isAr ? 'الوقت المتبقي' : 'Time left';
+  String get copyCode => isAr ? 'نسخ الكود' : 'Copy Code';
+  String get codeCopied => isAr ? 'تم نسخ الكود' : 'Code copied';
+  String get currentRoundLabel => isAr ? 'الجولة' : 'Round';
+  String get roomLabel => isAr ? 'الروم' : 'Room';
+  String get prizeLabel => isAr ? 'الجائزة' : 'Prize';
+  String get coinsWord => isAr ? 'كوين' : 'coins';
+  String get yourTurn => isAr ? 'دورك' : 'Your turn';
+  String get opponentTurn => isAr ? 'دور الخصم' : 'Opponent turn';
+  String get youWon => isAr ? 'لقد فزت!' : 'You won!';
+  String get roomFinished => isAr ? 'انتهى الروم' : 'Room finished';
+  String get notEnoughCoinsCreate => isAr
+      ? 'لا تمتلك كوينات كافية لإنشاء هذا الروم.'
+      : 'Not enough coins to create this room.';
+  String get notEnoughCoinsJoin => isAr
+      ? 'لا تملك كوينات كافية لدخول هذا الروم.'
+      : 'You do not have enough coins to join this room.';
+  String get opponentNotEnoughCoins => isAr
+      ? 'لا يمتلك الخصم كوينات كافية للرهان.'
+      : 'Opponent does not have enough coins.';
+  String get playWithCoins => isAr ? 'اللعب بالكوينز' : 'Play with Coins';
+  String get betAmount => isAr ? 'قيمة الرهان' : 'Bet Amount';
+  String get yourCoins => isAr ? 'كوينزك' : 'Your Coins';
+  String get perRoundMaps => isAr ? 'خرائط الجولات' : 'Per-round maps';
+  String get mapsLabel => isAr ? 'الخرائط' : 'Maps';
+  String get roomSummary => isAr ? 'ملخص الروم' : 'Room Summary';
+  String get copiedToClipboard => isAr
+      ? 'تم نسخ النص.'
+      : 'Copied to clipboard.';
+  String get referralCompletedShort => isAr ? 'مكتمل' : 'Completed';
+  String get yourInviteCode => isAr ? 'كود الدعوة الخاص بك' : 'Your invite code';
+  String get referralProgress => isAr ? 'تقدم الدعوات' : 'Referral progress';
+  String get referralCompleted => isAr
+      ? 'لقد أكملت كل المكافآت! شكراً لك.'
+      : 'You have unlocked all rewards. Thank you!';
+  String get referralEarned => isAr ? 'الكوينات المكتسبة' : 'Coins earned';
+  String get enterInviteCodeTitle => isAr ? 'أدخل كود الدعوة' : 'Enter Invite Code';
+  String get referralCodeMustBe9 => isAr
+      ? 'كود الدعوة يجب أن يكون 9 أرقام.'
+      : 'Invite code must be 9 digits.';
+  String get referralCantUseOwn => isAr
+      ? 'لا يمكنك استخدام كود الدعوة الخاص بك.'
+      : 'You cannot use your own invite code.';
+  String get referralAlreadyUsed => isAr
+      ? 'لقد استخدمت كود دعوة من قبل.'
+      : 'You have already used an invite code.';
+  String get referralCodeInvalid => isAr
+      ? 'كود الدعوة غير صحيح.'
+      : 'Invalid invite code.';
+  String get referralCodeNotFound => isAr
+      ? 'كود الدعوة غير موجود.'
+      : 'Invite code not found.';
+  String get referralRedeemError => isAr
+      ? 'لم يتم استخدام كود الدعوة. حاول مرة أخرى.'
+      : 'Could not redeem invite code. Please try again.';
+  String get giftClaimed => isAr ? 'تم استلام الهدية!' : 'Gift Claimed!';
+  String referralReceivedCoins(int coins, String name) => isAr
+      ? 'حصلت على $coins كوينز من $name'
+      : 'You received $coins coins from $name';
+  String get shareYourCode => isAr
+      ? 'شارك كودك مع أصدقائك أيضاً!'
+      : 'Share your code with friends too!';
+  String get myInviteCode => isAr ? 'كود الدعوة الخاص بي' : 'My Invite Code';
+  String get pasteCode => isAr ? 'لصق' : 'Paste';
+  String get clipboardNoValidInviteCode => isAr
+      ? 'الحافظة لا تحتوي على كود دعوة صالح'
+      : 'Clipboard does not contain a valid invite code';
+  String get clipboardNoValidRoomCode => isAr
+      ? 'الحافظة لا تحتوي على كود غرفة صالح'
+      : 'Clipboard does not contain a valid room code';
+  String get referralNotEligible => isAr
+      ? 'كود الدعوة متاح فقط للمستخدمين الجدد.'
+      : 'Invite code is only available for new users.';
+  String get referralSuccess => isAr
+      ? 'تم تطبيق كود الدعوة بنجاح!'
+      : 'Invite code applied successfully!';
+  String get arenaOnlineOnly => isAr
+      ? 'الساحة متاحة فقط في وضع الاتصال.'
+      : 'Arena is available in Online Mode only.';
+  String get pendingRewardCredited => isAr
+      ? 'تم استلام مكافأة الدعوة!'
+      : 'Invite reward received!';
+
+  // ── Arena match screen (in-game UI) ───────────────────────────────────
+  /// Small banner that appears in the arena match when the RTDB connection
+  /// is briefly lost. Kept short so it fits the floating chip layout.
+  String get reconnectingShort =>
+      isAr ? 'جارٍ إعادة الاتصال…' : 'Reconnecting…';
+
+  /// Header above the round counter on the arena game screen.
+  String get roundWord => isAr ? 'الجولة' : 'ROUND';
+
+  /// Small badge next to the local player's name.
+  String get youTag => isAr ? 'أنت' : 'YOU';
+
+  /// "YOUR MARK" label above the equipped X/O preview in the self card.
+  String get yourMarkLabel => isAr ? 'علامتك' : 'YOUR MARK';
+
+  /// "OPP MARK" label above the equipped X/O preview in the opponent card.
+  String get oppMarkLabel => isAr ? 'علامة الخصم' : 'OPP MARK';
+
+  /// Button on the end-of-match dialog that returns to the arena hub.
+  String get backToArena => isAr ? 'العودة للساحة' : 'BACK TO ARENA';
+
+  /// Round-end banner (self winner).
+  String get roundWonBanner => isAr ? 'فزت بالجولة' : 'ROUND WON';
+
+  /// Round-end banner (opponent winner).
+  String get roundLostBanner => isAr ? 'خسرت الجولة' : 'ROUND LOST';
+
+  /// Round-end / match-end short "DRAW" headline (the longer form is
+  /// [drawResult] — kept distinct for visual hierarchy in the final dialog).
+  String get drawShort => isAr ? 'تعادل' : 'DRAW';
+
+  /// Gold "+N coins" badge shown when a bet payout was credited.
+  String coinsWonBadge(int coins) =>
+      isAr ? '+$coins كوينز' : '+$coins coins';
+
+  // ── Settings — additional localized labels ────────────────────────────
+  /// Title of the legacy Privacy & Terms dialog.
+  String get privacyAndTerms => isAr ? 'الخصوصية والشروط' : 'PRIVACY & TERMS';
+
+  /// Title of the Contact Support / Refunds dialog.
+  String get contactSupportTitle =>
+      isAr ? 'التواصل مع الدعم' : 'Contact Support / Refunds';
+
+  /// Send Email button label in the Contact Support dialog.
+  String get sendEmailBtn => isAr ? 'إرسال بريد' : 'Send email';
+
+  /// Tile label for the new web Contact link (settings → Support & Legal).
+  String get contactLinkLabel => isAr ? 'تواصل معنا' : 'Contact';
+
+  /// Tile subtitle for the new Contact tile.
+  String get contactLinkSubtitle =>
+      isAr ? 'افتح صفحة التواصل على الويب' : 'Open the contact page on the web';
+
+  /// Shown when re-authentication for account deletion fails.
+  String get reauthFailedRetry => isAr
+      ? 'فشل التحقق من الهوية. حاول مرة أخرى.'
+      : 'Re-authentication failed. Please try again.';
+
+  // ── Referral additions ────────────────────────────────────────────────
+  /// Shown when the invite code page fails to load after retries.
+  String get referralLoadFailed => isAr
+      ? 'تعذّر تحميل كود الدعوة الخاص بك.'
+      : "Couldn't load your invite code.";
+
+  /// Generic network-error message shown by referral actions on timeout / no
+  /// connectivity.
+  String get referralNetworkError => isAr
+      ? 'خطأ في الشبكة. تحقق من الاتصال وحاول مرة أخرى.'
+      : 'Network error. Please check your connection and try again.';
+
+  /// Bilingual invite-share message (Arabic + English in a single blob).
+  String inviteShareMessage(String referralCode) =>
+      'انضم إلى XO Arena واستخدم كود الدعوة الخاص بي: $referralCode\n'
+      'كل لاعب جديد يساعدني أكسب مكافآت داخل اللعبة!\n\n'
+      '--------------------\n\n'
+      'Join XO Arena and use my invite code: $referralCode\n'
+      'Help me earn rewards and start playing XO Arena!';
+
+  /// Bilingual room-share message (Arabic + English in a single blob).
+  String roomShareMessage({
+    required String roomCode,
+    required int roundCount,
+    required String maps,
+    required bool betEnabled,
+    required int betAmount,
+    required int prizePool,
+  }) {
+    final betAr = betEnabled
+        ? '$betAmount كوين لكل لاعب — الجائزة $prizePool كوين'
+        : 'بدون رهان';
+    final betEn = betEnabled
+        ? '$betAmount coins each — Prize $prizePool coins'
+        : 'Off';
+    return 'تعالى العب معي في XO Arena\n'
+        'كود الروم: $roomCode\n'
+        'الجولات: $roundCount\n'
+        'الخرائط: $maps\n'
+        'الرهان: $betAr\n\n'
+        '--------------------\n\n'
+        'Play XO Arena with me!\n'
+        'Room code: $roomCode\n'
+        'Rounds: $roundCount\n'
+        'Maps: $maps\n'
+        'Bet: $betEn';
+  }
 }
 
 // ── Localizations delegate ─────────────────────────────────────────────────
