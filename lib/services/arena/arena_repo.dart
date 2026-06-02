@@ -20,6 +20,7 @@ enum ArenaJoinError {
   alreadyInActiveRoom,
   notWaiting,
   notEnoughCoins,
+  kickedCooldown,
   networkTimeout,
   unknown,
 }
@@ -27,13 +28,132 @@ enum ArenaJoinError {
 class ArenaJoinResult {
   final ArenaRoom? room;
   final ArenaJoinError? error;
-  const ArenaJoinResult.success(this.room) : error = null;
-  const ArenaJoinResult.failure(this.error) : room = null;
+
+  /// For [ArenaJoinError.kickedCooldown], the absolute epoch (ms) at which
+  /// the cooldown lifts. Null for all other errors.
+  final int? kickCooldownUntilMs;
+
+  const ArenaJoinResult.success(this.room)
+      : error = null,
+        kickCooldownUntilMs = null;
+  const ArenaJoinResult.failure(this.error, {this.kickCooldownUntilMs})
+      : room = null;
   bool get isSuccess => room != null;
 }
 
-/// Maximum room lifetime from creation (10 minutes).
+/// Why a host-kick attempt failed. `null` failure means the kick succeeded.
+enum ArenaKickFailure {
+  notHost,
+  noGuest,
+  badStatus,
+  permissionDenied,
+  network,
+  unknown,
+}
+
+/// Structured result for [ArenaRepo.kickGuest] so the UI can surface a
+/// specific message rather than the generic "Could not kick player" toast.
+class ArenaKickResult {
+  final bool success;
+  final ArenaKickFailure? failure;
+  const ArenaKickResult._(this.success, this.failure);
+  const ArenaKickResult.ok() : this._(true, null);
+  const ArenaKickResult.fail(ArenaKickFailure reason) : this._(false, reason);
+}
+
+/// Outcome of validating a user's saved active-room pointer.
+enum ActiveRoomValidity {
+  /// No saved active-room pointer at all.
+  none,
+
+  /// Pointer is valid: room exists, user is still a member, not kicked, and
+  /// the room is in a resumable (non-terminal) state.
+  valid,
+
+  /// Pointer references a room that no longer exists in RTDB.
+  missing,
+  finished,
+  cancelled,
+  expired,
+  abandoned,
+
+  /// Room exists but the user is neither host nor guest anymore.
+  notMember,
+
+  /// Room exists, the user is not a member, and a kick entry is recorded for
+  /// them — i.e. the host removed them.
+  kicked,
+}
+
+/// Result of [ArenaRepo.validateActiveRoom]. When [validity] is anything other
+/// than [ActiveRoomValidity.valid]/[ActiveRoomValidity.none], the underlying
+/// mirror has already been cleared as a side effect.
+class ActiveRoomCheck {
+  final ActiveRoomValidity validity;
+  final ArenaRoom? room;
+  final String? code;
+  const ActiveRoomCheck(this.validity, {this.room, this.code});
+
+  bool get isValid => validity == ActiveRoomValidity.valid && room != null;
+
+  /// Where a valid room should resume to: `'game'` for live play states,
+  /// `'lobby'` for pre-play states.
+  String get target {
+    final s = room?.status ?? '';
+    if (s == 'playing' || s == 'round_end' || s == 'countdown') return 'game';
+    return 'lobby';
+  }
+}
+
+/// 60-second rejoin cooldown applied when a host kicks a guest.
+const int kArenaKickCooldownMs = 60 * 1000;
+
+/// Maximum room lifetime from creation (10 minutes). Applies ONLY to empty
+/// "waiting" rooms where no guest has joined yet.
 const int kArenaRoomTtlMs = 10 * 60 * 1000;
+
+/// Inactivity timeout for *occupied* rooms (a guest has joined or the match has
+/// started). If the room has had no activity (no `updatedAt` write and no
+/// presence heartbeat from either player) for this long it is considered stale
+/// and is expired. Mirrored on the Cloud Function janitor.
+const int kArenaInactivityTtlMs = 20 * 60 * 1000;
+
+/// How a player's intentional leave was resolved by [ArenaRepo.resolvePlayerLeaveRoom].
+enum RoomLeaveMode {
+  /// Room was already gone / terminal — nothing to settle.
+  alreadyResolved,
+
+  /// Caller is not a member of the room (kicked / never joined).
+  notMember,
+
+  /// Pre-play room with no committed bet — room cancelled / seat cleared,
+  /// no coin movement.
+  cancel,
+
+  /// Coins were locked or the match had started — the leaver forfeits and the
+  /// opponent is recorded as the winner. The opponent's client (or its
+  /// startup settlement) performs the idempotent payout.
+  forfeit,
+}
+
+/// Structured outcome of a [ArenaRepo.resolvePlayerLeaveRoom] call so callers
+/// can log / surface the right message.
+class RoomLeaveResolution {
+  final RoomLeaveMode mode;
+  final String? winnerUid;
+  final String? loserUid;
+  final bool betEnabled;
+  final int betAmount;
+  final int prizePool;
+  const RoomLeaveResolution(
+    this.mode, {
+    this.winnerUid,
+    this.loserUid,
+    this.betEnabled = false,
+    this.betAmount = 0,
+    this.prizePool = 0,
+  });
+}
 
 /// Project's EU-West RTDB instance URL. The default `FirebaseDatabase.instance`
 /// hits the US region; we pin to the matching region so rules and latency
@@ -55,6 +175,17 @@ class ArenaRepo {
   DatabaseReference get _roomsRef => _db.ref('rooms');
 
   String? get _uid => FirebaseAuth.instance.currentUser?.uid;
+
+  /// Room codes for which the user back-dismissed the "Active Room Found"
+  /// resume prompt during this app session. In-memory only — a full app
+  /// restart re-arms the prompt if the room is still valid.
+  final Set<String> resumeDismissedThisSession = <String>{};
+
+  /// True while a resume/settlement flow is presenting a dialog. Shared between
+  /// the Home startup check and the Arena-tab check so the two can never stack
+  /// two dialogs on top of each other in the narrow race where the user opens
+  /// the Online tab at the same moment the startup check fires.
+  bool resumeFlowBusy = false;
 
   // ── Bounded-future helper ────────────────────────────────────────────────
   //
@@ -154,6 +285,110 @@ class ArenaRepo {
         (expiresAt > 0 && now > expiresAt)) {
       await clearActiveRoomMirror(uid);
     }
+  }
+
+  /// Epoch-ms of the most recent activity on a room: the later of its
+  /// `updatedAt` and either player's presence `lastSeenMs` heartbeat.
+  int _lastActivityMs(ArenaRoom room) {
+    int last = room.updatedAt;
+    for (final entry in room.playersPresence.values) {
+      final ls = entry['lastSeenMs'];
+      final v = ls is num
+          ? ls.toInt()
+          : int.tryParse(ls?.toString() ?? '') ?? 0;
+      if (v > last) last = v;
+    }
+    return last;
+  }
+
+  /// True when an *occupied* room (guest joined, or past the waiting phase) has
+  /// had no activity for [kArenaInactivityTtlMs]. Empty "waiting" rooms are
+  /// governed by the 10-minute creation TTL ([kArenaRoomTtlMs]) instead and
+  /// always return false here. Terminal rooms are never "stale" (already done).
+  bool isRoomStaleByInactivity(ArenaRoom room) {
+    final occupied =
+        (room.guestUid != null && room.guestUid!.isNotEmpty) ||
+            room.status != 'waiting';
+    if (!occupied) return false;
+    const terminal = <String>{
+      'finished',
+      'expired',
+      'cancelled',
+      'abandoned',
+    };
+    if (terminal.contains(room.status)) return false;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    return now - _lastActivityMs(room) > kArenaInactivityTtlMs;
+  }
+
+  /// Authoritative check of whether the user has a *resumable* active room.
+  ///
+  /// A saved pointer is valid only when the room exists, is not in a terminal
+  /// state / expired, the user is still host or guest, and the user has not
+  /// been kicked. Any non-valid outcome clears the stale mirror as a side
+  /// effect so callers can safely treat a kicked/finished/stale pointer as
+  /// "no active room" (this is the fix for the kicked-guest-returns-to-old-room
+  /// bug: the host cannot clear the guest's Firestore mirror under the rules,
+  /// so the guest's own client must reconcile it here).
+  Future<ActiveRoomCheck> validateActiveRoom(String uid) async {
+    final code = await getActiveRoomCode(uid);
+    if (kDebugMode) {
+      debugPrint('[ARENA_ACTIVE_ROOM] check uid=$uid savedRoom=$code');
+    }
+    if (code == null) {
+      return const ActiveRoomCheck(ActiveRoomValidity.none);
+    }
+
+    Future<ActiveRoomCheck> clearAnd(ActiveRoomValidity v, String reason) async {
+      await clearActiveRoomMirror(uid);
+      if (kDebugMode) {
+        debugPrint('[ARENA_ACTIVE_ROOM] cleared reason=$reason uid=$uid '
+            'room=$code');
+        debugPrint('[ARENA_ACTIVE_ROOM] check uid=$uid savedRoom=$code '
+            'result=$reason');
+      }
+      return ActiveRoomCheck(v, code: code);
+    }
+
+    final room = await readRoom(code);
+    if (room == null) {
+      return clearAnd(ActiveRoomValidity.missing, 'missing');
+    }
+
+    final status = room.status;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (status == 'finished') return clearAnd(ActiveRoomValidity.finished, 'finished');
+    if (status == 'cancelled') return clearAnd(ActiveRoomValidity.cancelled, 'cancelled');
+    if (status == 'abandoned') return clearAnd(ActiveRoomValidity.abandoned, 'abandoned');
+    if (status == 'expired') return clearAnd(ActiveRoomValidity.expired, 'expired');
+    final occupied =
+        (room.guestUid != null && room.guestUid!.isNotEmpty) ||
+            room.status != 'waiting';
+    // Empty waiting room: 10-minute creation TTL. Occupied room: 20-minute
+    // inactivity TTL (a long match must not be killed by the creation TTL).
+    if (!occupied && room.expiresAt > 0 && now > room.expiresAt) {
+      return clearAnd(ActiveRoomValidity.expired, 'expired_waiting_ttl');
+    }
+    if (occupied && isRoomStaleByInactivity(room)) {
+      return clearAnd(ActiveRoomValidity.expired, 'stale_inactive');
+    }
+
+    final isMember = uid == room.hostUid || uid == room.guestUid;
+    if (!isMember) {
+      if (room.kickedUsers[uid] != null) {
+        if (kDebugMode) {
+          debugPrint('[ARENA_KICK] guest_detected_kicked uid=$uid room=$code');
+        }
+        return clearAnd(ActiveRoomValidity.kicked, 'kicked');
+      }
+      return clearAnd(ActiveRoomValidity.notMember, 'not_member');
+    }
+
+    if (kDebugMode) {
+      debugPrint('[ARENA_ACTIVE_ROOM] check uid=$uid savedRoom=$code '
+          'result=valid status=$status');
+    }
+    return ActiveRoomCheck(ActiveRoomValidity.valid, room: room, code: code);
   }
 
   // ── Create / Join / Leave ────────────────────────────────────────────────
@@ -271,17 +506,21 @@ class ArenaRepo {
     if (uid == null) return const ArenaJoinResult.failure(ArenaJoinError.unknown);
     if (kDebugMode) debugPrint('[ARENA] join attempt code=$code');
 
-    // Reconcile any stale active-room pointer BEFORE the guard. The pointer
-    // could outlive a crashed session / finished room, which would otherwise
-    // surface as a misleading "Room is full" or "Already in a room" error
-    // on the user's first tap on a fresh code.
-    await reconcileActiveRoomMirror(uid);
-
-    // Active room guard.
-    final activeCode = await getActiveRoomCode(uid);
-    if (kDebugMode) debugPrint('[ARENA] activeRoom=$activeCode requested=$code');
-    if (activeCode != null && activeCode != code) {
-      if (kDebugMode) debugPrint('[ARENA] join failed code=$code reason=alreadyInActiveRoom');
+    // Validate any saved active-room pointer BEFORE the guard. A kicked /
+    // stale / finished pointer (which could otherwise surface as a misleading
+    // "Already in a room" error on the user's first tap on a fresh code) is
+    // cleared as a side effect by validateActiveRoom, so only a *valid* pointer
+    // to a different live room blocks the join.
+    final active = await validateActiveRoom(uid);
+    if (kDebugMode) {
+      debugPrint('[ARENA] activeRoom=${active.code} valid=${active.isValid} '
+          'requested=$code');
+    }
+    if (active.isValid && active.code != code) {
+      if (kDebugMode) {
+        debugPrint('[ARENA] join failed code=$code reason=alreadyInActiveRoom '
+            'active=${active.code}');
+      }
       return const ArenaJoinResult.failure(ArenaJoinError.alreadyInActiveRoom);
     }
 
@@ -316,6 +555,25 @@ class ArenaRepo {
     if (hostUid == uid) {
       if (kDebugMode) debugPrint('[ARENA] join failed code=$code reason=selfJoin');
       return const ArenaJoinResult.failure(ArenaJoinError.selfJoin);
+    }
+    // Kick-cooldown guard. The host only writes `kickedUsers/<uid>` entries
+    // when removing this specific guest, so the check is per-room.
+    final kickedEntry = (raw['kickedUsers'] is Map)
+        ? ((raw['kickedUsers'] as Map)[uid])
+        : null;
+    if (kickedEntry is Map) {
+      final untilMs = (kickedEntry['untilMs'] as num?)?.toInt() ?? 0;
+      if (untilMs > now) {
+        if (kDebugMode) {
+          final remaining = ((untilMs - now) / 1000).ceil();
+          debugPrint('[ARENA_JOIN_BLOCKED] code=$code uid=$uid '
+              'reason=kick_cooldown remaining=${remaining}s');
+        }
+        return ArenaJoinResult.failure(
+          ArenaJoinError.kickedCooldown,
+          kickCooldownUntilMs: untilMs,
+        );
+      }
     }
     final status = (raw['status'] ?? 'waiting').toString();
     if (status != 'waiting') {
@@ -594,9 +852,9 @@ class ArenaRepo {
     return result.committed;
   }
 
-  /// Host writes the resolution of a round (winner advances, draw replays).
-  ///
-  /// Also rotates [boardSize] to match the *new* round's map when advancing.
+  /// Phase A: Host writes the terminal board state + `status=round_end`.
+  /// The board is NOT cleared — both clients see the winning/full board.
+  /// `roundVersion` is bumped so the UI can key on it.
   Future<void> applyRoundResult({
     required String code,
     required int currentRound,
@@ -606,6 +864,54 @@ class ArenaRepo {
     required int scoreHost,
     required int scoreGuest,
     required String? roundWinnerUid,
+    required int roundVersion,
+  }) async {
+    final isDraw = roundWinnerUid == null;
+    final nextVersion = roundVersion + 1;
+    if (kDebugMode) {
+      debugPrint('[ARENA_PHASE_A] code=$code winner=$roundWinnerUid '
+          'draw=$isDraw version=$roundVersion->$nextVersion '
+          'score=$scoreHost-$scoreGuest');
+    }
+    await _roomsRef.child(code).update(<String, Object?>{
+      'status': 'round_end',
+      'score': <String, Object?>{
+        'host': scoreHost,
+        'guest': scoreGuest,
+      },
+      'roundWinnerUid': roundWinnerUid,
+      'lastRoundResult': isDraw ? 'draw' : 'win',
+      'lastRoundEndAt': ServerValue.timestamp,
+      'roundVersion': nextVersion,
+      'updatedAt': ServerValue.timestamp,
+    });
+    if (kDebugMode) {
+      if (isDraw) {
+        debugPrint(
+            '[ARENA_DRAW] room=$code round=$currentRound phase=round_end rv=$nextVersion');
+        debugPrint(
+            '[ARENA_ROUND] room=$code round=$currentRound result=draw phase=round_end');
+      } else {
+        debugPrint(
+            '[ARENA_ROUND] room=$code round=$currentRound result=win winner=$roundWinnerUid '
+            'phase=round_end scoreHost=$scoreHost scoreGuest=$scoreGuest rv=$nextVersion');
+      }
+    }
+  }
+
+  /// Phase B: Host advances to the next round. Uses an RTDB transaction
+  /// for idempotency — only proceeds if `status` is still `round_end`
+  /// and `roundVersion` matches `expectedRoundVersion`.
+  Future<bool> advanceToNextRound({
+    required String code,
+    required int currentRound,
+    required int currentRoundIndex,
+    required int roundsCount,
+    required List<String> roundMaps,
+    required String? roundWinnerUid,
+    required String xUid,
+    required String oUid,
+    required int expectedRoundVersion,
   }) async {
     final isDraw = roundWinnerUid == null;
     final nextRound = isDraw ? currentRound : currentRound + 1;
@@ -615,26 +921,70 @@ class ArenaRepo {
     final nextBoardSize = int.tryParse(nextMap.split('x').first) ?? 3;
     final cellCount = nextBoardSize * nextBoardSize;
     final emptyBoard = List<String>.filled(cellCount, '');
-    await _roomsRef.child(code).update(<String, Object?>{
-      'board': emptyBoard,
-      'boardSize': nextBoardSize,
-      'score': <String, Object?>{
-        'host': scoreHost,
-        'guest': scoreGuest,
-      },
-      'currentRound': nextRound,
-      'currentRoundIndex': safeIndex,
-      'roundWinnerUid': roundWinnerUid,
-      'updatedAt': ServerValue.timestamp,
-    });
+    final firstTurn = xUid;
+    final nextRoundVersion = expectedRoundVersion + 1;
+
     if (kDebugMode) {
-      if (isDraw) {
-        debugPrint('[ARENA] draw replaying round=$currentRound');
+      debugPrint('[ARENA_PHASE_B] transaction start room=$code '
+          'expectedVersion=$expectedRoundVersion');
+    }
+    final ref = _roomsRef.child(code);
+    final result = await ref.runTransaction((current) {
+      if (current == null) {
+        if (kDebugMode) {
+          debugPrint('[ARENA_PHASE_B] transaction abort reason=no_room '
+              'expectedVersion=$expectedRoundVersion');
+        }
+        return Transaction.abort();
+      }
+      if (current is! Map) {
+        if (kDebugMode) {
+          debugPrint('[ARENA_PHASE_B] transaction abort reason=not_a_map '
+              'expectedVersion=$expectedRoundVersion');
+        }
+        return Transaction.abort();
+      }
+      final map = Map<dynamic, dynamic>.from(current);
+      final actualStatus = map['status'];
+      if (actualStatus != 'round_end') {
+        if (kDebugMode) {
+          debugPrint('[ARENA_PHASE_B] transaction abort reason=status_mismatch '
+              'actual=$actualStatus expectedVersion=$expectedRoundVersion');
+        }
+        return Transaction.abort();
+      }
+      final currentVersion = (map['roundVersion'] as num?)?.toInt() ?? 0;
+      if (currentVersion != expectedRoundVersion) {
+        if (kDebugMode) {
+          debugPrint('[ARENA_PHASE_B] transaction abort reason=version_mismatch '
+              'expected=$expectedRoundVersion actual=$currentVersion');
+        }
+        return Transaction.abort();
+      }
+
+      map['status'] = 'playing';
+      map['board'] = emptyBoard;
+      map['boardSize'] = nextBoardSize;
+      map['currentRound'] = nextRound;
+      map['currentRoundIndex'] = safeIndex;
+      map['turnUid'] = firstTurn;
+      map['roundWinnerUid'] = null;
+      map['roundVersion'] = nextRoundVersion;
+      map['updatedAt'] = ServerValue.timestamp;
+      return Transaction.success(map);
+    });
+
+    if (kDebugMode) {
+      if (result.committed) {
+        debugPrint('[ARENA_PHASE_B] transaction committed room=$code '
+            'newVersion=$nextRoundVersion nextRound=$nextRound '
+            'boardSize=${nextBoardSize}x$nextBoardSize');
       } else {
-        debugPrint(
-            '[ARENA] round ended winner=$roundWinnerUid round=$currentRound');
+        debugPrint('[ARENA_PHASE_B] transaction not_committed room=$code '
+            'expectedVersion=$expectedRoundVersion');
       }
     }
+    return result.committed;
   }
 
   /// Host writes the final room result. Does NOT delete the room — the host
@@ -677,6 +1027,7 @@ class ArenaRepo {
     required String? roundWinnerUid,
     required String? roomWinnerUid,
     required String result,
+    required int roundVersion,
     String? finalResult,
   }) async {
     await _roomsRef.child(code).update(<String, Object?>{
@@ -687,6 +1038,9 @@ class ArenaRepo {
       'currentRound': currentRound,
       'currentRoundIndex': currentRoundIndex,
       'roundWinnerUid': roundWinnerUid,
+      'lastRoundResult': 'win',
+      'lastRoundEndAt': ServerValue.timestamp,
+      'roundVersion': roundVersion + 1,
       'status': 'finished',
       'roomWinnerUid': roomWinnerUid,
       'result': result,
@@ -697,8 +1051,201 @@ class ArenaRepo {
     if (kDebugMode) {
       debugPrint(
           '[ARENA] match finished atomically winner=$roomWinnerUid round=$currentRound');
+      debugPrint(
+          '[ARENA_ROUND] room=$code round=$currentRound result=match_end winner=$roomWinnerUid');
     }
   }
+
+  /// Host-only: kick the current guest from a lobby room and stamp a
+  /// rejoin-cooldown entry under `kickedUsers/<guestUid>` so the same uid
+  /// cannot rejoin for [kArenaKickCooldownMs] ms. Allowed only while the
+  /// room is pre-play (`status in {waiting, ready, countdown}`).
+  ///
+  /// All RTDB writes go in a single multi-path [DatabaseReference.update]
+  /// so the room can never end up half-cleared if one rule denies.
+  ///
+  /// Returns a structured [ArenaKickResult] so the UI can show a specific
+  /// message instead of a generic "Could not kick player" toast.
+  Future<ArenaKickResult> kickGuest({required String code}) async {
+    final uid = _uid;
+    if (uid == null) return const ArenaKickResult.fail(ArenaKickFailure.notHost);
+    final ref = _roomsRef.child(code);
+    final snap = await _withTimeoutOrNull(ref.get(),
+        timeout: const Duration(seconds: 5), label: 'kickGuest.read');
+    if (snap == null) {
+      if (kDebugMode) debugPrint('[ARENA_KICK] failed step=read reason=network');
+      return const ArenaKickResult.fail(ArenaKickFailure.network);
+    }
+    if (!snap.exists) {
+      if (kDebugMode) debugPrint('[ARENA_KICK] failed step=read reason=no_room');
+      return const ArenaKickResult.fail(ArenaKickFailure.unknown);
+    }
+    final raw = _asRoomMap(snap.value);
+    if (raw == null) {
+      if (kDebugMode) debugPrint('[ARENA_KICK] failed step=read reason=bad_shape');
+      return const ArenaKickResult.fail(ArenaKickFailure.unknown);
+    }
+    final hostUid = (raw['hostUid'] ?? '').toString();
+    if (hostUid != uid) {
+      if (kDebugMode) {
+        debugPrint('[ARENA_KICK] failed step=preflight reason=notHost '
+            'caller=$uid host=$hostUid');
+      }
+      return const ArenaKickResult.fail(ArenaKickFailure.notHost);
+    }
+    final guestUid = (raw['guestUid'] ?? '').toString();
+    if (guestUid.isEmpty) {
+      if (kDebugMode) {
+        debugPrint('[ARENA_KICK] failed step=preflight reason=noGuest code=$code');
+      }
+      return const ArenaKickResult.fail(ArenaKickFailure.noGuest);
+    }
+    final status = (raw['status'] ?? 'waiting').toString();
+    if (status != 'waiting' && status != 'ready' && status != 'countdown') {
+      if (kDebugMode) {
+        debugPrint('[ARENA_KICK] failed step=preflight reason=badStatus '
+            'status=$status code=$code');
+      }
+      return const ArenaKickResult.fail(ArenaKickFailure.badStatus);
+    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final untilMs = now + kArenaKickCooldownMs;
+    final xUid = (raw['xUid'] ?? '').toString();
+    final oUid = (raw['oUid'] ?? '').toString();
+    if (kDebugMode) {
+      debugPrint('[ARENA_KICK] attempt room=$code host=$uid '
+          'guest=$guestUid status=$status');
+    }
+
+    final updates = <String, Object?>{
+      'guestUid': null,
+      'guestName': null,
+      'guestPhoto': null,
+      'guestPhotoURL': null,
+      'guestReady': false,
+      'status': 'waiting',
+      'updatedAt': ServerValue.timestamp,
+      if (xUid == guestUid) 'xUid': '__pending__',
+      if (oUid == guestUid) 'oUid': '__pending__',
+      'kickedUsers/$guestUid': <String, Object?>{
+        'kickedAt': ServerValue.timestamp,
+        'byUid': uid,
+        'untilMs': untilMs,
+        'reason': 'host_kick',
+      },
+      'playersPresence/$guestUid': null,
+      'players/$guestUid': null,
+    };
+
+    try {
+      if (kDebugMode) {
+        debugPrint('[ARENA_KICK] step=write_multipath path=/rooms/$code '
+            'fields=${updates.keys.length}');
+      }
+      await ref.update(updates);
+      if (kDebugMode) {
+        debugPrint('[ARENA_KICK] success room=$code untilMs=$untilMs');
+      }
+      // Best-effort: drop the kicked guest's active-room mirror so their
+      // app doesn't try to re-resume into this room on next launch. Not
+      // load-bearing for the kick itself.
+      await _withTimeoutOrNull(
+        _activeRoomRef(guestUid).delete(),
+        label: 'kickGuest.clearMirror',
+      );
+      return const ArenaKickResult.ok();
+    } on FirebaseException catch (e) {
+      final reason = e.code == 'permission-denied'
+          ? ArenaKickFailure.permissionDenied
+          : (e.code == 'network-error' || e.code == 'unavailable'
+              ? ArenaKickFailure.network
+              : ArenaKickFailure.unknown);
+      if (kDebugMode) {
+        if (e.code == 'permission-denied') {
+          debugPrint('[RTDB_DENIED] op=kickGuest room=$code error=${e.message}');
+        }
+        debugPrint('[ARENA_KICK] failed step=write_multipath '
+            'reason=$reason error=${e.code}:${e.message}');
+      }
+      return ArenaKickResult.fail(reason);
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[ARENA_KICK] failed step=write_multipath '
+            'reason=unknown error=$e');
+      }
+      return const ArenaKickResult.fail(ArenaKickFailure.unknown);
+    }
+  }
+
+  /// Mid-match host-cancel with bet refund. Writes status='cancelled' and
+  /// `result='cancelled'` so the guest's listener exits cleanly. Each
+  /// client refunds their own bet via [ArenaBetService.refundOwnBet] on the
+  /// status flip — this method just signals the cancel.
+  Future<void> cancelMatchWithRefund({
+    required String code,
+    required String selfUid,
+  }) async {
+    try {
+      await _roomsRef.child(code).update(<String, Object?>{
+        'status': 'cancelled',
+        'result': 'cancelled',
+        'finalResult': 'cancelled',
+        'cancelledByUid': selfUid,
+        'cancelledAt': ServerValue.timestamp,
+        'finishedAt': ServerValue.timestamp,
+        'updatedAt': ServerValue.timestamp,
+      }).timeout(const Duration(seconds: 5));
+      if (kDebugMode) {
+        debugPrint('[ARENA] match cancelled-with-refund room=$code by=$selfUid');
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint('[ARENA] cancelMatchWithRefund failed: $e');
+    }
+  }
+
+  /// Registers an RTDB `onDisconnect()` write that stamps a leave marker
+  /// under `_hostLeftAt` or `_guestLeftAt` if the socket drops without the
+  /// app cleanly leaving. The room listener on the other side reacts to
+  /// this marker as a fallback for force-kill / OS-killed scenarios.
+  ///
+  /// The marker is purely informational — primary lifecycle handling
+  /// happens in the page's `WidgetsBindingObserver`. This is the
+  /// safety net.
+  Future<void> registerLeaveOnDisconnect({
+    required String code,
+    required bool isHost,
+  }) async {
+    try {
+      final field = isHost ? '_hostLeftAt' : '_guestLeftAt';
+      await _roomsRef.child(code).child(field).onDisconnect().set(
+            ServerValue.timestamp,
+          );
+    } catch (e) {
+      if (kDebugMode) debugPrint('[ARENA] onDisconnect register failed: $e');
+    }
+  }
+
+  /// Cancel any pending `onDisconnect()` writes for this room. Should be
+  /// called from the page's normal exit path so a clean leave does not
+  /// trigger a phantom leave-marker after the user returns to the menu.
+  Future<void> cancelLeaveOnDisconnect({
+    required String code,
+    required bool isHost,
+  }) async {
+    try {
+      final field = isHost ? '_hostLeftAt' : '_guestLeftAt';
+      await _roomsRef.child(code).child(field).onDisconnect().cancel();
+    } catch (_) {}
+  }
+
+  /// Reads the active-room mirror reference for an external caller. Used by
+  /// the presence service / kick flow to clear the kicked guest's pointer.
+  DocumentReference<Map<String, dynamic>> activeRoomRef(String uid) =>
+      _activeRoomRef(uid);
+
+  /// Direct RTDB ref to a room — exposed for the presence service to
+  /// register its per-room heartbeat + onDisconnect.
+  DatabaseReference roomRef(String code) => _roomsRef.child(code);
 
   /// Host-only: mark the room with a `cleanupAfter` timestamp so any
   /// observer (the host's own Timer, a Cloud Function janitor, or a future
@@ -715,67 +1262,11 @@ class ArenaRepo {
     } catch (_) {}
   }
 
-  /// Leave / cancel. If the host leaves before the game starts, the room is
-  /// removed; otherwise the leaver becomes the loser and the opponent wins.
-  ///
-  /// All RTDB writes are wrapped in try/catch so a Permission denied (e.g.
-  /// from rules validation) cannot bubble up as an unhandled zone error.
-  /// Callers should still surface a toast if needed, but the app will never
-  /// crash on leave.
-  Future<void> leaveRoom({
-    required ArenaRoom room,
-    required String leaverUid,
-  }) async {
-    final beforePlay = room.isWaiting || room.isReady;
-    if (beforePlay) {
-      if (leaverUid == room.hostUid) {
-        try {
-          await _roomsRef.child(room.roomCode).remove();
-          if (kDebugMode) {
-            debugPrint('[ARENA] room deleted code=${room.roomCode}');
-          }
-        } catch (e) {
-          if (kDebugMode) debugPrint('[ARENA] host leave remove failed: $e');
-        }
-      } else {
-        // Guest leaves before play — clear guest seat.
-        //
-        // We use individual .set() per field instead of a multi-field
-        // update() because update() is reported by RTDB as a write at the
-        // parent path (/rooms) for permission evaluation in some SDK
-        // versions, which then trips ".write: false" on the /rooms parent
-        // even when /rooms/{code} is writable. Individual sets are
-        // unambiguously at /rooms/{code}/{field} and use the $roomCode
-        // .write rule cleanly.
-        final ref = _roomsRef.child(room.roomCode);
-        try {
-          await ref.child('guestUid').set(null);
-          await ref.child('guestName').set(null);
-          await ref.child('guestPhoto').set(null);
-          await ref.child('guestReady').set(false);
-          await ref.child('updatedAt').set(ServerValue.timestamp);
-        } catch (e) {
-          if (kDebugMode) debugPrint('[ARENA] guest leave clear failed: $e');
-        }
-      }
-      return;
-    }
-    // Mid-game: leaver loses.
-    final winnerUid = room.opponentOf(leaverUid);
-    try {
-      await finishRoom(
-        code: room.roomCode,
-        roomWinnerUid: winnerUid.isEmpty ? null : winnerUid,
-        result: 'forfeit',
-        finalResult: 'opponent_left',
-      );
-      if (kDebugMode) {
-        debugPrint('[ARENA] forfeit loser=$leaverUid winner=$winnerUid');
-      }
-    } catch (e) {
-      if (kDebugMode) debugPrint('[ARENA] forfeit finish failed: $e');
-    }
-  }
+  // NOTE: the legacy `leaveRoom({room, leaverUid})` was removed — every leave
+  // now routes through [resolvePlayerLeaveRoom], which records `loserUid` +
+  // `leftByUid` so the opponent's idempotent `creditPrize` guard can settle a
+  // bet forfeit correctly. Pre-play cancels still reuse [cancelRoomAsHost] /
+  // [leaveRoomAsGuest].
 
   /// Host-driven cancel.
   ///
@@ -906,6 +1397,132 @@ class ArenaRepo {
     await clearActiveRoomMirror(uid);
   }
 
+  /// Single safe funnel for an *intentional* leave decision (the "Leave Room &
+  /// Play Normally" resume choice, the explicit Leave/Cancel buttons, and the
+  /// create-room guard). Reads the live room and resolves it fairly:
+  ///
+  ///  • room missing / already terminal → no-op (clear mirror).
+  ///  • caller is not a member → no-op (clear mirror).
+  ///  • pre-play AND no coins locked → cancel room (host) / clear seat (guest);
+  ///    no coin movement.
+  ///  • coins locked OR match started → forfeit: the leaver is the loser and
+  ///    the opponent is recorded as `roomWinnerUid`. The opponent's client
+  ///    (live, or via its startup settlement) performs the idempotent payout.
+  ///
+  /// Always clears the leaver's active-room mirror and never throws.
+  Future<RoomLeaveResolution> resolvePlayerLeaveRoom({
+    required String roomCode,
+    required String leaverUid,
+    required String reason,
+  }) async {
+    if (kDebugMode) {
+      debugPrint('[ROOM_LEAVE_RESOLVE] start room=$roomCode '
+          'leaver=$leaverUid reason=$reason');
+    }
+
+    Future<RoomLeaveResolution> finish(RoomLeaveResolution res) async {
+      await clearActiveRoomMirror(leaverUid);
+      if (kDebugMode) {
+        debugPrint('[ROOM_LEAVE_RESOLVE] active_room_cleared uid=$leaverUid');
+        debugPrint('[ROOM_LEAVE_RESOLVE] done room=$roomCode');
+      }
+      return res;
+    }
+
+    ArenaRoom? room;
+    try {
+      room = await readRoom(roomCode).timeout(const Duration(seconds: 6));
+    } catch (_) {
+      room = null;
+    }
+
+    if (room == null) {
+      if (kDebugMode) debugPrint('[ROOM_LEAVE_RESOLVE] mode=already_resolved');
+      return finish(const RoomLeaveResolution(RoomLeaveMode.alreadyResolved));
+    }
+
+    const terminal = <String>{
+      'finished',
+      'expired',
+      'cancelled',
+      'abandoned',
+    };
+    final isMember = leaverUid == room.hostUid || leaverUid == room.guestUid;
+    if (terminal.contains(room.status)) {
+      if (kDebugMode) debugPrint('[ROOM_LEAVE_RESOLVE] mode=already_resolved');
+      return finish(const RoomLeaveResolution(RoomLeaveMode.alreadyResolved));
+    }
+    if (!isMember) {
+      if (kDebugMode) debugPrint('[ROOM_LEAVE_RESOLVE] mode=not_member');
+      return finish(const RoomLeaveResolution(RoomLeaveMode.notMember));
+    }
+
+    final isHost = leaverUid == room.hostUid;
+    final beforePlay = room.status == 'waiting' ||
+        room.status == 'ready' ||
+        room.status == 'countdown';
+    final coinsAtStake =
+        room.betEnabled && room.coinsLocked && room.betAmount > 0;
+
+    // ── Cancel path: pre-play with no committed bet. ─────────────────────────
+    if (beforePlay && !coinsAtStake) {
+      if (isHost) {
+        await cancelRoomAsHost(roomCode); // clears its own mirror
+      } else {
+        await leaveRoomAsGuest(roomCode); // clears its own mirror
+      }
+      if (kDebugMode) {
+        debugPrint('[ROOM_LEAVE_RESOLVE] mode=cancel');
+        debugPrint('[ROOM_LEAVE_RESOLVE] betEnabled=${room.betEnabled} '
+            'bet=${room.betAmount} prize=${room.prizePool}');
+        debugPrint('[ROOM_LEAVE_RESOLVE] payout_applied=false');
+      }
+      // Both helpers already clear the mirror; finish() is idempotent.
+      return finish(RoomLeaveResolution(
+        RoomLeaveMode.cancel,
+        betEnabled: room.betEnabled,
+        betAmount: room.betAmount,
+        prizePool: room.prizePool,
+      ));
+    }
+
+    // ── Forfeit path: coins locked or the match has started. ─────────────────
+    final winnerUid = room.opponentOf(leaverUid);
+    try {
+      await _roomsRef.child(roomCode).update(<String, Object?>{
+        'status': 'finished',
+        'roomWinnerUid': winnerUid.isEmpty ? null : winnerUid,
+        'result': 'forfeit',
+        'finalResult': 'opponent_left',
+        'loserUid': leaverUid,
+        'leftByUid': leaverUid,
+        'leftAt': ServerValue.timestamp,
+        'finishedAt': ServerValue.timestamp,
+        'updatedAt': ServerValue.timestamp,
+      }).timeout(const Duration(seconds: 6));
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[ROOM_LEAVE_RESOLVE] forfeit write failed: $e');
+      }
+    }
+    if (kDebugMode) {
+      debugPrint('[ROOM_LEAVE_RESOLVE] mode=forfeit');
+      debugPrint('[ROOM_LEAVE_RESOLVE] winner=$winnerUid loser=$leaverUid');
+      debugPrint('[ROOM_LEAVE_RESOLVE] betEnabled=${room.betEnabled} '
+          'bet=${room.betAmount} prize=${room.prizePool}');
+      // Payout is applied by the opponent's client (idempotent), not here.
+      debugPrint('[ROOM_LEAVE_RESOLVE] payout_applied=false');
+    }
+    return finish(RoomLeaveResolution(
+      RoomLeaveMode.forfeit,
+      winnerUid: winnerUid.isEmpty ? null : winnerUid,
+      loserUid: leaverUid,
+      betEnabled: room.betEnabled,
+      betAmount: room.betAmount,
+      prizePool: room.prizePool,
+    ));
+  }
+
   /// Mark a room as expired and remove it.
   Future<void> expireRoom(String code) async {
     try {
@@ -917,6 +1534,32 @@ class ArenaRepo {
       });
       await _roomsRef.child(code).remove();
       if (kDebugMode) debugPrint('[ARENA] room expired code=$code');
+    } catch (_) {}
+  }
+
+  /// Mark a room expired WITHOUT removing the RTDB node, leaving a grace window
+  /// (`cleanupAfter`) so BOTH players can observe the expiry and refund their
+  /// own locked bet on their next app open. The Cloud Function janitor (or a
+  /// host cleanup timer) removes the node after the grace window. Use this for
+  /// *occupied* stale rooms; [expireRoom] (mark + remove) is fine for empty
+  /// waiting rooms where there is nothing to refund.
+  Future<void> markRoomExpired(
+    String code, {
+    Duration grace = const Duration(minutes: 2),
+  }) async {
+    final cleanupAt =
+        DateTime.now().millisecondsSinceEpoch + grace.inMilliseconds;
+    try {
+      await _roomsRef.child(code).update(<String, Object?>{
+        'status': 'expired',
+        'result': 'expired',
+        'finalResult': 'expired',
+        'cleanupAfter': cleanupAt,
+        'updatedAt': ServerValue.timestamp,
+      }).timeout(const Duration(seconds: 5));
+      if (kDebugMode) {
+        debugPrint('[ROOM_TIMEOUT] expired room=$code reason=20min_inactive');
+      }
     } catch (_) {}
   }
 

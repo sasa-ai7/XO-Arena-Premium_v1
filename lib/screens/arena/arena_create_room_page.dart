@@ -11,6 +11,7 @@ import '../../services/local_store.dart';
 import '../../widgets/app_ui.dart';
 import '../../widgets/arena_toast.dart';
 import 'arena_lobby_page.dart';
+import 'widgets/arena_bet_selector.dart';
 
 class ArenaCreateRoomPage extends StatefulWidget {
   const ArenaCreateRoomPage({super.key});
@@ -24,22 +25,10 @@ class _ArenaCreateRoomPageState extends State<ArenaCreateRoomPage> {
   List<String> _maps = const ['3x3'];
   bool _busy = false;
   bool _betEnabled = false;
-  int _betAmount = 10;
+  int _betAmount = kArenaMinBet;
 
   static const List<int> _roundOptions = [1, 2, 3, 4, 5, 6, 7, 8];
   static const List<String> _boardOptions = ['3x3', '4x4', '5x5'];
-  static const List<int> _betPresets = [
-    10,
-    25,
-    50,
-    100,
-    250,
-    500,
-    1000,
-    2000,
-    5000,
-    10000,
-  ];
 
   void _setRounds(int rounds) {
     setState(() {
@@ -75,9 +64,21 @@ class _ArenaCreateRoomPageState extends State<ArenaCreateRoomPage> {
     // Host-side balance check for betting rooms — refuse to create a room
     // the host can't afford to enter. The guest is already gated symmetrically
     // in ArenaRepo.joinRoom.
-    if (_betEnabled && LocalStore.coinsNotifier.value < _betAmount) {
-      ArenaToast.error(context, l10n.notEnoughCoinsCreate);
-      return;
+    if (_betEnabled) {
+      if (_betAmount < kArenaMinBet) {
+        ArenaToast.error(
+            context, l10n.isAr ? 'الحد الأدنى للرهان 50' : 'Minimum bet is 50 coins');
+        return;
+      }
+      if (_betAmount > kArenaMaxBet) {
+        ArenaToast.error(context,
+            l10n.isAr ? 'الحد الأقصى للرهان 10000' : 'Maximum bet is 10,000 coins');
+        return;
+      }
+      if (LocalStore.coinsNotifier.value < _betAmount) {
+        ArenaToast.error(context, l10n.notEnoughCoinsCreate);
+        return;
+      }
     }
 
     setState(() => _busy = true);
@@ -135,16 +136,38 @@ class _ArenaCreateRoomPageState extends State<ArenaCreateRoomPage> {
                   ),
                 ),
                 const SizedBox(height: 10),
-                _SectionShell(
-                  title: l10n.playWithCoins,
-                  child: _betSection(l10n),
+                ValueListenableBuilder<int>(
+                  valueListenable: LocalStore.coinsNotifier,
+                  builder: (context, balance, _) => ArenaBetSelector(
+                    enabled: _betEnabled,
+                    amount: _betAmount,
+                    balance: balance,
+                    onToggle: (v) => setState(() {
+                      _betEnabled = v;
+                      if (v && _betAmount < kArenaMinBet) {
+                        _betAmount = kArenaMinBet;
+                      }
+                    }),
+                    onAmountChanged: (v) => setState(() => _betAmount = v),
+                    onInsufficientForToggle: () => ArenaToast.error(
+                      context,
+                      l10n.notEnoughCoinsCreate,
+                    ),
+                    onTapDisabledPreset: () => ArenaToast.show(
+                      context,
+                      l10n.isAr ? 'لا توجد عملات كافية' : 'Not enough coins',
+                      kind: ArenaToastKind.warning,
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 10),
                 ValueListenableBuilder<int>(
                   valueListenable: LocalStore.coinsNotifier,
                   builder: (context, balance, _) {
-                    final insufficient =
-                        _betEnabled && balance < _betAmount;
+                    final insufficient = _betEnabled &&
+                        (balance < _betAmount ||
+                            _betAmount < kArenaMinBet ||
+                            _betAmount > kArenaMaxBet);
                     return SizedBox(
                       height: 56,
                       child: ElevatedButton(
@@ -293,113 +316,6 @@ class _ArenaCreateRoomPageState extends State<ArenaCreateRoomPage> {
           ),
         ],
       ),
-    );
-  }
-
-  Widget _betSection(AppL10n l10n) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                l10n.playWithCoins,
-                style: const TextStyle(
-                  color: AppPalette.text,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-            Switch(
-              value: _betEnabled,
-              onChanged: (v) => setState(() => _betEnabled = v),
-              activeColor: AppPalette.primary,
-              inactiveTrackColor: AppPalette.panelDeep,
-            ),
-          ],
-        ),
-        if (_betEnabled) ...[
-          const SizedBox(height: 6),
-          Text(
-            l10n.betAmount,
-            style: const TextStyle(
-              color: AppPalette.textMuted,
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.4,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              for (final amount in _betPresets)
-                SizedBox(
-                  width: 64,
-                  height: 32,
-                  child: _choiceButton(
-                    selected: _betAmount == amount,
-                    label: amount >= 1000
-                        ? '${amount ~/ 1000}k'
-                        : '$amount',
-                    onTap: () => setState(() => _betAmount = amount),
-                    radius: 11,
-                    small: true,
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          ValueListenableBuilder<int>(
-            valueListenable: LocalStore.coinsNotifier,
-            builder: (context, balance, _) {
-              final insufficient = balance < _betAmount;
-              return Row(
-                children: [
-                  Text(
-                    '${l10n.yourCoins}: ',
-                    style: const TextStyle(
-                      color: AppPalette.textMuted,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  Text(
-                    '$balance',
-                    style: TextStyle(
-                      color: insufficient
-                          ? AppPalette.danger
-                          : AppPalette.primary,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 0.3,
-                    ),
-                  ),
-                  if (insufficient) ...[
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        l10n.notEnoughCoinsCreate,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: AppPalette.danger,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              );
-            },
-          ),
-        ],
-      ],
     );
   }
 

@@ -126,6 +126,18 @@ class _CoinsScreenState extends State<CoinsScreen> {
   void _setupPurchaseListener() {
     _coinGrantSubscription = _iapService.coinGrantStream.listen(
       (result) {
+        if (result.pending) {
+          _hideLoadingDialog();
+          if (mounted) {
+            _showFloatingMessage(
+              result.message ??
+                  'Purchase pending. We will update it when Google Play confirms it.',
+              icon: Icons.hourglass_top_rounded,
+              color: AppPalette.primary,
+            );
+          }
+          return;
+        }
         if (!result.ok) {
           _handlePurchaseFailure(result);
           return;
@@ -198,7 +210,7 @@ class _CoinsScreenState extends State<CoinsScreen> {
     if (!mounted) return;
     showTopNotification(
       context,
-      '${formatCoins(coinsAdded, compact: false)} XO Coins added',
+      '+${formatCoins(coinsAdded, compact: false)} XO Coins added',
       color: AppPalette.success,
       duration: const Duration(milliseconds: 1200),
     );
@@ -324,8 +336,15 @@ class _CoinsScreenState extends State<CoinsScreen> {
 
   void _handlePurchaseFailure(PurchaseGrantResult result) {
     _hideLoadingDialog();
+    final raw = result.error ?? 'Purchase was not completed.';
+    // Normalise the two terminal failure copies to a single user-friendly
+    // line. Backend-detail errors fall through unchanged.
+    final friendly = (raw == 'Purchase failed. Please try again.' ||
+            raw == 'Purchase canceled.')
+        ? 'Purchase was not completed.'
+        : raw;
     _showFloatingMessage(
-      result.error ?? 'Purchase failed.',
+      friendly,
       icon: Icons.error_outline,
       color: AppPalette.danger,
     );
@@ -1358,41 +1377,51 @@ class _CoinPackCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 9, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: accent.withOpacity(isPopular ? 0.18 : 0.12),
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(color: accent.withOpacity(0.35)),
-                  ),
-                  child: Text(
-                    isPopular ? 'MOST POPULAR' : 'COIN PACK',
-                    style: homeLabelFont(
-                      context,
-                      fontSize: 8,
-                      color: accent,
+                Flexible(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 9, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: accent.withOpacity(isPopular ? 0.18 : 0.12),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: accent.withOpacity(0.35)),
+                    ),
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        isPopular ? 'MOST POPULAR' : 'COIN PACK',
+                        style: homeLabelFont(
+                          context,
+                          fontSize: 8,
+                          color: accent,
+                        ),
+                      ),
                     ),
                   ),
                 ),
-                const Spacer(),
+                const SizedBox(width: 4),
                 if (bonus > 0)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: AppPalette.success.withOpacity(0.18),
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(
-                          color: AppPalette.success.withOpacity(0.5)),
-                    ),
-                    child: Text(
-                      '+${formatCoins(bonus, compact: true)} BONUS',
-                      style: safeOrbitron(
-                        fontSize: 8,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 0.6,
-                        color: AppPalette.success,
+                  Flexible(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppPalette.success.withOpacity(0.18),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                            color: AppPalette.success.withOpacity(0.5)),
+                      ),
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          '+${formatCoins(bonus, compact: true)} BONUS',
+                          style: safeOrbitron(
+                            fontSize: 8,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 0.6,
+                            color: AppPalette.success,
+                          ),
+                        ),
                       ),
                     ),
                   )

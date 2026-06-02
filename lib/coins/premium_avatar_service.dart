@@ -8,7 +8,7 @@ import 'coins_catalog.dart';
 
 /// Tracks ownership of the one-time premium avatar entitlements:
 ///   • xo_avatar_premium       → premium_avatar_7  → catalog avatar id 7
-///   • xo_avatar_premium_apex  → premium_avatar_10 → catalog avatar id 10
+///   • xo_avatar_premium1      → premium_avatar_10 → catalog avatar id 10
 ///
 /// Listens to `users/{uid}.Inventory.avatars` and exposes reactive notifiers
 /// the UI can bind to so the shop hides the relevant avatar offer the moment

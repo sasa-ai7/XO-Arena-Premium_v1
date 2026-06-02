@@ -5,10 +5,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../core/app_config.dart';
 import '../../core/app_l10n.dart';
 import '../../core/app_theme.dart';
 import '../../models/arena/arena_room.dart';
+import '../../services/arena/arena_presence_service.dart';
 import '../../services/arena/arena_repo.dart';
 import '../../widgets/app_ui.dart';
 import '../../widgets/arena_toast.dart';
@@ -17,6 +17,7 @@ import 'arena_share_helper.dart';
 import 'widgets/arena_leave_dialog.dart';
 import 'widgets/arena_profile_circle.dart';
 import 'widgets/arena_skin_preview.dart';
+import 'widgets/arena_vs_badge.dart';
 import 'widgets/ready_chip.dart';
 
 class ArenaLobbyPage extends StatefulWidget {
@@ -27,7 +28,8 @@ class ArenaLobbyPage extends StatefulWidget {
   State<ArenaLobbyPage> createState() => _ArenaLobbyPageState();
 }
 
-class _ArenaLobbyPageState extends State<ArenaLobbyPage> {
+class _ArenaLobbyPageState extends State<ArenaLobbyPage>
+    with WidgetsBindingObserver {
   late ArenaRoom _room;
   StreamSubscription<ArenaRoom?>? _sub;
   Timer? _ticker;
@@ -36,6 +38,8 @@ class _ArenaLobbyPageState extends State<ArenaLobbyPage> {
   bool _isCancelling = false;
   bool _cancelledHandled = false;
   bool _hasExitedRoom = false;
+  bool _kickedHandled = false;
+  ArenaPresenceService? _presence;
 
   String? get _uid => FirebaseAuth.instance.currentUser?.uid;
   bool get _isHost => _uid != null && _uid == _room.hostUid;
@@ -48,6 +52,19 @@ class _ArenaLobbyPageState extends State<ArenaLobbyPage> {
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() {});
     });
+    WidgetsBinding.instance.addObserver(this);
+    final uid = _uid;
+    if (uid != null && uid.isNotEmpty) {
+      _presence =
+          ArenaPresenceService(code: _room.roomCode, selfUid: uid);
+      _presence!.start();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Part 1: presence-only on background — no auto-leave/cancel.
+    // The presence service handles online→offline state automatically.
   }
 
   void _onRoomChange(ArenaRoom? room) {
@@ -63,10 +80,36 @@ class _ArenaLobbyPageState extends State<ArenaLobbyPage> {
       final iAmHost = _uid != null && _uid == _room.hostUid;
       if (!_cancelledHandled && room != null && !iAmHost) {
         _cancelledHandled = true;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Room was cancelled by the host')),
-        );
+        ArenaToast.warning(context, 'Room was cancelled by the host.');
       }
+      _exitRoomOnce();
+      return;
+    }
+    // Kick detection: was guest, now host removed me + a kickedUsers entry
+    // exists for my uid. The host's atomic kick write nulls guestUid and
+    // stamps kickedUsers[<self>] in one transaction, so this branch is the
+    // canonical signal that I was kicked.
+    final selfUid = _uid;
+    if (!_kickedHandled &&
+        selfUid != null &&
+        _room.guestUid == selfUid &&
+        room.guestUid != selfUid &&
+        room.kickedUsers[selfUid] != null) {
+      _kickedHandled = true;
+      if (kDebugMode) {
+        debugPrint('[ARENA_KICK] guest_detected_kicked uid=$selfUid '
+            'room=${room.roomCode}');
+      }
+      // The host cannot clear our active-room mirror under the Firestore rules,
+      // so the kicked guest's own client must clear it here — otherwise a later
+      // "Create Room" tap would resume this dead room.
+      ArenaRepo.instance.clearActiveRoomMirror(selfUid);
+      if (kDebugMode) {
+        debugPrint('[ARENA_KICK] guest_exit_after_kick uid=$selfUid '
+            'room=${room.roomCode}');
+      }
+      ArenaToast.error(
+          context, 'You were removed from this room by the host.');
       _exitRoomOnce();
       return;
     }
@@ -108,9 +151,150 @@ class _ArenaLobbyPageState extends State<ArenaLobbyPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _sub?.cancel();
     _ticker?.cancel();
+    _presence?.stop();
     super.dispose();
+  }
+
+  Future<void> _onKickGuestPressed() async {
+    if (!_isHost) return;
+    final guestUid = _room.guestUid;
+    if (guestUid == null || guestUid.isEmpty) return;
+    final ok = await _confirmKickDialog();
+    if (ok != true) return;
+    final result = await ArenaRepo.instance.kickGuest(code: _room.roomCode);
+    if (!mounted) return;
+    if (result.success) return;
+    switch (result.failure) {
+      case ArenaKickFailure.noGuest:
+        ArenaToast.warning(context, 'No player to remove.');
+        break;
+      case ArenaKickFailure.badStatus:
+        ArenaToast.warning(
+            context, 'You can only remove a player from the lobby.');
+        break;
+      case ArenaKickFailure.permissionDenied:
+        ArenaToast.error(context, 'Permission denied. Try again.');
+        break;
+      case ArenaKickFailure.network:
+        ArenaToast.error(context, 'Network issue. Try again.');
+        break;
+      case ArenaKickFailure.notHost:
+      case ArenaKickFailure.unknown:
+      case null:
+        ArenaToast.error(context, 'Could not kick player. Try again.');
+        break;
+    }
+  }
+
+  Future<bool?> _confirmKickDialog() async {
+    final guestName =
+        _room.guestName?.trim().isNotEmpty == true ? _room.guestName! : '—';
+    final guestPhoto = _room.guestPhoto;
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      barrierColor: Colors.black.withValues(alpha: 0.55),
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(20, 22, 20, 16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(22),
+            color: AppPalette.panel,
+            border: Border.all(
+              color: AppPalette.danger.withValues(alpha: 0.7),
+              width: 1.4,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: AppPalette.danger.withValues(alpha: 0.30),
+                blurRadius: 30,
+                spreadRadius: 1,
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ArenaProfileCircle(
+                name: guestName,
+                photoUrl: guestPhoto,
+                size: 60,
+                ringColors: const <Color>[
+                  AppPalette.danger,
+                  AppPalette.accentPurple,
+                ],
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Kick player?',
+                style: TextStyle(
+                  color: AppPalette.danger,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.4,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '$guestName will be removed and cannot rejoin for 1 minute.',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: AppPalette.text,
+                  fontSize: 13,
+                  height: 1.4,
+                ),
+              ),
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextButton(
+                      onPressed: () => Navigator.of(ctx).pop(false),
+                      child: const Text(
+                        'Cancel',
+                        style: TextStyle(
+                          color: AppPalette.textMuted,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.of(ctx).pop(true),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor:
+                            AppPalette.danger.withValues(alpha: 0.18),
+                        foregroundColor: AppPalette.danger,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          side: const BorderSide(
+                              color: AppPalette.danger, width: 1.2),
+                        ),
+                      ),
+                      child: const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 10),
+                        child: Text(
+                          'Kick',
+                          style: TextStyle(fontWeight: FontWeight.w900),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _toggleReady() async {
@@ -188,15 +372,14 @@ class _ArenaLobbyPageState extends State<ArenaLobbyPage> {
       debugPrint('[ARENA] cancel button pressed room=$code uid=$_uid isHost=$iAmHost');
     }
     try {
-      if (iAmHost) {
-        await ArenaRepo.instance
-            .cancelRoomAsHost(code)
-            .timeout(const Duration(seconds: 6));
-      } else {
-        await ArenaRepo.instance
-            .leaveRoomAsGuest(code)
-            .timeout(const Duration(seconds: 6));
-      }
+      // Single safe leave funnel. The lobby is pre-play with no committed bet,
+      // so this resolves to a clean cancel (host) / seat-clear (guest); if a
+      // bet were ever locked here it would forfeit fairly instead.
+      await ArenaRepo.instance.resolvePlayerLeaveRoom(
+        roomCode: code,
+        leaverUid: _uid!,
+        reason: 'explicit_leave',
+      );
       if (kDebugMode) {
         debugPrint('[ARENA] cancel success, exiting room=$code');
       }
@@ -208,9 +391,8 @@ class _ArenaLobbyPageState extends State<ArenaLobbyPage> {
     if (mounted) setState(() => _isCancelling = false);
     if (!_cancelledHandled && mounted) {
       _cancelledHandled = true;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(iAmHost ? 'Room cancelled' : 'You left the room')),
-      );
+      ArenaToast.info(
+          context, iAmHost ? 'Room cancelled.' : 'You left the room.');
     }
     await _exitRoomOnce();
   }
@@ -278,7 +460,15 @@ class _ArenaLobbyPageState extends State<ArenaLobbyPage> {
                         rounds: _room.roundsCount,
                         boardSize: _room.boardSize,
                         timeLeft: _formatRemaining(),
+                        // Once a guest has joined the 10-minute creation TTL no
+                        // longer applies (occupied rooms use the 20-minute
+                        // inactivity rule), so show a neutral "Room Active"
+                        // status instead of a misleading countdown.
+                        occupied: _room.guestUid != null &&
+                            _room.guestUid!.isNotEmpty,
                       ),
+                      const SizedBox(height: 10),
+                      _BetPanel(room: _room),
                       if (_room.roundMaps.length > 1) ...[
                         const SizedBox(height: 10),
                         Container(
@@ -333,8 +523,22 @@ class _ArenaLobbyPageState extends State<ArenaLobbyPage> {
                         ),
                       ],
                       const SizedBox(height: 16),
-                      _PlayersRow(room: _room, selfUid: _uid),
-                      const SizedBox(height: 22),
+                      _PlayersRow(
+                        room: _room,
+                        selfUid: _uid,
+                        hostPresence: _presence?.derive(_room, _room.hostUid),
+                        guestPresence: _room.guestUid == null
+                            ? null
+                            : _presence?.derive(_room, _room.guestUid!),
+                        onKickGuest: _isHost &&
+                                _room.guestUid != null &&
+                                (_room.status == 'waiting' ||
+                                    _room.status == 'ready' ||
+                                    _room.status == 'countdown')
+                            ? _onKickGuestPressed
+                            : null,
+                      ),
+                      const SizedBox(height: 14),
                       // Host: only Share Room (full width). No Ready button.
                       // Guest: Share + Ready side-by-side.
                       _isHost
@@ -445,6 +649,146 @@ class _ArenaLobbyPageState extends State<ArenaLobbyPage> {
 
 // ── Private widgets ─────────────────────────────────────────────────────────
 
+/// Lobby bet/prize panel. Shows the coin stake + prize pool for betting rooms,
+/// or a "Friendly Match · No Bet" line otherwise.
+class _BetPanel extends StatelessWidget {
+  final ArenaRoom room;
+  const _BetPanel({required this.room});
+
+  @override
+  Widget build(BuildContext context) {
+    final betEnabled = room.betEnabled && room.betAmount > 0;
+    if (kDebugMode) {
+      debugPrint('[ARENA_BET_UI] lobby betEnabled=$betEnabled '
+          'bet=${room.betAmount} prize=${room.prizePool}');
+    }
+    if (!betEnabled) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: AppPalette.panel,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppPalette.strokeSoft, width: 1),
+        ),
+        child: const Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.handshake_rounded,
+                color: AppPalette.textMuted, size: 18),
+            SizedBox(width: 8),
+            Text(
+              'Friendly Match · No Bet',
+              style: TextStyle(
+                color: AppPalette.textMuted,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.3,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            AppPalette.gold.withValues(alpha: 0.12),
+            AppPalette.panel,
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AppPalette.gold.withValues(alpha: 0.55),
+          width: 1.2,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: AppPalette.gold.withValues(alpha: 0.16),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          _BetStat(label: 'BET', value: room.betAmount, color: AppPalette.gold),
+          Container(width: 1, height: 34, color: AppPalette.strokeSoft),
+          _BetStat(
+            label: 'PRIZE POOL',
+            value: room.prizePool,
+            color: AppPalette.goldHighlight,
+            highlight: true,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BetStat extends StatelessWidget {
+  final String label;
+  final int value;
+  final Color color;
+  final bool highlight;
+  const _BetStat({
+    required this.label,
+    required this.value,
+    required this.color,
+    this.highlight = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final iconSize = highlight ? 20.0 : 18.0;
+    return Expanded(
+      child: Column(
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              color: AppPalette.textMuted,
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 1.2,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Image.asset(
+                'assets/coin/COIN.png',
+                width: iconSize,
+                height: iconSize,
+                cacheWidth: (iconSize * 3).round(),
+                errorBuilder: (_, __, ___) => Icon(
+                  Icons.monetization_on_rounded,
+                  color: AppPalette.gold,
+                  size: iconSize,
+                ),
+              ),
+              const SizedBox(width: 5),
+              Text(
+                '$value',
+                style: TextStyle(
+                  color: color,
+                  fontSize: highlight ? 19 : 17,
+                  fontWeight: FontWeight.w900,
+                  fontFamily: 'Orbitron',
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _CodeBanner extends StatelessWidget {
   final String code;
   final VoidCallback onCopy;
@@ -454,7 +798,7 @@ class _CodeBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppL10n.of(context);
     return Container(
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
+      padding: const EdgeInsets.fromLTRB(18, 14, 18, 12),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           colors: [AppPalette.homePanelStrong, AppPalette.panelDeep],
@@ -492,7 +836,7 @@ class _CodeBanner extends StatelessWidget {
               code,
               style: TextStyle(
                 color: AppPalette.text,
-                fontSize: 58,
+                fontSize: 48,
                 fontWeight: FontWeight.w900,
                 letterSpacing: 6,
                 fontFamily: 'Orbitron',
@@ -562,10 +906,12 @@ class _SettingsRow extends StatelessWidget {
   final int rounds;
   final int boardSize;
   final String timeLeft;
+  final bool occupied;
   const _SettingsRow({
     required this.rounds,
     required this.boardSize,
     required this.timeLeft,
+    this.occupied = false,
   });
 
   Widget _pill({
@@ -645,12 +991,19 @@ class _SettingsRow extends StatelessWidget {
           value: '${boardSize}x$boardSize',
           tint: AppPalette.primary,
         ),
-        _pill(
-          icon: Icons.timer_outlined,
-          label: l10n.timeLeftLabel,
-          value: timeLeft,
-          tint: AppPalette.accentPurple,
-        ),
+        occupied
+            ? _pill(
+                icon: Icons.bolt_rounded,
+                label: l10n.isAr ? 'الحالة' : 'STATUS',
+                value: l10n.isAr ? 'نشطة' : 'Active',
+                tint: AppPalette.success,
+              )
+            : _pill(
+                icon: Icons.timer_outlined,
+                label: l10n.timeLeftLabel,
+                value: timeLeft,
+                tint: AppPalette.accentPurple,
+              ),
       ],
     );
   }
@@ -659,7 +1012,16 @@ class _SettingsRow extends StatelessWidget {
 class _PlayersRow extends StatelessWidget {
   final ArenaRoom room;
   final String? selfUid;
-  const _PlayersRow({required this.room, required this.selfUid});
+  final PresenceState? hostPresence;
+  final PresenceState? guestPresence;
+  final VoidCallback? onKickGuest;
+  const _PlayersRow({
+    required this.room,
+    required this.selfUid,
+    required this.hostPresence,
+    required this.guestPresence,
+    required this.onKickGuest,
+  });
 
   /// Pull a player's cosmetics entry from `room.players[uid]` defensively.
   /// Only the X/O skin keys are read — the equipped `selectedAvatar` is
@@ -681,6 +1043,7 @@ class _PlayersRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final hostCos = _cosmeticsFor(room, room.hostUid);
     final guestCos = _cosmeticsFor(room, room.guestUid);
+    final l10n = AppL10n.of(context);
     return IntrinsicHeight(
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -694,11 +1057,14 @@ class _PlayersRow extends StatelessWidget {
               ready: true,
               isYou: room.hostUid == selfUid,
               emptyLabel: null,
+              roleLabel: l10n.isAr ? 'المضيف' : 'HOST',
               xSkin: hostCos.xSkin,
               oSkin: hostCos.oSkin,
+              presence: hostPresence,
+              onKick: null,
             ),
           ),
-          const _VsBadge(),
+          const Center(child: ArenaVsBadge()),
           Expanded(
             child: _PlayerCard(
               name: room.guestName,
@@ -708,11 +1074,16 @@ class _PlayersRow extends StatelessWidget {
                   : room.symbolFor(room.guestUid ?? ''),
               ready: room.guestReady,
               isYou: room.guestUid != null && room.guestUid == selfUid,
-              emptyLabel: room.guestUid == null
-                  ? AppL10n.of(context).waitingForFriend
-                  : null,
+              emptyLabel: room.guestUid == null ? l10n.waitingForFriend : null,
+              roleLabel: room.guestUid == null
+                  ? null
+                  : (l10n.isAr ? 'الضيف' : 'GUEST'),
               xSkin: guestCos.xSkin,
               oSkin: guestCos.oSkin,
+              presence: room.guestUid == null ? null : guestPresence,
+              // Only show the kick button when the guest seat is filled and
+              // the host invoked this row with a callback (host-only).
+              onKick: room.guestUid != null ? onKickGuest : null,
             ),
           ),
         ],
@@ -728,49 +1099,6 @@ class _PlayerCosmetics {
   const _PlayerCosmetics({this.xSkin, this.oSkin});
 }
 
-class _VsBadge extends StatelessWidget {
-  const _VsBadge();
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 6),
-      child: Center(
-        child: Container(
-          width: 44,
-          height: 44,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            gradient: const LinearGradient(
-              colors: [AppPalette.primary, AppPalette.accentPurple],
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: AppPalette.primary.withValues(alpha: 0.45),
-                blurRadius: 22,
-              ),
-            ],
-            border: Border.all(
-              color: AppPalette.text.withValues(alpha: 0.85),
-              width: 1.4,
-            ),
-          ),
-          child: const Text(
-            'VS',
-            style: TextStyle(
-              color: AppPalette.text,
-              fontSize: 13,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 1.2,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _PlayerCard extends StatelessWidget {
   final String? name;
   final String? photoUrl;
@@ -778,8 +1106,11 @@ class _PlayerCard extends StatelessWidget {
   final bool ready;
   final bool isYou;
   final String? emptyLabel;
+  final String? roleLabel;
   final String? xSkin;
   final String? oSkin;
+  final PresenceState? presence;
+  final VoidCallback? onKick;
 
   const _PlayerCard({
     required this.name,
@@ -788,16 +1119,25 @@ class _PlayerCard extends StatelessWidget {
     required this.ready,
     required this.isYou,
     required this.emptyLabel,
+    this.roleLabel,
     this.xSkin,
     this.oSkin,
+    this.presence,
+    this.onKick,
   });
 
   @override
   Widget build(BuildContext context) {
     final empty = emptyLabel != null;
     final accent = isYou ? AppPalette.success : AppPalette.primary;
+    // Responsive sizing from the screen width (not LayoutBuilder, which would
+    // conflict with the parent IntrinsicHeight). Clamped so the layout stays
+    // compact on small phones and never overflows.
+    final screenW = MediaQuery.sizeOf(context).width;
+    final avatarSize = (screenW * 0.17).clamp(52.0, 66.0);
+    final markSize = (screenW * 0.13).clamp(42.0, 50.0);
     return Container(
-      padding: const EdgeInsets.fromLTRB(12, 16, 12, 14),
+      padding: const EdgeInsets.fromLTRB(10, 12, 10, 12),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           colors: [AppPalette.panel, AppPalette.panelDeep],
@@ -806,55 +1146,211 @@ class _PlayerCard extends StatelessWidget {
         ),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
-          color: empty
-              ? AppPalette.strokeSoft
-              : accent.withValues(alpha: 0.55),
+          color: empty ? AppPalette.strokeSoft : accent.withValues(alpha: 0.55),
           width: 1.2,
         ),
         boxShadow: [
           BoxShadow(
             color: accent.withValues(alpha: empty ? 0.05 : 0.18),
-            blurRadius: 18,
+            blurRadius: 16,
           ),
         ],
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
+      child: Stack(
         children: [
-          ArenaProfileCircle(
-            name: empty ? '' : (name ?? ''),
-            photoUrl: empty ? null : photoUrl,
-            size: 72,
-            ringColors: isYou
-                ? const <Color>[AppPalette.success, AppPalette.primary]
-                : const <Color>[AppPalette.primary, AppPalette.accentPurple],
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  ArenaProfileCircle(
+                    name: empty ? '' : (name ?? ''),
+                    photoUrl: empty ? null : photoUrl,
+                    size: avatarSize,
+                    ringColors: isYou
+                        ? const <Color>[AppPalette.success, AppPalette.primary]
+                        : const <Color>[
+                            AppPalette.primary,
+                            AppPalette.accentPurple
+                          ],
+                  ),
+                  if (!empty && presence != null)
+                    Positioned(
+                      right: -2,
+                      bottom: 0,
+                      child: _LobbyPresenceDot(state: presence!),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                empty
+                    ? emptyLabel!
+                    : (name?.trim().isNotEmpty == true ? name! : '—'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: empty ? AppPalette.textSubtle : AppPalette.text,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 14,
+                ),
+              ),
+              // Compact role + YOU chips on one line (only takes the space it
+              // needs — no large gaps).
+              if (!empty &&
+                  (isYou || (roleLabel != null && roleLabel!.isNotEmpty))) ...[
+                const SizedBox(height: 4),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (isYou) const _YouTag(),
+                    if (isYou && roleLabel != null && roleLabel!.isNotEmpty)
+                      const SizedBox(width: 5),
+                    if (roleLabel != null && roleLabel!.isNotEmpty)
+                      _RoleTag(label: roleLabel!),
+                  ],
+                ),
+              ],
+              if (!empty && presence != null) ...[
+                const SizedBox(height: 3),
+                _LobbyPresenceLabel(state: presence!),
+              ],
+              const SizedBox(height: 8),
+              ArenaSkinPreview(
+                symbol: empty ? '' : symbol,
+                xSkin: xSkin,
+                oSkin: oSkin,
+                size: markSize,
+              ),
+              const SizedBox(height: 8),
+              if (!empty) ReadyChip(ready: ready),
+            ],
           ),
-          const SizedBox(height: 10),
-          Text(
-            empty ? emptyLabel! : (name?.trim().isNotEmpty == true ? name! : '—'),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: empty ? AppPalette.textSubtle : AppPalette.text,
-              fontWeight: FontWeight.w800,
-              fontSize: 14,
+          if (!empty && onKick != null)
+            Positioned(
+              top: 0,
+              right: 0,
+              child: Material(
+                color: AppPalette.danger.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(10),
+                child: InkWell(
+                  onTap: onKick,
+                  borderRadius: BorderRadius.circular(10),
+                  child: Container(
+                    width: 28,
+                    height: 28,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: AppPalette.danger.withValues(alpha: 0.65),
+                        width: 1,
+                      ),
+                    ),
+                    child: const Icon(
+                      Icons.person_remove_alt_1_rounded,
+                      size: 15,
+                      color: AppPalette.danger,
+                    ),
+                  ),
+                ),
+              ),
             ),
-          ),
-          if (isYou && !empty) ...[
-            const SizedBox(height: 4),
-            const _YouTag(),
-          ],
-          const SizedBox(height: 10),
-          ArenaSkinPreview(
-            symbol: empty ? '' : symbol,
-            xSkin: xSkin,
-            oSkin: oSkin,
-            size: 54,
-          ),
-          const SizedBox(height: 10),
-          if (!empty) ReadyChip(ready: ready),
         ],
+      ),
+    );
+  }
+}
+
+/// Compact HOST/GUEST role chip shown under the player name.
+class _RoleTag extends StatelessWidget {
+  final String label;
+  const _RoleTag({required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: AppPalette.primary.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: AppPalette.primary.withValues(alpha: 0.5),
+          width: 1,
+        ),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: AppPalette.primary,
+          fontWeight: FontWeight.w900,
+          fontSize: 10,
+          letterSpacing: 1.0,
+        ),
+      ),
+    );
+  }
+}
+
+class _LobbyPresenceDot extends StatelessWidget {
+  final PresenceState state;
+  const _LobbyPresenceDot({required this.state});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = switch (state) {
+      PresenceState.online => AppPalette.success,
+      PresenceState.weak => AppPalette.warning,
+      PresenceState.offline => AppPalette.danger,
+    };
+    return Container(
+      width: 16,
+      height: 16,
+      decoration: BoxDecoration(
+        color: color,
+        shape: BoxShape.circle,
+        border: Border.all(color: AppPalette.panel, width: 2.4),
+        boxShadow: [
+          BoxShadow(
+            color: color.withValues(alpha: 0.55),
+            blurRadius: 8,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LobbyPresenceLabel extends StatelessWidget {
+  final PresenceState state;
+  const _LobbyPresenceLabel({required this.state});
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppL10n.of(context);
+    final color = switch (state) {
+      PresenceState.online => AppPalette.success,
+      PresenceState.weak => AppPalette.warning,
+      PresenceState.offline => AppPalette.danger,
+    };
+    final label = switch (state) {
+      PresenceState.online => l10n.isAr ? 'متصل' : 'Online',
+      PresenceState.weak => l10n.isAr ? 'اتصال ضعيف' : 'Weak connection',
+      PresenceState.offline => l10n.isAr ? 'انقطع الاتصال' : 'Connection lost',
+    };
+    return Text(
+      label,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        color: color,
+        fontSize: 10,
+        fontWeight: FontWeight.w800,
+        letterSpacing: 0.4,
       ),
     );
   }

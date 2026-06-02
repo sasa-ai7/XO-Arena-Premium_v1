@@ -5,10 +5,7 @@ class AppConfig {
   /// Currently unreferenced; kept for future gating.
   /// NOTE: The IAP verification service (`CoinsVerificationService`) always
   /// attempts a Cloud Function call when [kEnableRealPurchases] is true and
-  /// falls back to a local catalog-amount grant if the call fails (e.g.
-  /// Cloud Functions not deployed because the Firebase project is on Spark).
-  /// The user-facing flows shipped here therefore work whether or not
-  /// Cloud Functions are deployed.
+  /// does not grant paid products locally if that verification fails.
   static const bool kUseCloudFunctions = false;
 
   /// Google Play IAP products are live. IAP purchases go through server verification.
@@ -70,6 +67,7 @@ class AppConfig {
 
   /// Enable the referral system (9-digit invite codes + 100 coins/friend).
   static const bool kEnableReferralRewards = true;
+
   /// Support account email for the game. Used for Contact Support and policies.
   static const String supportEmail = "xandomanger@gmail.com";
 
@@ -83,20 +81,26 @@ class AppConfig {
       "• Response: We will reply within a few business days.";
 
   /// Policies home page (overview of all XO Arena legal pages).
-  static const String policiesHomeUrl = "https://sites.google.com/view/xo-arena-policies/home";
+  static const String policiesHomeUrl =
+      "https://sites.google.com/view/xo-arena-policies/home";
 
   /// Privacy Policy URL
-  static const String privacyPolicyUrl = "https://sites.google.com/view/xo-arena-policies/privacy-policy";
+  static const String privacyPolicyUrl =
+      "https://sites.google.com/view/xo-arena-policies/privacy-policy";
 
   /// Terms of Service URL
-  static const String termsUrl = "https://sites.google.com/view/xo-arena-policies/terms-of-service";
+  static const String termsUrl =
+      "https://sites.google.com/view/xo-arena-policies/terms-of-service";
 
   /// Account Deletion Information URL
-  static const String accountDeletionUrl = "https://sites.google.com/view/xo-arena-policies/account-deletion";
+  static const String accountDeletionUrl =
+      "https://sites.google.com/view/xo-arena-policies/account-deletion";
 
   /// Contact page URL (web form / mailbox info).
-  static const String contactUrl = "https://sites.google.com/view/xo-arena-policies/contact";
+  static const String contactUrl =
+      "https://sites.google.com/view/xo-arena-policies/contact";
 
   /// Google Policies URL
-  static const String googlePoliciesUrl = "https://www.termsfeed.com/live/27d1303a-4c17-4d58-a16b-6d032142b26a";
+  static const String googlePoliciesUrl =
+      "https://www.termsfeed.com/live/27d1303a-4c17-4d58-a16b-6d032142b26a";
 }

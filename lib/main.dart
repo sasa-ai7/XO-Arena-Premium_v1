@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -11,16 +12,23 @@ import 'core/app_l10n.dart';
 import 'core/app_theme.dart';
 import 'core/startup.dart';
 import 'firebase_options.dart';
+import 'screens/admin/admin_home_screen.dart';
 import 'screens/home/home_hub.dart';
 import 'screens/intro_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/maintenance_screen.dart';
 import 'screens/welcome_screen.dart';
+import 'services/fcm_service.dart';
 import 'services/local_store.dart';
 import 'widgets/weak_connection_overlay.dart';
 
 /// Set to true only after enabling the Firebase App Check API in Google Cloud Console
 /// for project 928308967161. Activating without enabling the API causes log spam.
+///
+/// NOTE: The server CFs enforce App Check via requireAppCheck(). While this is
+/// false, sensitive CF calls fail with failed-precondition and paid purchases
+/// are not granted. Do NOT flip to true without first enabling the App Check API
+/// in Firebase Console and configuring Play Integrity attestation provider.
 const bool kEnableAppCheck = false;
 
 Future<void> main() async {
@@ -30,7 +38,8 @@ Future<void> main() async {
     final zone = startupZone;
     if (zone == null) {
       if (kDebugMode) {
-        debugPrint('[main] Startup zone was unavailable for runApp(${app.runtimeType}).');
+        debugPrint(
+            '[main] Startup zone was unavailable for runApp(${app.runtimeType}).');
       }
       return;
     }
@@ -93,6 +102,19 @@ Future<void> main() async {
           '[main] App Check skipped (kEnableAppCheck=false). Enable in Firebase Console first.');
     }
 
+    // Register the FCM background isolate handler before the app starts so
+    // pushes (e.g. the referral reward) received while the app is terminated
+    // or backgrounded are handled. The handler is a top-level function in
+    // fcm_service.dart; FcmService.init() (called once Home mounts) wires the
+    // foreground/opened-app listeners and token registration.
+    try {
+      FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+    } catch (error) {
+      if (kDebugMode) {
+        debugPrint('[FCM] background handler registration failed: $error');
+      }
+    }
+
     runAppInStartupZone(const NewYorkXOApp());
   }, (error, stackTrace) {
     if (kDebugMode) {
@@ -134,6 +156,9 @@ class NewYorkXOApp extends StatelessWidget {
             '/home': (context) => const HomeHub(),
             '/login': (context) => const LoginScreen(),
             '/welcome': (context) => const WelcomeScreen(),
+            // Admin dashboard (Flutter web). Gated by AdminGate inside the
+            // screen — non-admins are bounced to /home.
+            '/admin': (context) => const AdminHomeScreen(),
           },
           // Mount the Weak Connection overlay above every route. It only
           // appears when AppMode.connectionProblem is active; otherwise it

@@ -104,6 +104,21 @@ class _ArenaJoinRoomPageState extends State<ArenaJoinRoomPage> {
         case ArenaJoinError.notEnoughCoins:
           msg = l10n.notEnoughCoinsJoin;
           break;
+        case ArenaJoinError.kickedCooldown:
+          // Render a live-countdown dialog instead of a flat snackbar so the
+          // user knows exactly when they can retry. The dialog blocks
+          // additional submits until the cooldown expires.
+          if (res.kickCooldownUntilMs != null) {
+            await _showKickedCooldownDialog(res.kickCooldownUntilMs!);
+            if (mounted) setState(() => _busy = false);
+          } else if (mounted) {
+            ArenaToast.show(
+              context,
+              'You were kicked. Please try again later.',
+              kind: ArenaToastKind.warning,
+            );
+          }
+          return;
         case ArenaJoinError.notWaiting:
           msg = l10n.roomNotFound;
           break;
@@ -127,6 +142,18 @@ class _ArenaJoinRoomPageState extends State<ArenaJoinRoomPage> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<void> _showKickedCooldownDialog(int untilMs) async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      barrierColor: Colors.black.withValues(alpha: 0.55),
+      builder: (ctx) => _KickedCooldownDialog(untilMs: untilMs),
+    );
+    if (!mounted) return;
+    setState(() => _value = '');
   }
 
   @override
@@ -219,6 +246,129 @@ class _ArenaJoinRoomPageState extends State<ArenaJoinRoomPage> {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _KickedCooldownDialog extends StatefulWidget {
+  final int untilMs;
+  const _KickedCooldownDialog({required this.untilMs});
+
+  @override
+  State<_KickedCooldownDialog> createState() => _KickedCooldownDialogState();
+}
+
+class _KickedCooldownDialogState extends State<_KickedCooldownDialog> {
+  Timer? _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      final remaining =
+          widget.untilMs - DateTime.now().millisecondsSinceEpoch;
+      if (remaining <= 0) {
+        Navigator.of(context).maybePop();
+      } else {
+        setState(() {});
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  String _formatRemaining() {
+    final ms = widget.untilMs - DateTime.now().millisecondsSinceEpoch;
+    if (ms <= 0) return '00:00';
+    final s = (ms / 1000).ceil();
+    final m = (s ~/ 60).toString().padLeft(2, '0');
+    final ss = (s % 60).toString().padLeft(2, '0');
+    return '$m:$ss';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(22, 22, 22, 16),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(22),
+          color: AppPalette.panel,
+          border: Border.all(
+            color: AppPalette.danger.withValues(alpha: 0.7),
+            width: 1.4,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: AppPalette.danger.withValues(alpha: 0.30),
+              blurRadius: 30,
+              spreadRadius: 1,
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.block_rounded,
+              color: AppPalette.danger,
+              size: 44,
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'You were kicked',
+              style: TextStyle(
+                color: AppPalette.danger,
+                fontSize: 18,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.4,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'You can rejoin in ${_formatRemaining()}',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: AppPalette.text,
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () => Navigator.of(context).maybePop(),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor:
+                      AppPalette.danger.withValues(alpha: 0.18),
+                  foregroundColor: AppPalette.danger,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    side: const BorderSide(
+                        color: AppPalette.danger, width: 1.2),
+                  ),
+                ),
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Text(
+                    'OK',
+                    style: TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );

@@ -15,6 +15,7 @@ import '../../models/arena/arena_room.dart';
 import '../../models/game_avatar.dart';
 import '../../services/arena/arena_bet_service.dart';
 import '../../services/arena/arena_match_summary.dart';
+import '../../services/arena/arena_presence_service.dart';
 import '../../services/arena/arena_repo.dart';
 import '../../utils/board_utils.dart';
 import '../../widgets/app_ui.dart';
@@ -32,7 +33,8 @@ class ArenaGamePage extends StatefulWidget {
   State<ArenaGamePage> createState() => _ArenaGamePageState();
 }
 
-class _ArenaGamePageState extends State<ArenaGamePage> {
+class _ArenaGamePageState extends State<ArenaGamePage>
+    with WidgetsBindingObserver {
   late ArenaRoom _room;
   StreamSubscription<ArenaRoom?>? _sub;
 
@@ -42,7 +44,9 @@ class _ArenaGamePageState extends State<ArenaGamePage> {
   bool _roundResolving = false;
   bool _isLeaving = false;
   bool _hasExitedRoom = false;
+  bool _refundApplied = false;
   Timer? _cleanupTimer;
+  ArenaPresenceService? _presence;
 
   // Connection tracking — used to distinguish transient network loss from
   // a real room deletion. While disconnected we show a "Reconnecting…"
@@ -51,8 +55,24 @@ class _ArenaGamePageState extends State<ArenaGamePage> {
   bool _isConnected = true;
   bool _everConnected = false;
 
-  /// Tracks scores we've already credited towards in case of replays.
-  int? _lastResolvedRound;
+  /// Per-resolution dedupe key includes `roundVersion` so a two-phase
+  /// transition (round_end → playing) produces a fresh key after each
+  /// advance. Format: `$roundVersion:$currentRound:$boardSignature`.
+  String? _lastResolvedKey;
+
+  /// Tracks the last seen `roundVersion` from RTDB to detect round
+  /// transitions and reset local UI state.
+  int _lastSeenRoundVersion = -1;
+
+  /// The `roundVersion` currently being advanced (Phase B in-flight).
+  /// Used to dedup `_scheduleAdvanceToNextRound` calls.
+  int? _advancingRoundVersion;
+
+  /// Banner driven off `lastRoundEndAt` so both clients can show "Round
+  /// Draw — Replay this round" without a separate signal. Updated whenever
+  /// the snapshot's `lastRoundEndAt` changes.
+  int? _lastSeenRoundEndAt;
+  _DrawBanner? _drawBanner;
 
   // Bet-lock guards — prevent the room listener from re-locking on every snapshot.
   bool _betLockCheckRunning = false;
@@ -85,6 +105,10 @@ class _ArenaGamePageState extends State<ArenaGamePage> {
   void initState() {
     super.initState();
     _room = widget.initialRoom;
+    if (kDebugMode) {
+      debugPrint('[ARENA_BET_UI] game betEnabled=${_room.betEnabled} '
+          'bet=${_room.betAmount} prize=${_room.prizePool}');
+    }
     _sub = ArenaRepo.instance.watchRoom(_room.roomCode).listen(
           _onRoomChange,
           onError: (Object e) {
@@ -96,6 +120,19 @@ class _ArenaGamePageState extends State<ArenaGamePage> {
     _loadSelfCosmetics();
     _maybeStartCountdown();
     _maybeLockBet();
+    WidgetsBinding.instance.addObserver(this);
+    final selfUid = _uid;
+    if (selfUid != null && selfUid.isNotEmpty) {
+      _presence =
+          ArenaPresenceService(code: _room.roomCode, selfUid: selfUid);
+      _presence!.start();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Part 1: presence-only on background — no auto-leave/cancel/forfeit.
+    // The presence service handles online→offline state automatically.
   }
 
   Future<void> _loadSelfCosmetics() async {
@@ -253,6 +290,19 @@ class _ArenaGamePageState extends State<ArenaGamePage> {
       return;
     }
     setState(() => _room = room);
+    if (kDebugMode) {
+      final filled = room.board.where((c) => c.isNotEmpty).length;
+      debugPrint('[ARENA_ROOM_SNAPSHOT] room=${room.roomCode} status=${room.status} '
+          'round=${room.currentRound} rv=${room.roundVersion} filled=$filled '
+          'winner=${room.roundWinnerUid} result=${room.lastRoundResult}');
+    }
+    // Detect roundVersion bump and clear stale local state.
+    if (room.roundVersion != _lastSeenRoundVersion) {
+      _lastSeenRoundVersion = room.roundVersion;
+      _roundResolving = false;
+      _winningCells = const <int>{};
+      _roundEndBanner = null;
+    }
     _maybeStartCountdown();
     if ((room.status == 'countdown' || room.status == 'playing') &&
         !_betLockDoneForThisRoom) {
@@ -261,11 +311,77 @@ class _ArenaGamePageState extends State<ArenaGamePage> {
     if (room.status == 'playing') {
       _evaluateBoardIfHost();
     }
+    // Phase B backup: host sees round_end but no advance is in-flight for
+    // this roundVersion. Fires on crash recovery or if _resolveRound failed
+    // to schedule. The snapshot's roundVersion already reflects Phase A's
+    // bump (i.e. N+1), so we pass it directly as the expected version.
+    if (room.status == 'round_end' &&
+        _isHost &&
+        _advancingRoundVersion != room.roundVersion) {
+      _scheduleAdvanceToNextRound(
+        source: 'on_room_change',
+        code: room.roomCode,
+        currentRound: room.currentRound,
+        currentRoundIndex: room.currentRoundIndex,
+        roundsCount: room.roundsCount,
+        roundMaps: room.roundMaps,
+        roundWinnerUid: room.roundWinnerUid,
+        xUid: room.xUid,
+        oUid: room.oUid,
+        expectedRoundVersion: room.roundVersion,
+        lastRoundResult: room.lastRoundResult,
+      );
+    }
     _maybeAnimateRoundWin(room);
+    _maybeShowDrawBanner(room);
+    // Cancelled mid-play → refund self once, then exit. Used only by the
+    // host's "close app with score 0–0" branch + future explicit cancels.
+    if (room.status == 'cancelled' && !_refundApplied) {
+      _refundApplied = true;
+      _refundSelfOnCancel().whenComplete(() {
+        if (mounted) _exitToArena();
+      });
+      return;
+    }
     if (room.status == 'finished' && !_summaryWritten) {
       _summaryWritten = true;
       _onRoomFinished();
     }
+  }
+
+  Future<void> _refundSelfOnCancel() async {
+    final selfUid = _uid;
+    if (selfUid == null) return;
+    if (!_room.betEnabled || !_room.coinsLocked) return;
+    if (kDebugMode) {
+      debugPrint('[ARENA_BET] refund-on-cancel room=${_room.roomCode} uid=$selfUid');
+    }
+    await ArenaBetService.refundOwnBet(room: _room, selfUid: selfUid);
+  }
+
+  /// Detect a draw round resolution from the new snapshot and surface the
+  /// "Round Draw — Replay this round" banner. The host writes
+  /// `lastRoundEndAt` + `lastRoundResult` on every round resolution; we
+  /// only react to a *change* in `lastRoundEndAt` so a redelivered
+  /// snapshot does not retrigger the banner.
+  void _maybeShowDrawBanner(ArenaRoom room) {
+    final endAt = room.lastRoundEndAt;
+    if (endAt == null) return;
+    if (_lastSeenRoundEndAt == endAt) return;
+    _lastSeenRoundEndAt = endAt;
+    if (room.lastRoundResult != 'draw') return;
+    if (room.status == 'finished') return;
+    if (kDebugMode) {
+      debugPrint('[ARENA_DRAW] banner shown room=${room.roomCode} round=${room.currentRound}');
+    }
+    setState(() {
+      _drawBanner = _DrawBanner(stamp: endAt);
+    });
+    Future.delayed(const Duration(milliseconds: 1800), () {
+      if (!mounted) return;
+      if (_drawBanner?.stamp != endAt) return;
+      setState(() => _drawBanner = null);
+    });
   }
 
   /// Detect a fresh round-end and pulse the winning cells locally for ~900ms,
@@ -276,14 +392,21 @@ class _ArenaGamePageState extends State<ArenaGamePage> {
   void _maybeAnimateRoundWin(ArenaRoom room) {
     final winnerUid = room.roundWinnerUid;
     if (winnerUid == null || winnerUid.isEmpty) return;
-    // Don't double-animate when the match is finished — the final-result
-    // dialog handles that visual beat.
-    if (room.status == 'finished') return;
+    // Note: we intentionally do NOT skip when status == 'finished'. The
+    // winning-cell glow + Round Won/Lost banner should play for the final
+    // round too; the result dialog opens 1.6–2.0s later and supersedes it.
     final key = '${room.currentRoundIndex}|$winnerUid';
     if (_lastAnimatedRoundKey == key) return;
     _lastAnimatedRoundKey = key;
     final symbol = room.symbolFor(winnerUid);
     if (symbol.isEmpty) return;
+    final isSelfWinner = _uid != null && winnerUid == _uid;
+    if (kDebugMode) {
+      debugPrint('[ARENA_OVERLAY] round_end '
+          'type=${isSelfWinner ? 'won' : 'lost'} '
+          'uid=${_uid ?? '?'} room=${room.roomCode} '
+          'rv=${room.roundVersion} status=${room.status}');
+    }
     final line = _computeWinningLine(room.board, room.currentBoardSize, symbol);
     if (line.isNotEmpty) {
       setState(() => _winningCells = line.toSet());
@@ -294,9 +417,7 @@ class _ArenaGamePageState extends State<ArenaGamePage> {
       if (_lastAnimatedRoundKey != key) return;
       setState(() {
         _winningCells = const <int>{};
-        _roundEndBanner = _RoundEndBanner(
-          isSelfWinner: _uid != null && winnerUid == _uid,
-        );
+        _roundEndBanner = _RoundEndBanner(isSelfWinner: isSelfWinner);
       });
       Future.delayed(const Duration(milliseconds: 1400), () {
         if (!mounted) return;
@@ -361,8 +482,10 @@ class _ArenaGamePageState extends State<ArenaGamePage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _sub?.cancel();
     _connSub?.cancel();
+    _presence?.stop();
     // Keep the cleanup Timer alive past dispose so the host's room removal
     // still fires even after they leave the screen — it's intentionally not
     // cancelled here. If you want eager teardown, call cleanupTimer cancel
@@ -394,6 +517,10 @@ class _ArenaGamePageState extends State<ArenaGamePage> {
     if (_room.status != 'playing') return;
     final boardSize = _room.currentBoardSize;
     final cfg = standardBoardConfig(boardSize);
+    // Win length is board-size aware: 3x3 needs 3 in a row, 4x4 needs 4,
+    // 5x5 needs 5 — not a fixed 3. `standardBoardConfig` returns
+    // winLength == boardSize, and `generateWinningLines` enumerates every
+    // valid line of that length (horizontal, vertical, both diagonals).
     final lines =
         generateWinningLines(boardSize: boardSize, winLength: cfg.winLength);
     final board = _room.board;
@@ -408,76 +535,228 @@ class _ArenaGamePageState extends State<ArenaGamePage> {
       }
     }
     final boardFull = board.every((c) => c.isNotEmpty);
+    if (kDebugMode && (winnerSymbol != null || boardFull)) {
+      final winnerUid = winnerSymbol == null
+          ? 'null'
+          : (winnerSymbol == 'X' ? _room.xUid : _room.oUid);
+      debugPrint('[ARENA_WIN_CHECK] boardSize=$boardSize '
+          'requiredLineLength=${cfg.winLength} winner=$winnerUid');
+    }
     if (winnerSymbol == null && !boardFull) return;
-    // Guard against duplicate-evaluation when host re-receives the same snap.
-    if (_lastResolvedRound == _room.currentRound) return;
+    // Dedupe key includes roundVersion so a two-phase transition
+    // (round_end → playing) produces a fresh key after each advance.
+    final key =
+        '${_room.roundVersion}:${_room.currentRound}:$boardSize:${board.join('|')}';
+    if (_lastResolvedKey == key) return;
     _roundResolving = true;
-    _lastResolvedRound = _room.currentRound;
+    _lastResolvedKey = key;
+    if (winnerSymbol == null && boardFull && kDebugMode) {
+      // Trim the signature in logs so a 5x5 board (25 cells) doesn't blow
+      // the line out — first/last 8 chars + length is enough to disambiguate
+      // sibling snapshots while staying readable.
+      final sig = board.join('|');
+      final shortSig = sig.length <= 24
+          ? sig
+          : '${sig.substring(0, 12)}…${sig.substring(sig.length - 12)}';
+      debugPrint('[ARENA_DRAW] room=${_room.roomCode} '
+          'round=${_room.currentRound} boardSize=$boardSize '
+          'drawReplay=true signature=$shortSig');
+    }
     _resolveRound(winnerSymbol);
   }
 
+  /// Phase A: Host writes `status=round_end` with the terminal board visible.
+  /// Phase B is scheduled directly from here after Phase A succeeds — we do
+  /// NOT rely on `_onRoomChange` (it is only a backup for crash recovery).
+  ///
+  /// Critical: `applyRoundResult` bumps `roundVersion` from N to N+1. The
+  /// Phase B transaction must therefore receive `expectedRoundVersion = N+1`,
+  /// not the pre-bump value, or the transaction will always abort.
   Future<void> _resolveRound(String? winnerSymbol) async {
-    final winnerUid = winnerSymbol == null
-        ? null
-        : (winnerSymbol == 'X' ? _room.xUid : _room.oUid);
-    int scoreHost = _room.scoreHost;
-    int scoreGuest = _room.scoreGuest;
-    if (winnerUid != null) {
-      if (winnerUid == _room.hostUid) {
-        scoreHost++;
-      } else {
-        scoreGuest++;
+    final capturedRoom = _room;
+    final preVersion = capturedRoom.roundVersion;
+    final phaseAVersion = preVersion + 1;
+    try {
+      final winnerUid = winnerSymbol == null
+          ? null
+          : (winnerSymbol == 'X' ? capturedRoom.xUid : capturedRoom.oUid);
+      int scoreHost = capturedRoom.scoreHost;
+      int scoreGuest = capturedRoom.scoreGuest;
+      if (winnerUid != null) {
+        if (winnerUid == capturedRoom.hostUid) {
+          scoreHost++;
+        } else {
+          scoreGuest++;
+        }
       }
-    }
-    final isLastRound = _room.currentRound >= _room.roundsCount;
-    final isDraw = winnerUid == null;
+      final isLastRound = capturedRoom.currentRound >= capturedRoom.roundsCount;
+      final isDraw = winnerUid == null;
+      final phaseAResult = isDraw ? 'draw' : 'win';
+      if (kDebugMode) {
+        debugPrint('[ARENA_PHASE_A] write start room=${capturedRoom.roomCode} '
+            'oldVersion=$preVersion result=$phaseAResult '
+            'round=${capturedRoom.currentRound}/${capturedRoom.roundsCount}');
+      }
 
-    if (!isDraw && isLastRound) {
-      // Determine room winner — tie ⇒ extra round.
-      if (scoreHost == scoreGuest) {
-        await ArenaRepo.instance.applyRoundResult(
-          code: _room.roomCode,
-          currentRound: _room.currentRound,
-          currentRoundIndex: _room.currentRoundIndex,
-          roundsCount: _room.roundsCount,
-          roundMaps: _room.roundMaps,
+      if (!isDraw && isLastRound) {
+        if (scoreHost == scoreGuest) {
+          // Tied at last round — extra round via round_end → advance.
+          await ArenaRepo.instance.applyRoundResult(
+            code: capturedRoom.roomCode,
+            currentRound: capturedRoom.currentRound,
+            currentRoundIndex: capturedRoom.currentRoundIndex,
+            roundsCount: capturedRoom.roundsCount,
+            roundMaps: capturedRoom.roundMaps,
+            scoreHost: scoreHost,
+            scoreGuest: scoreGuest,
+            roundWinnerUid: winnerUid,
+            roundVersion: preVersion,
+          );
+          if (kDebugMode) {
+            debugPrint('[ARENA_PHASE_A] write success room=${capturedRoom.roomCode} '
+                'newVersion=$phaseAVersion result=$phaseAResult branch=tied_at_last');
+          }
+          _scheduleAdvanceToNextRound(
+            source: 'after_phase_a',
+            code: capturedRoom.roomCode,
+            currentRound: capturedRoom.currentRound,
+            currentRoundIndex: capturedRoom.currentRoundIndex,
+            roundsCount: capturedRoom.roundsCount,
+            roundMaps: capturedRoom.roundMaps,
+            roundWinnerUid: winnerUid,
+            xUid: capturedRoom.xUid,
+            oUid: capturedRoom.oUid,
+            expectedRoundVersion: phaseAVersion,
+            lastRoundResult: phaseAResult,
+          );
+          return;
+        }
+        final roomWinner =
+            scoreHost > scoreGuest ? capturedRoom.hostUid : (capturedRoom.guestUid ?? '');
+        await ArenaRepo.instance.finishMatchAtomic(
+          code: capturedRoom.roomCode,
+          currentRound: capturedRoom.currentRound,
+          currentRoundIndex: capturedRoom.currentRoundIndex,
           scoreHost: scoreHost,
           scoreGuest: scoreGuest,
           roundWinnerUid: winnerUid,
+          roomWinnerUid: roomWinner.isEmpty ? null : roomWinner,
+          result: 'completed',
+          roundVersion: preVersion,
+          finalResult: 'completed',
         );
-        _roundResolving = false;
+        if (kDebugMode) {
+          debugPrint('[ARENA_PHASE_A] write success room=${capturedRoom.roomCode} '
+              'newVersion=$phaseAVersion result=$phaseAResult branch=match_finished');
+        }
+      } else {
+        // Phase A: write round_end with terminal board visible.
+        await ArenaRepo.instance.applyRoundResult(
+          code: capturedRoom.roomCode,
+          currentRound: capturedRoom.currentRound,
+          currentRoundIndex: capturedRoom.currentRoundIndex,
+          roundsCount: capturedRoom.roundsCount,
+          roundMaps: capturedRoom.roundMaps,
+          scoreHost: scoreHost,
+          scoreGuest: scoreGuest,
+          roundWinnerUid: winnerUid,
+          roundVersion: preVersion,
+        );
+        if (kDebugMode) {
+          debugPrint('[ARENA_PHASE_A] write success room=${capturedRoom.roomCode} '
+              'newVersion=$phaseAVersion result=$phaseAResult branch=normal');
+        }
+        _scheduleAdvanceToNextRound(
+          source: 'after_phase_a',
+          code: capturedRoom.roomCode,
+          currentRound: capturedRoom.currentRound,
+          currentRoundIndex: capturedRoom.currentRoundIndex,
+          roundsCount: capturedRoom.roundsCount,
+          roundMaps: capturedRoom.roundMaps,
+          roundWinnerUid: winnerUid,
+          xUid: capturedRoom.xUid,
+          oUid: capturedRoom.oUid,
+          expectedRoundVersion: phaseAVersion,
+          lastRoundResult: phaseAResult,
+        );
+      }
+    } finally {
+      _roundResolving = false;
+    }
+  }
+
+  /// Phase B: After a delay showing the terminal board, advance to next round.
+  /// Uses `_advancingRoundVersion` for dedup — safe to call multiple times;
+  /// the RTDB transaction in `advanceToNextRound` aborts if already applied.
+  ///
+  /// [expectedRoundVersion] MUST be the post-Phase-A version (= captured
+  /// version + 1). The primary path (`after_phase_a`) passes the computed
+  /// bumped value; the backup path (`on_room_change`) passes the snapshot's
+  /// `room.roundVersion`, which already reflects Phase A's bump.
+  void _scheduleAdvanceToNextRound({
+    required String source,
+    required String code,
+    required int currentRound,
+    required int currentRoundIndex,
+    required int roundsCount,
+    required List<String> roundMaps,
+    required String? roundWinnerUid,
+    required String xUid,
+    required String oUid,
+    required int expectedRoundVersion,
+    required String? lastRoundResult,
+  }) {
+    if (_advancingRoundVersion == expectedRoundVersion) {
+      if (kDebugMode) {
+        debugPrint('[ARENA_PHASE_B] skipped already scheduled '
+            'source=$source expectedVersion=$expectedRoundVersion');
+      }
+      return;
+    }
+    _advancingRoundVersion = expectedRoundVersion;
+    if (kDebugMode) {
+      debugPrint('[ARENA_PHASE_B] scheduled source=$source room=$code '
+          'expectedVersion=$expectedRoundVersion '
+          'round=$currentRound/$roundsCount '
+          'result=${lastRoundResult ?? 'unknown'}');
+    }
+    final delay = lastRoundResult == 'draw'
+        ? const Duration(milliseconds: 1800)
+        : const Duration(milliseconds: 2200);
+    Future.delayed(delay, () async {
+      if (!mounted) {
+        if (_advancingRoundVersion == expectedRoundVersion) {
+          _advancingRoundVersion = null;
+        }
         return;
       }
-      final roomWinner =
-          scoreHost > scoreGuest ? _room.hostUid : (_room.guestUid ?? '');
-      // Atomic finish: write the final round score AND the match-finished
-      // status in a single RTDB update so the guest cannot observe an
-      // intermediate "empty board + status=playing" snapshot. Preserves the
-      // winning line on screen so the round-end animation can highlight it.
-      await ArenaRepo.instance.finishMatchAtomic(
-        code: _room.roomCode,
-        currentRound: _room.currentRound,
-        currentRoundIndex: _room.currentRoundIndex,
-        scoreHost: scoreHost,
-        scoreGuest: scoreGuest,
-        roundWinnerUid: winnerUid,
-        roomWinnerUid: roomWinner.isEmpty ? null : roomWinner,
-        result: 'completed',
-        finalResult: 'completed',
-      );
-    } else {
-      await ArenaRepo.instance.applyRoundResult(
-        code: _room.roomCode,
-        currentRound: _room.currentRound,
-        currentRoundIndex: _room.currentRoundIndex,
-        roundsCount: _room.roundsCount,
-        roundMaps: _room.roundMaps,
-        scoreHost: scoreHost,
-        scoreGuest: scoreGuest,
-        roundWinnerUid: winnerUid,
-      );
-    }
-    _roundResolving = false;
+      try {
+        final committed = await ArenaRepo.instance.advanceToNextRound(
+          code: code,
+          currentRound: currentRound,
+          currentRoundIndex: currentRoundIndex,
+          roundsCount: roundsCount,
+          roundMaps: roundMaps,
+          roundWinnerUid: roundWinnerUid,
+          xUid: xUid,
+          oUid: oUid,
+          expectedRoundVersion: expectedRoundVersion,
+        );
+        if (kDebugMode) {
+          debugPrint('[ARENA_PHASE_B] applied room=$code '
+              'expectedVersion=$expectedRoundVersion committed=$committed');
+        }
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint('[ARENA_PHASE_B] failed room=$code '
+              'expectedVersion=$expectedRoundVersion error=$e');
+        }
+      } finally {
+        if (_advancingRoundVersion == expectedRoundVersion) {
+          _advancingRoundVersion = null;
+        }
+      }
+    });
   }
 
   Future<void> _onRoomFinished() async {
@@ -540,6 +819,12 @@ class _ArenaGamePageState extends State<ArenaGamePage> {
     final draw = _room.roomWinnerUid == null
         || _room.roomWinnerUid!.isEmpty;
     final forfeit = _room.result == 'forfeit';
+    if (kDebugMode) {
+      final overlayResult = draw ? 'draw' : (win ? 'win' : 'loss');
+      debugPrint('[ARENA_OVERLAY] match_finished result=$overlayResult '
+          'uid=${selfUid ?? '?'} room=${_room.roomCode} '
+          'forfeit=$forfeit roomWinner=${_room.roomWinnerUid ?? 'none'}');
+    }
     final accent = win
         ? AppPalette.success
         : draw
@@ -710,9 +995,14 @@ class _ArenaGamePageState extends State<ArenaGamePage> {
       debugPrint('[ARENA] leave requested room=${_room.roomCode} uid=$uid');
     }
     try {
-      await ArenaRepo.instance
-          .leaveRoom(room: _room, leaverUid: uid)
-          .timeout(const Duration(seconds: 6));
+      // Route through the single safe leave funnel so coins-locked / in-play
+      // leaves forfeit correctly (opponent recorded as winner; idempotent
+      // payout happens on the opponent's side) and the mirror is cleared.
+      await ArenaRepo.instance.resolvePlayerLeaveRoom(
+        roomCode: _room.roomCode,
+        leaverUid: uid,
+        reason: 'explicit_leave',
+      );
       if (kDebugMode) {
         debugPrint('[ARENA] leave success, exiting room=${_room.roomCode}');
       }
@@ -776,6 +1066,13 @@ class _ArenaGamePageState extends State<ArenaGamePage> {
                       child: Center(
                         child: _RoundEndBannerView(banner: _roundEndBanner!),
                       ),
+                    ),
+                  ),
+                if (_drawBanner != null)
+                  const Positioned.fill(
+                    child: IgnorePointer(
+                      ignoring: true,
+                      child: Center(child: _DrawBannerView()),
                     ),
                   ),
               ],
@@ -870,6 +1167,10 @@ class _ArenaGamePageState extends State<ArenaGamePage> {
                           ),
                         ),
                       ),
+                      if (_room.betEnabled && _room.betAmount > 0) ...[
+                        const SizedBox(height: 4),
+                        _GameBetChip(room: _room),
+                      ],
                     ],
                   ),
                 ),
@@ -922,6 +1223,11 @@ class _ArenaGamePageState extends State<ArenaGamePage> {
         _room.guestUid != null &&
         turnUid == _room.guestUid;
 
+    final hostPresence = _presence?.derive(_room, _room.hostUid);
+    final guestPresence = _room.guestUid == null
+        ? null
+        : _presence?.derive(_room, _room.guestUid!);
+
     Widget hostCard;
     if (_room.hostUid == _uid) {
       hostCard = ArenaPlayerCard.self(
@@ -932,6 +1238,7 @@ class _ArenaGamePageState extends State<ArenaGamePage> {
         avatar: _avatarFor(_room.hostUid),
         xSkin: _skinFor(_room.hostUid, 'X'),
         oSkin: _skinFor(_room.hostUid, 'O'),
+        presence: hostPresence,
       );
     } else {
       hostCard = ArenaPlayerCard.opponent(
@@ -943,6 +1250,7 @@ class _ArenaGamePageState extends State<ArenaGamePage> {
         photoUrl: _photoFor(_room.hostUid),
         xSkin: _skinFor(_room.hostUid, 'X'),
         oSkin: _skinFor(_room.hostUid, 'O'),
+        presence: hostPresence,
       );
     }
 
@@ -958,6 +1266,7 @@ class _ArenaGamePageState extends State<ArenaGamePage> {
         avatar: _avatarFor(guestUid),
         xSkin: _skinFor(guestUid, 'X'),
         oSkin: _skinFor(guestUid, 'O'),
+        presence: guestPresence,
       );
     } else {
       guestCard = ArenaPlayerCard.opponent(
@@ -969,6 +1278,7 @@ class _ArenaGamePageState extends State<ArenaGamePage> {
         photoUrl: _photoFor(guestUid),
         xSkin: _skinFor(guestUid, 'X'),
         oSkin: _skinFor(guestUid, 'O'),
+        presence: guestPresence,
       );
     }
 
@@ -1004,6 +1314,7 @@ class _ArenaGamePageState extends State<ArenaGamePage> {
           width: size,
           height: size,
           child: _BoardGrid(
+            key: ValueKey('board_${_room.roundVersion}_${_room.currentRoundIndex}_${_room.currentBoardSize}_${_room.board.join('|')}'),
             board: _room.board,
             boardSize: _room.currentBoardSize,
             onTap: _onCellTap,
@@ -1014,6 +1325,54 @@ class _ArenaGamePageState extends State<ArenaGamePage> {
           ),
         );
       },
+    );
+  }
+}
+
+/// Compact bet/prize chip shown under the room code in the game header. Only
+/// rendered for betting rooms (the caller guards on betEnabled/betAmount).
+class _GameBetChip extends StatelessWidget {
+  final ArenaRoom room;
+  const _GameBetChip({required this.room});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        color: AppPalette.gold.withValues(alpha: 0.12),
+        border: Border.all(
+          color: AppPalette.gold.withValues(alpha: 0.5),
+          width: 1,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Image.asset(
+            'assets/coin/COIN.png',
+            width: 13,
+            height: 13,
+            cacheWidth: 39,
+            errorBuilder: (_, __, ___) => const Icon(
+              Icons.monetization_on_rounded,
+              color: AppPalette.gold,
+              size: 13,
+            ),
+          ),
+          const SizedBox(width: 4),
+          Text(
+            'Bet ${room.betAmount} · Prize ${room.prizePool}',
+            style: const TextStyle(
+              color: AppPalette.gold,
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.3,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1031,6 +1390,7 @@ class _BoardGrid extends StatelessWidget {
   final Set<int> winningCells;
 
   const _BoardGrid({
+    super.key,
     required this.board,
     required this.boardSize,
     required this.onTap,
@@ -1182,6 +1542,85 @@ class _ReconnectingBanner extends StatelessWidget {
 class _RoundEndBanner {
   final bool isSelfWinner;
   const _RoundEndBanner({required this.isSelfWinner});
+}
+
+class _DrawBanner {
+  /// `lastRoundEndAt` epoch from the snapshot that drove this banner. Used
+  /// to gate the dismiss timer so a redelivered snapshot can never close
+  /// the banner of a *later* draw early.
+  final int stamp;
+  const _DrawBanner({required this.stamp});
+}
+
+class _DrawBannerView extends StatelessWidget {
+  const _DrawBannerView();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 32),
+      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 18),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(22),
+        gradient: LinearGradient(
+          colors: [
+            AppPalette.panel.withValues(alpha: 0.96),
+            AppPalette.panelDeep.withValues(alpha: 0.98),
+          ],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+        ),
+        border: Border.all(
+          color: AppPalette.gold.withValues(alpha: 0.7),
+          width: 1.6,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: AppPalette.gold.withValues(alpha: 0.40),
+            blurRadius: 32,
+            spreadRadius: 2,
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(
+            Icons.handshake_rounded,
+            color: AppPalette.gold,
+            size: 36,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'ROUND DRAW',
+            style: TextStyle(
+              color: AppPalette.gold,
+              fontSize: 20,
+              fontWeight: FontWeight.w900,
+              fontFamily: 'Orbitron',
+              letterSpacing: 2.4,
+              shadows: [
+                Shadow(
+                  color: AppPalette.gold.withValues(alpha: 0.6),
+                  blurRadius: 18,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Replay this round',
+            style: TextStyle(
+              color: AppPalette.text,
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.4,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _RoundEndBannerView extends StatelessWidget {

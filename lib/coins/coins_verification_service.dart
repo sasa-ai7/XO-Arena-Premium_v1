@@ -47,6 +47,7 @@ class CoinsVerificationService {
         'coinsAdded': null,
         'newBalance': null,
         'consumed': false,
+        'functionsUnavailable': false,
         'error': 'Purchases are temporarily unavailable.',
       };
     }
@@ -71,6 +72,7 @@ class CoinsVerificationService {
         'coinsAdded': null,
         'newBalance': null,
         'consumed': false,
+        'functionsUnavailable': false,
         'error': 'User not authenticated',
       };
     }
@@ -128,6 +130,7 @@ class CoinsVerificationService {
         'coinsAdded': coinsAdded,
         'newBalance': newBalance,
         'consumed': data['consumed'] as bool? ?? false,
+        'functionsUnavailable': false,
         'message': message,
         'error': error,
       };
@@ -141,23 +144,46 @@ class CoinsVerificationService {
         }
       }
 
+      // Detect "Cloud Functions not deployed / unavailable" conditions. On the
+      // Spark (free) plan the `verifyGooglePlayPurchase` callable does not exist,
+      // so Firebase returns NOT_FOUND / UNAVAILABLE / INTERNAL. We surface a
+      // dedicated [functionsUnavailable] flag so the caller can fall back to the
+      // free client-side grant path instead of treating it as a real rejection.
+      final code = e.code.toLowerCase();
+      final msg = (e.message ?? '').toLowerCase();
+      final functionsUnavailable = code == 'not-found' ||
+          code == 'unavailable' ||
+          code == 'unimplemented' ||
+          code == 'internal' ||
+          msg.contains('not_found') ||
+          msg.contains('not found') ||
+          msg.contains('not-found') ||
+          msg.contains('not deployed') ||
+          msg.contains('not available');
+
       // Map Firebase Functions error codes to response
       return {
         'ok': false,
         'coinsAdded': null,
         'newBalance': null,
         'consumed': false,
+        'functionsUnavailable': functionsUnavailable,
         'error': e.message ?? 'Cloud Function error: ${e.code}',
       };
     } catch (e) {
       if (kDebugMode) {
         debugPrint('[VerificationService] Unexpected error calling Cloud Function: $e');
       }
+      // Any other error (missing plugin, network, timeout) means we could not
+      // reach a working verification backend. Treat it as functions-unavailable
+      // so a real Google Play purchase is not lost — the client fallback grants
+      // the coins and records the purchase as unverified/untrusted.
       return {
         'ok': false,
         'coinsAdded': null,
         'newBalance': null,
         'consumed': false,
+        'functionsUnavailable': true,
         'error': 'Unexpected error: $e',
       };
     }

@@ -4,9 +4,9 @@
 /// Console. Coin packs are consumable and may be purchased repeatedly.
 /// Premium avatars are one-time, non-consumable entitlements.
 ///
-/// CATALOG_SYNC: 2026-05-24 — XO Arena rev. shop redesign
+/// CATALOG_SYNC: 2026-05-25 — Apex product id migrated to Play Console value
 /// • 10 coin packs (xo_arena_2000 … xo_arena_200000)
-/// • 2 premium avatars (xo_avatar_premium → Inferno, xo_avatar_premium_apex → Apex)
+/// • 2 premium avatars (xo_avatar_premium → Inferno, xo_avatar_premium1 → Apex)
 class CoinsCatalog {
   // ── Avatar entitlements ───────────────────────────────────────────────────
 
@@ -14,7 +14,8 @@ class CoinsCatalog {
   static const String premiumAvatarProductId = 'xo_avatar_premium';
 
   /// Apex (animated) — one-time premium avatar, $3.99 (orig $5.99).
-  static const String premiumAvatarApexProductId = 'xo_avatar_premium_apex';
+  /// Product id matches Google Play Console (`xo_avatar_premium1`).
+  static const String premiumAvatarApexProductId = 'xo_avatar_premium1';
 
   /// Catalog id of the avatar unlocked by [premiumAvatarProductId] (Inferno).
   static const int premiumAvatarId = 7;
@@ -144,15 +145,15 @@ class CoinsCatalog {
       case 'xo_arena_10000':
         return 10000;
       case 'xo_arena_20000':
-        return 22000; // 20,000 + 2,000 bonus
+        return 20000;
       case 'xo_arena_30000':
-        return 33000; // 30,000 + 3,000 bonus
+        return 30000;
       case 'xo_arena_50000':
-        return 57500; // 50,000 + 7,500 bonus
+        return 52500; // 50,000 + 2,500 bonus
       case 'xo_arena_100000':
-        return 120000; // 100,000 + 20,000 bonus
+        return 107500; // 100,000 + 7,500 bonus
       case 'xo_arena_200000':
-        return 240000; // 200,000 + 40,000 bonus
+        return 220000; // 200,000 + 20,000 bonus
       default:
         return 0;
     }
@@ -162,16 +163,12 @@ class CoinsCatalog {
   /// Used by the UI to render a "+N bonus" chip.
   static int bonusForProductId(String productId) {
     switch (productId) {
-      case 'xo_arena_20000':
-        return 2000;
-      case 'xo_arena_30000':
-        return 3000;
       case 'xo_arena_50000':
-        return 7500;
+        return 2500;
       case 'xo_arena_100000':
-        return 20000;
+        return 7500;
       case 'xo_arena_200000':
-        return 40000;
+        return 20000;
       default:
         return 0;
     }

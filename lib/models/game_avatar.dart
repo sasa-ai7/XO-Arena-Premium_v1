@@ -78,7 +78,7 @@ const List<GameAvatar> kGameAvatars = [
   GameAvatar(id: 6, name: 'Phantom',   assetPath: 'assets/avatar/Avatar__6.png',  price: 20000, isGif: false),
   GameAvatar(id: 9, name: 'Eclipse',   assetPath: 'assets/avatar/Avatar__9.png',  price: 30000, isGif: false),
   // Apex was previously coin-priced (50,000 coins). It is now a premium
-  // IAP entitlement (xo_avatar_premium_apex) shown in the coin shop's
+  // IAP entitlement (xo_avatar_premium1) shown in the coin shop's
   // featured avatar carousel. Users who already purchased it with coins
   // keep it in their ownedAvatars list — the gallery treats them as
   // owners and never re-charges.

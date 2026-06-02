@@ -29,6 +29,8 @@ analyze_out.txt
 *.pem
 key.properties
 android/key.properties
+.env
+.env.*
 
 # Local backups / release artifacts
 *.zip

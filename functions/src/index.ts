@@ -1,4 +1,5 @@
 import * as functions from "firebase-functions";
+import { onSchedule } from "firebase-functions/v2/scheduler";
 import * as admin from "firebase-admin";
 import { google } from "googleapis";
 import * as crypto from "crypto";
@@ -26,11 +27,11 @@ const PRODUCT_COINS_MAP: Record<string, number> = {
   "xo_arena_6000": 6000,
   "xo_arena_8000": 8000,
   "xo_arena_10000": 10000,
-  "xo_arena_20000": 22000,   // 20,000 + 2,000 bonus
-  "xo_arena_30000": 33000,   // 30,000 + 3,000 bonus
-  "xo_arena_50000": 57500,   // 50,000 + 7,500 bonus
-  "xo_arena_100000": 120000, // 100,000 + 20,000 bonus
-  "xo_arena_200000": 240000, // 200,000 + 40,000 bonus
+  "xo_arena_20000": 20000,
+  "xo_arena_30000": 30000,
+  "xo_arena_50000": 52500,   // 50,000 + 2,500 bonus
+  "xo_arena_100000": 107500, // 100,000 + 7,500 bonus
+  "xo_arena_200000": 220000, // 200,000 + 20,000 bonus
 };
 
 /**
@@ -46,7 +47,7 @@ const NON_CONSUMABLE_ENTITLEMENTS: Record<
     entitlementId: "premium_avatar_7",
     inventoryAvatarId: "premium_avatar_7",
   },
-  xo_avatar_premium_apex: {
+  xo_avatar_premium1: {
     entitlementId: "premium_avatar_10",
     inventoryAvatarId: "premium_avatar_10",
   },
@@ -1139,6 +1140,64 @@ export const redeemReferralCode = functions.https.onCall(async (data, context) =
   console.log(
     `[redeemReferralCode] uid=${callerUid} referrer=${referrerUid} code=${code} count=${newReferrerCount}`
   );
+  console.log(
+    `[REFERRAL_REWARD] granted referrer=${referrerUid} invited=${callerUid} coins=${REFERRAL_REWARD}`
+  );
+
+  // Best-effort FCM push to the referrer. Wrapped so a push failure never
+  // fails the redeem (coins were already granted in the transaction above).
+  try {
+    const [referrerSnap2, inviteeSnap2] = await Promise.all([
+      referrerRef.get(),
+      inviteeRef.get(),
+    ]);
+    const tokensMap =
+      (referrerSnap2.data()?.fcmTokens as Record<string, unknown>) || {};
+    const tokens = Object.keys(tokensMap);
+    const friendName =
+      (inviteeSnap2.data()?.Profile?.name as string) || "A friend";
+    console.log(
+      `[FCM] referral_push to=${referrerUid} tokenExists=${tokens.length > 0}`
+    );
+    if (tokens.length > 0) {
+      const resp = await admin.messaging().sendEachForMulticast({
+        tokens,
+        notification: {
+          title: "Your friend joined XO Arena!",
+          body: `You earned ${REFERRAL_REWARD} coins from ${friendName}`,
+        },
+        data: {type: "referral_reward"},
+        android: {priority: "high"},
+      });
+      // Prune tokens that are no longer registered.
+      const stale: string[] = [];
+      resp.responses.forEach((r, i) => {
+        const codeStr = r.error?.code || "";
+        if (
+          !r.success &&
+          (codeStr === "messaging/registration-token-not-registered" ||
+            codeStr === "messaging/invalid-registration-token")
+        ) {
+          stale.push(tokens[i]);
+        }
+      });
+      if (stale.length > 0) {
+        const update: Record<string, unknown> = {};
+        stale.forEach((t) => {
+          update[`fcmTokens.${t}`] = admin.firestore.FieldValue.delete();
+        });
+        await referrerRef.update(update).catch(() => undefined);
+      }
+      console.log(
+        `[FCM] referral_push_sent to=${referrerUid} tokenExists=true ` +
+          `success=${resp.successCount} failure=${resp.failureCount}`
+      );
+    }
+  } catch (err) {
+    console.error(
+      `[FCM] referral_push_failed to=${referrerUid} error=${String(err)}`
+    );
+  }
 
   return {
     ok: true,
@@ -1148,3 +1207,161 @@ export const redeemReferralCode = functions.https.onCall(async (data, context) =
     referrerCount: newReferrerCount,
   };
 });
+
+// ============================================================
+// FUNCTION: expireStaleArenaRooms (scheduled janitor)
+// ============================================================
+//
+// Server-side safety net for the Arena friend-room lifecycle. Runs every 5
+// minutes and guarantees that no room can stay alive forever, regardless of
+// who closed their app. It mirrors the client-side opportunistic cleanup in
+// ArenaResumeFlow.settlePendingActiveRoom so the two converge on the same
+// terminal state.
+//
+// Two timeout models (must match the Flutter constants in arena_repo.dart):
+//   • Empty *waiting* rooms (host alone) — 10-minute creation TTL (expiresAt).
+//     Nothing is at stake, so they are removed outright.
+//   • *Occupied* rooms (guest joined or match started) — 20-minute inactivity
+//     TTL measured from max(updatedAt, either presence lastSeenMs). These are
+//     marked `expired` (NOT removed) with a `cleanupAfter` grace window so each
+//     player can refund their own locked bet via the idempotent
+//     ArenaBetService.refundOwnBet on their next app open; the node is removed
+//     on a later pass once `cleanupAfter` has elapsed.
+//
+// WALLET-NEUTRAL: this function never touches Wallet.coins or wallet_ledger.
+// All bet refunds/payouts remain client-driven through the existing 4-layer
+// idempotent guards (matches the kEnableServerCoinRewards=false policy).
+
+/** RTDB instance URL — pinned to the project's EU-West region. */
+const ARENA_RTDB_URL =
+  "https://xo-arenaneon-clash-default-rtdb.europe-west1.firebasedatabase.app";
+
+/** Empty-waiting-room creation TTL. Matches kArenaRoomTtlMs (10 min). */
+const ARENA_ROOM_TTL_MS = 10 * 60 * 1000;
+
+/** Occupied-room inactivity TTL. Matches kArenaInactivityTtlMs (20 min). */
+const ARENA_INACTIVITY_TTL_MS = 20 * 60 * 1000;
+
+/** Terminal room statuses that should never be re-expired. */
+const ARENA_TERMINAL_STATUSES = new Set([
+  "finished",
+  "expired",
+  "cancelled",
+  "abandoned",
+]);
+
+function toInt(value: unknown): number {
+  if (typeof value === "number") return value;
+  if (typeof value === "string") {
+    const n = parseInt(value, 10);
+    return Number.isNaN(n) ? 0 : n;
+  }
+  return 0;
+}
+
+/** Latest activity ms on a room: max(updatedAt, each presence lastSeenMs). */
+function arenaLastActivityMs(room: Record<string, any>): number {
+  let last = toInt(room.updatedAt);
+  const presence = room.playersPresence;
+  if (presence && typeof presence === "object") {
+    for (const key of Object.keys(presence)) {
+      const entry = presence[key];
+      if (entry && typeof entry === "object") {
+        const ls = toInt(entry.lastSeenMs);
+        if (ls > last) last = ls;
+      }
+    }
+  }
+  return last;
+}
+
+export const expireStaleArenaRooms = onSchedule(
+  { schedule: "every 5 minutes", region: "europe-west1" },
+  async () => {
+    const rtdb = admin.app().database(ARENA_RTDB_URL);
+    const roomsRef = rtdb.ref("rooms");
+    const snap = await roomsRef.get();
+    if (!snap.exists()) {
+      console.log("[ROOM_TIMEOUT] janitor: no rooms");
+      return;
+    }
+
+    const now = Date.now();
+    const rooms = snap.val() as Record<string, any>;
+    let removed = 0;
+    let expired = 0;
+
+    for (const code of Object.keys(rooms)) {
+      const room = rooms[code];
+      // Corrupt / non-map node — drop it.
+      if (!room || typeof room !== "object") {
+        await roomsRef.child(code).remove().catch(() => undefined);
+        removed++;
+        continue;
+      }
+
+      const status = String(room.status ?? "waiting");
+      const guestUid = String(room.guestUid ?? "");
+      const occupied = guestUid.length > 0 || status !== "waiting";
+
+      // ── Already-terminal rooms: remove once their grace window has passed. ──
+      // A `cleanupAfter` stamp is the explicit grace signal; if one is missing
+      // (orphaned terminal room), fall back to the inactivity TTL measured from
+      // last activity so nothing can linger forever.
+      if (ARENA_TERMINAL_STATUSES.has(status)) {
+        const cleanupAfter = toInt(room.cleanupAfter);
+        const graceElapsed = cleanupAfter > 0
+          ? now > cleanupAfter
+          : now - arenaLastActivityMs(room) > ARENA_INACTIVITY_TTL_MS;
+        if (graceElapsed) {
+          await roomsRef.child(code).remove().catch(() => undefined);
+          removed++;
+        }
+        continue;
+      }
+
+      // ── Empty waiting room: 10-minute creation TTL → remove outright. ──────
+      if (!occupied) {
+        const expiresAt = toInt(room.expiresAt);
+        const past =
+          (expiresAt > 0 && now > expiresAt) ||
+          now - toInt(room.createdAt) > ARENA_ROOM_TTL_MS;
+        if (past) {
+          await roomsRef.child(code).remove().catch(() => undefined);
+          removed++;
+        }
+        continue;
+      }
+
+      // ── Occupied room: 20-minute inactivity TTL → mark expired + grace. ────
+      const inactiveFor = now - arenaLastActivityMs(room);
+      if (inactiveFor > ARENA_INACTIVITY_TTL_MS) {
+        // Betting rooms get a long claim window so an offline player never
+        // loses an unrefunded locked entry; non-bet rooms only need a short
+        // grace so both clients can observe the expiry.
+        const betLocked = room.betEnabled === true && room.coinsLocked === true;
+        const grace = betLocked ? 24 * 60 * 60 * 1000 : 2 * 60 * 1000;
+        await roomsRef
+          .child(code)
+          .update({
+            status: "expired",
+            result: "expired",
+            finalResult: "expired",
+            cleanupAfter: now + grace,
+            updatedAt: admin.database.ServerValue.TIMESTAMP,
+          })
+          .catch(() => undefined);
+        expired++;
+        console.log(
+          `[ROOM_TIMEOUT] expired room=${code} reason=20min_inactive ` +
+            `inactiveFor=${Math.round(inactiveFor / 1000)}s betLocked=${betLocked}`
+        );
+      }
+    }
+
+    console.log(
+      `[ROOM_TIMEOUT] janitor done scanned=${Object.keys(rooms).length} ` +
+        `expired=${expired} removed=${removed}`
+    );
+  }
+);

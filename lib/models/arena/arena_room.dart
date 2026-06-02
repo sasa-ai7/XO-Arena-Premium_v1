@@ -73,6 +73,32 @@ class ArenaRoom {
   /// `selectedOSkin`, `coinsAtJoin`. Optional — may be empty on legacy rooms.
   final Map<String, dynamic> players;
 
+  /// Map of uid → kick metadata for users the host has removed from this
+  /// room. Each value contains `kickedAt` (server timestamp), `byUid` (host),
+  /// and `untilMs` (epoch ms after which the same uid may rejoin).
+  final Map<String, Map<String, dynamic>> kickedUsers;
+
+  /// Map of uid → presence record: `state` (online/weak/offline),
+  /// `lastSeenMs`, `updatedAt`. Each player only writes their own entry;
+  /// `weak` is a derived state computed locally from staleness.
+  final Map<String, Map<String, dynamic>> playersPresence;
+
+  /// Most recent round outcome marker, written by the host on every round
+  /// resolution. Used by both clients to drive the round-end banner —
+  /// especially the draw case where `roundWinnerUid` stays null and the
+  /// board is reset, so there is no other signal to react to.
+  /// One of: null | "win" | "draw".
+  final String? lastRoundResult;
+
+  /// Server timestamp (epoch ms) of the most recent round resolution. The
+  /// banner key is `${lastRoundEndAt}:${lastRoundResult}` so a redelivered
+  /// snapshot never retriggers the banner.
+  final int? lastRoundEndAt;
+
+  /// Monotonically increasing counter bumped on every round transition.
+  /// Used by the UI to key the board widget and dedupe round resolution.
+  final int roundVersion;
+
   final int createdAt;
   final int updatedAt;
   final int? startedAt;
@@ -114,6 +140,11 @@ class ArenaRoom {
     required this.payoutApplied,
     required this.betLocks,
     required this.players,
+    this.kickedUsers = const <String, Map<String, dynamic>>{},
+    this.playersPresence = const <String, Map<String, dynamic>>{},
+    this.lastRoundResult,
+    this.lastRoundEndAt,
+    this.roundVersion = 0,
     required this.createdAt,
     required this.updatedAt,
     required this.startedAt,
@@ -130,6 +161,7 @@ class ArenaRoom {
   bool get isExpired => status == 'expired';
   bool get isCancelled => status == 'cancelled';
   bool get isAbandoned => status == 'abandoned';
+  bool get isRoundEnd => status == 'round_end';
 
   /// True when both seats are filled.
   bool get isFull => guestUid != null && guestUid!.isNotEmpty;
@@ -154,6 +186,17 @@ class ArenaRoom {
   String opponentOf(String uid) {
     if (uid == hostUid) return guestUid ?? '';
     return hostUid;
+  }
+
+  /// Returns the kick `untilMs` (epoch) for the given uid if it is currently
+  /// within an active cooldown window; null otherwise.
+  int? kickCooldownUntilMs(String uid) {
+    final entry = kickedUsers[uid];
+    if (entry == null) return null;
+    final until = (entry['untilMs'] as num?)?.toInt();
+    if (until == null) return null;
+    if (until <= DateTime.now().millisecondsSinceEpoch) return null;
+    return until;
   }
 
   Map<String, dynamic> toMap() => <String, dynamic>{
@@ -192,6 +235,11 @@ class ArenaRoom {
         'payoutApplied': payoutApplied,
         'betLocks': betLocks,
         'players': players,
+        'kickedUsers': kickedUsers,
+        'playersPresence': playersPresence,
+        if (lastRoundResult != null) 'lastRoundResult': lastRoundResult,
+        if (lastRoundEndAt != null) 'lastRoundEndAt': lastRoundEndAt,
+        'roundVersion': roundVersion,
         'createdAt': createdAt,
         'updatedAt': updatedAt,
         'startedAt': startedAt,
@@ -267,6 +315,28 @@ class ArenaRoom {
       });
     }
 
+    final kickedRaw = raw['kickedUsers'];
+    final kickedUsers = <String, Map<String, dynamic>>{};
+    if (kickedRaw is Map) {
+      kickedRaw.forEach((k, v) {
+        if (v is Map) {
+          kickedUsers[k.toString()] = Map<String, dynamic>.from(
+              v.map((kk, vv) => MapEntry(kk.toString(), vv)));
+        }
+      });
+    }
+
+    final presenceRaw = raw['playersPresence'];
+    final playersPresence = <String, Map<String, dynamic>>{};
+    if (presenceRaw is Map) {
+      presenceRaw.forEach((k, v) {
+        if (v is Map) {
+          playersPresence[k.toString()] = Map<String, dynamic>.from(
+              v.map((kk, vv) => MapEntry(kk.toString(), vv)));
+        }
+      });
+    }
+
     final guestUidRaw = raw['guestUid'];
     final guestUid = (guestUidRaw is String && guestUidRaw.isNotEmpty)
         ? guestUidRaw
@@ -309,6 +379,11 @@ class ArenaRoom {
       payoutApplied: raw['payoutApplied'] == true,
       betLocks: betLocks,
       players: players,
+      kickedUsers: kickedUsers,
+      playersPresence: playersPresence,
+      lastRoundResult: raw['lastRoundResult'] as String?,
+      lastRoundEndAt: (raw['lastRoundEndAt'] as num?)?.toInt(),
+      roundVersion: (raw['roundVersion'] as num?)?.toInt() ?? 0,
       createdAt: (raw['createdAt'] as num?)?.toInt() ?? 0,
       updatedAt: (raw['updatedAt'] as num?)?.toInt() ?? 0,
       startedAt: (raw['startedAt'] as num?)?.toInt(),

@@ -47,9 +47,7 @@ class CoinsRepo {
     }
   }
 
-  /// Grant coins from a purchase. Includes idempotency protection.
-  /// This is the debug fallback that grants locally without server verification.
-  /// Returns true if coins were granted, false if already processed.
+  @Deprecated('Use PurchaseOrdersLogger.grantCoinsClientFallback')
   static Future<bool> grantCoins({
     required int amount,
     required String productId,
@@ -121,8 +119,7 @@ class CoinsRepo {
     }
   }
 
-  /// Grant coins with server verification. In release mode, requires successful verification.
-  /// Returns true if coins were granted, false otherwise.
+  @Deprecated('Use PurchaseOrdersLogger.grantCoinsClientFallback')
   static Future<bool> grantCoinsWithVerification({
     required int amount,
     required String productId,

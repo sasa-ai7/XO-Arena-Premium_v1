@@ -116,9 +116,9 @@ class AppL10n {
 
   // ── Daily Reminders (Settings toggle) ──────────────────────────────────
   String get dailyRemindersLabel =>
-      isAr ? 'تذكيرات يومية' : 'Daily Reminders';
+      isAr ? 'إشعارات اللعبة' : 'Game Notifications';
   String get dailyRemindersSubtitle =>
-      isAr ? 'إشعار يومي الساعة 9 مساءً' : '9 PM notification to play';
+      isAr ? 'المكافآت والدعوات والمزيد' : 'Rewards, invites and more';
   String get notificationPermissionDenied => isAr
       ? 'تم رفض إذن الإشعارات.'
       : 'Notification permission denied.';

@@ -1,6 +1,6 @@
 name: xo_arena_neon_clash
 
-version: 1.0.26+44
+version: 1.0.26+49
 description: XO Arena Neon Clash - Premium Tic Tac Toe Arena
 publish_to: "none"
 
@@ -22,6 +22,7 @@ dependencies:
   crypto: ^3.0.5
   http: ^1.2.0
   device_info_plus: ^11.1.0
+  package_info_plus: ^8.0.0
 
   # Firebase
   firebase_core: ^4.4.0
@@ -32,6 +33,7 @@ dependencies:
   # upload was dropped in favor of Google Sign-In photoURL only.
   firebase_app_check: ^0.4.1+4
   firebase_database: ^12.0.1
+  firebase_messaging: ^16.0.0
 
   # Sharing
   share_plus: ^10.1.2

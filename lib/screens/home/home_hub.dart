@@ -6,7 +6,6 @@ import 'package:intl/intl.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -20,11 +19,14 @@ import '../../core/responsive_metrics.dart';
 import '../../models/game_avatar.dart';
 import '../../models/offline_profile.dart';
 import '../../services/app_mode_service.dart';
+import '../../services/arena/arena_repo.dart';
+import '../../services/arena/arena_resume_flow.dart';
 import '../../services/auth_service.dart';
 import '../../services/audit_service.dart';
 import '../../services/connectivity_service.dart';
 import '../../services/local_store.dart';
 import '../../services/notification_service.dart';
+import '../../services/fcm_service.dart';
 import '../../services/referral/pending_referral_reward_service.dart';
 import '../../services/session_service.dart';
 import '../../services/sound_service.dart';
@@ -34,11 +36,13 @@ import '../../screens/games/setup_page.dart';
 import '../../screens/games/friend_setup_page.dart';
 import '../../screens/games/level_game_setup_page.dart';
 import '../../screens/arena/arena_page.dart';
+import '../../screens/arena/widgets/active_room_resume_dialog.dart';
 import '../../screens/store/store_page.dart';
 import '../../screens/settings/settings_page.dart';
 import '../../core/app_config.dart';
 import '../../utils/navigation_utils.dart';
 import '../../widgets/app_ui.dart';
+import '../../widgets/arena_toast.dart';
 import '../../widgets/avatar_store_tab.dart';
 import '../../widgets/connection_lost_match_overlay.dart';
 import '../../widgets/full_avatar_display.dart';
@@ -59,6 +63,7 @@ class _HomeHubState extends State<HomeHub>
   bool _isForceLoggingOut = false;
   bool _isReconnecting = false;
   bool _isDisconnecting = false;
+  bool _globalResumeChecked = false;
   int _currentTab = 0;
   OfflinePlayerProfile? _offlineProfile;
   // Tracks which tabs have been visited so their widgets are built lazily
@@ -117,6 +122,16 @@ class _HomeHubState extends State<HomeHub>
       if (mounted) _checkNewUserOnboarding();
       if (mounted) _checkPendingReferralRewards();
       if (mounted) _maybePromptNotificationPermission();
+      _initFcm();
+      _scheduleGlobalResumeCheck();
+      // Trigger music init after the 600ms entrance animation completes.
+      // Delayed to avoid competing with the animation for the main thread.
+      Future.delayed(const Duration(milliseconds: 700), () {
+        if (mounted) {
+          unawaited(SoundService().init());
+          if (kDebugMode) debugPrint('[MUSIC] init triggered from HomeHub');
+        }
+      });
     });
 
     // Staggered entrance: smooth 600ms sequence
@@ -142,6 +157,97 @@ class _HomeHubState extends State<HomeHub>
     Future.delayed(const Duration(milliseconds: 80), () {
       if (mounted) _cardAnim.forward();
     });
+  }
+
+  /// Schedule the one-shot global "Active Room Found" check shortly after the
+  /// home entrance settles, so the resume prompt appears immediately on app
+  /// open (not only after the user opens the Online tab).
+  void _scheduleGlobalResumeCheck() {
+    Future.delayed(const Duration(milliseconds: 900), () {
+      if (mounted) _maybeShowGlobalActiveRoomPrompt();
+    });
+  }
+
+  /// Settle any room that ended/expired while away, then offer the styled
+  /// "Active Room Found" prompt for a still-valid room — from the Home/startup
+  /// flow. One-shot per app session; never loops or double-shows.
+  Future<void> _maybeShowGlobalActiveRoomPrompt() async {
+    if (_globalResumeChecked) return;
+    _globalResumeChecked = true;
+    if (_isGuest) return;
+    if (!AppModeService.canUseOnlineServices) return;
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    // Mutually exclude with the Arena-tab resume check.
+    if (ArenaRepo.instance.resumeFlowBusy) return;
+    ArenaRepo.instance.resumeFlowBusy = true;
+    try {
+      if (kDebugMode) {
+        debugPrint('[ACTIVE_ROOM_GLOBAL] startup_check uid=$uid');
+      }
+
+      final outcome = await ArenaResumeFlow.settlePendingActiveRoom(uid);
+      if (!mounted) return;
+      if (outcome.kind != PendingRoomKind.none) {
+        await ArenaResumeFlow.showSettlementNotice(context, outcome,
+            isAr: AppL10n.of(context).isAr);
+        return;
+      }
+
+      final check = await ArenaRepo.instance.validateActiveRoom(uid);
+      if (!mounted) return;
+      if (!check.isValid) return;
+      final code = check.code!;
+      if (ArenaRepo.instance.resumeDismissedThisSession.contains(code)) return;
+      if (kDebugMode) {
+        debugPrint('[ACTIVE_ROOM_GLOBAL] found uid=$uid room=$code '
+            'status=${check.room!.status}');
+        debugPrint('[ACTIVE_ROOM_GLOBAL] prompt_shown uid=$uid room=$code');
+      }
+
+      final choice = await showActiveRoomResumeDialog(
+        context,
+        roomCode: code,
+        statusLabel: ArenaResumeFlow.statusLabel(check.room!.status),
+      );
+      if (!mounted) return;
+
+      if (choice == ActiveRoomResumeChoice.returnToRoom) {
+        // Re-validate — the room may have changed while the prompt was open.
+        final recheck = await ArenaRepo.instance.validateActiveRoom(uid);
+        if (!mounted) return;
+        if (!recheck.isValid) {
+          if (recheck.validity == ActiveRoomValidity.kicked) {
+            ArenaToast.error(
+                context, 'You were removed from this room by the host.');
+          }
+          return;
+        }
+        if (kDebugMode) {
+          debugPrint('[ACTIVE_ROOM_GLOBAL] return_to_room uid=$uid room=$code '
+              'target=${recheck.target}');
+        }
+        await ArenaResumeFlow.navigateToRoom(context, recheck.room!);
+        return;
+      }
+
+      if (choice == ActiveRoomResumeChoice.leaveAndPlay) {
+        if (kDebugMode) {
+          debugPrint('[ACTIVE_ROOM_GLOBAL] leave_and_play uid=$uid room=$code');
+        }
+        await ArenaRepo.instance.resolvePlayerLeaveRoom(
+          roomCode: code,
+          leaverUid: uid,
+          reason: 'resume_prompt_leave',
+        );
+        return;
+      }
+
+      // Back-dismissed: keep the room but suppress for the rest of this session.
+      ArenaRepo.instance.resumeDismissedThisSession.add(code);
+    } finally {
+      ArenaRepo.instance.resumeFlowBusy = false;
+    }
   }
 
   /// Initialize IAP service early to catch pending purchases from interrupted sessions.
@@ -264,6 +370,11 @@ class _HomeHubState extends State<HomeHub>
     try {
       final rewards =
           await PendingReferralRewardService.instance.fetchUnseenForCurrentUser();
+      if (kDebugMode) {
+        debugPrint('[REFERRAL_REWARD] pending_found '
+            'uid=${FirebaseAuth.instance.currentUser?.uid} '
+            'count=${rewards.length}');
+      }
       if (rewards.isEmpty || !mounted) return;
       // Look up the user's current validReferralCount for the "X invites
       // remaining" line. Best-effort.
@@ -283,8 +394,16 @@ class _HomeHubState extends State<HomeHub>
       } catch (_) {}
       for (final reward in rewards) {
         if (!mounted) return;
+        if (kDebugMode) {
+          debugPrint('[REFERRAL_REWARD] popup_shown '
+              'uid=${reward.referrerUid} notification=${reward.id}');
+        }
         await _showReferralAcceptedDialog(reward, remaining);
         await PendingReferralRewardService.instance.markSeen(reward);
+        if (kDebugMode) {
+          debugPrint('[REFERRAL_REWARD] marked_seen '
+              'uid=${reward.referrerUid} notification=${reward.id}');
+        }
         if (remaining > 0) remaining = remaining - 1;
       }
     } catch (e) {
@@ -296,9 +415,9 @@ class _HomeHubState extends State<HomeHub>
 
   /// First-launch notification permission prompt. Fires once per install
   /// when the user first reaches Home. Gated by [Keys.hasPromptedNotification]
-  /// so it never re-prompts. If granted, also schedules the daily 9 PM
-  /// reminder and flips [Keys.notificationsEnabled] so the Settings toggle
-  /// reflects the live state.
+  /// so it never re-prompts. If granted, registers the FCM device token and
+  /// flips [Keys.notificationsEnabled] so the Settings toggle reflects the live
+  /// state. (No local scheduling — real notifications come from FCM only.)
   Future<void> _maybePromptNotificationPermission() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -309,13 +428,23 @@ class _HomeHubState extends State<HomeHub>
       await prefs.setBool(Keys.hasPromptedNotification, true);
       if (granted) {
         await prefs.setBool(Keys.notificationsEnabled, true);
-        await NotificationService().scheduleDailyReminder();
+        // Real notifications come from FCM now — register the device token.
+        await FcmService.instance.registerToken();
       }
     } catch (e) {
       if (kDebugMode) {
         debugPrint('[NOTIF] first-launch permission prompt failed: $e');
       }
     }
+  }
+
+  /// Wire FCM so a referral-reward push refreshes the in-app popup, and make
+  /// sure the device token is registered when Home mounts.
+  void _initFcm() {
+    FcmService.onReferralReward = () {
+      if (mounted) _checkPendingReferralRewards();
+    };
+    FcmService.instance.init();
   }
 
   Future<void> _showReferralAcceptedDialog(
@@ -338,20 +467,24 @@ class _HomeHubState extends State<HomeHub>
             Container(
               width: 72,
               height: 72,
+              clipBehavior: Clip.antiAlias,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                border: Border.all(color: AppPalette.gold, width: 1.6),
                 color: AppPalette.panelDeep,
-                image: hasPhoto
-                    ? DecorationImage(
-                        image: NetworkImage(reward.inviteePhotoURL),
-                        fit: BoxFit.cover,
-                      )
-                    : const DecorationImage(
-                        image: AssetImage('assets/account/man.png'),
-                        fit: BoxFit.cover,
-                      ),
+                border: Border.all(color: AppPalette.gold, width: 1.6),
               ),
+              child: hasPhoto
+                  ? Image.network(
+                      reward.inviteePhotoURL,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => const Icon(
+                        Icons.person_rounded,
+                        color: AppPalette.gold,
+                        size: 36,
+                      ),
+                    )
+                  : const Icon(Icons.person_rounded,
+                      color: AppPalette.gold, size: 36),
             ),
             const SizedBox(height: 12),
             const Text(

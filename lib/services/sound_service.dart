@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -86,6 +87,10 @@ class SoundService with WidgetsBindingObserver {
     _duckDepth = 0;
     _duckFactor = 0.10;
 
+    if (kDebugMode) {
+      debugPrint('[MUSIC] prefs loaded — musicEnabled=$_isMusicEnabled musicVolume=$_musicVolume');
+    }
+
     try {
       await _bgmPlayer.setReleaseMode(ReleaseMode.loop);
     } catch (e) {
@@ -94,6 +99,10 @@ class SoundService with WidgetsBindingObserver {
 
     _isInitialized = true;
     await _applyMusicVolume();
+
+    if (kDebugMode) {
+      debugPrint('[MUSIC] init complete — starting music: $_isMusicEnabled');
+    }
 
     if (_isMusicEnabled) {
       await ensureMusicPlaying(forceRestart: true);
@@ -142,8 +151,14 @@ class SoundService with WidgetsBindingObserver {
       _duckDepth = 0;
       await _bgmPlayer.setReleaseMode(ReleaseMode.loop);
       await _applyMusicVolume();
+      if (kDebugMode) {
+        debugPrint('[MUSIC] start requested — volume=$_effectiveMusicVolume');
+      }
       await _bgmPlayer.play(AssetSource('music/Sound 1.mp3'));
     } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[MUSIC] startMusic error: $e');
+      }
       debugPrint('[SoundService] startMusic failed: $e');
     } finally {
       _startInProgress = false;
@@ -163,11 +178,15 @@ class SoundService with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (!_isInitialized) return;
+    if (kDebugMode) {
+      debugPrint('[MUSIC] lifecycle: $state — playerState=$_playerState musicEnabled=$_isMusicEnabled');
+    }
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
       if (_playerState == PlayerState.playing) {
         _pausedByLifecycle = true;
+        if (kDebugMode) debugPrint('[MUSIC] paused due to lifecycle');
         unawaited(_bgmPlayer.pause());
       }
       return;
@@ -176,6 +195,7 @@ class SoundService with WidgetsBindingObserver {
       if (_pausedByLifecycle) {
         _pausedByLifecycle = false;
       }
+      if (kDebugMode) debugPrint('[MUSIC] resumed — resuming music');
       unawaited(ensureMusicPlaying(forceRestart: false));
       return;
     }
@@ -206,6 +226,9 @@ class SoundService with WidgetsBindingObserver {
 
   Future<void> setMusicEnabled(bool enabled) async {
     await init();
+    if (kDebugMode) {
+      debugPrint('[MUSIC] toggle → musicEnabled=$enabled');
+    }
     _isMusicEnabled = enabled;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('musicEnabled', enabled);

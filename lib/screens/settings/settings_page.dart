@@ -16,6 +16,7 @@ import '../../models/game_avatar.dart';
 import '../../services/auth_service.dart';
 import '../../services/connectivity_service.dart';
 import '../../services/local_store.dart';
+import '../../services/fcm_service.dart';
 import '../../services/notification_service.dart';
 import '../../services/sound_service.dart';
 import '../../services/user_repo.dart';
@@ -121,11 +122,14 @@ class _SettingsPageState extends State<SettingsPage>
     _usernameController.text = _username;
   }
 
+  // Controls REAL game notifications only (FCM): rewards, invites, etc.
+  // There is no longer a scheduled 9 PM/daily reminder.
   Future<void> _setDailyRemindersEnabled(bool enabled) async {
     final prefs = await SharedPreferences.getInstance();
     if (enabled) {
-      final scheduled = await NotificationService().scheduleDailyReminder();
-      if (!scheduled) {
+      final granted =
+          await NotificationService().requestNotificationsPermission();
+      if (!granted) {
         if (!mounted) return;
         showTopNotification(
             context, AppL10n.of(context).notificationPermissionDenied,
@@ -133,10 +137,11 @@ class _SettingsPageState extends State<SettingsPage>
         return;
       }
       await prefs.setBool(Keys.notificationsEnabled, true);
+      await FcmService.instance.registerToken();
       if (mounted) setState(() => _notificationsEnabled = true);
     } else {
-      await NotificationService().cancelDaily();
       await prefs.setBool(Keys.notificationsEnabled, false);
+      await FcmService.instance.unregisterToken();
       if (mounted) setState(() => _notificationsEnabled = false);
     }
   }

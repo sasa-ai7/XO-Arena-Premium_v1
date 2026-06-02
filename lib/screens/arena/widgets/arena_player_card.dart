@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../core/app_l10n.dart';
 import '../../../core/app_theme.dart';
 import '../../../models/game_avatar.dart';
+import '../../../services/arena/arena_presence_service.dart';
 import '../../../services/local_store.dart';
 import '../../../widgets/full_avatar_display.dart';
 import 'arena_profile_circle.dart';
@@ -50,6 +51,14 @@ class ArenaPlayerCard extends StatelessWidget {
   final String? photoUrl;
   final bool useBoundNotifiers;
 
+  /// Derived connectivity for this player. Null hides the badge entirely
+  /// (e.g. in screens where presence is not tracked yet).
+  final PresenceState? presence;
+
+  /// Host-only kick action shown as a small red icon button. Pass null to
+  /// hide the button entirely.
+  final VoidCallback? onKick;
+
   const ArenaPlayerCard._({
     required this.symbol,
     required this.name,
@@ -61,6 +70,8 @@ class ArenaPlayerCard extends StatelessWidget {
     required this.useBoundNotifiers,
     required this.xSkin,
     required this.oSkin,
+    required this.presence,
+    required this.onKick,
   });
 
   factory ArenaPlayerCard.self({
@@ -71,6 +82,7 @@ class ArenaPlayerCard extends StatelessWidget {
     GameAvatar? avatar,
     String? xSkin,
     String? oSkin,
+    PresenceState? presence,
   }) =>
       ArenaPlayerCard._(
         symbol: symbol,
@@ -83,6 +95,8 @@ class ArenaPlayerCard extends StatelessWidget {
         useBoundNotifiers: true,
         xSkin: xSkin,
         oSkin: oSkin,
+        presence: presence,
+        onKick: null,
       );
 
   factory ArenaPlayerCard.opponent({
@@ -94,6 +108,8 @@ class ArenaPlayerCard extends StatelessWidget {
     String? photoUrl,
     String? xSkin,
     String? oSkin,
+    PresenceState? presence,
+    VoidCallback? onKick,
   }) =>
       ArenaPlayerCard._(
         symbol: symbol,
@@ -106,6 +122,8 @@ class ArenaPlayerCard extends StatelessWidget {
         useBoundNotifiers: false,
         xSkin: xSkin,
         oSkin: oSkin,
+        presence: presence,
+        onKick: onKick,
       );
 
   @override
@@ -160,7 +178,13 @@ class ArenaPlayerCard extends StatelessWidget {
             useBoundNotifiers: useBoundNotifiers,
             photoUrl: photoUrl,
             avatar: avatar,
+            presence: presence,
+            onKick: onKick,
           ),
+          if (presence != null) ...[
+            const SizedBox(height: 6),
+            _PresenceLabel(state: presence!),
+          ],
           const SizedBox(height: 8),
           Center(
             child: Text(
@@ -196,6 +220,8 @@ class _TopRow extends StatelessWidget {
   final bool useBoundNotifiers;
   final String? photoUrl;
   final GameAvatar? avatar;
+  final PresenceState? presence;
+  final VoidCallback? onKick;
 
   const _TopRow({
     required this.name,
@@ -205,6 +231,8 @@ class _TopRow extends StatelessWidget {
     required this.useBoundNotifiers,
     required this.photoUrl,
     required this.avatar,
+    required this.presence,
+    required this.onKick,
   });
 
   @override
@@ -265,10 +293,29 @@ class _TopRow extends StatelessWidget {
       );
     }
 
+    final dot = presence;
+    Widget circleWithDot = circle;
+    if (dot != null) {
+      circleWithDot = SizedBox(
+        width: avatarSize,
+        height: avatarSize,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            circle,
+            Positioned(
+              right: -2,
+              bottom: -2,
+              child: _PresenceDot(state: dot),
+            ),
+          ],
+        ),
+      );
+    }
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        circle,
+        circleWithDot,
         const SizedBox(width: 12),
         Expanded(
           child: Column(
@@ -319,7 +366,107 @@ class _TopRow extends StatelessWidget {
             ],
           ),
         ),
+        if (onKick != null) _KickButton(onTap: onKick!),
       ],
+    );
+  }
+}
+
+class _PresenceDot extends StatelessWidget {
+  final PresenceState state;
+  const _PresenceDot({required this.state});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = switch (state) {
+      PresenceState.online => AppPalette.success,
+      PresenceState.weak => AppPalette.warning,
+      PresenceState.offline => AppPalette.danger,
+    };
+    return Container(
+      width: 14,
+      height: 14,
+      decoration: BoxDecoration(
+        color: color,
+        shape: BoxShape.circle,
+        border: Border.all(color: AppPalette.panel, width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: color.withValues(alpha: 0.6),
+            blurRadius: 6,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PresenceLabel extends StatelessWidget {
+  final PresenceState state;
+  const _PresenceLabel({required this.state});
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppL10n.of(context);
+    final color = switch (state) {
+      PresenceState.online => AppPalette.success,
+      PresenceState.weak => AppPalette.warning,
+      PresenceState.offline => AppPalette.danger,
+    };
+    final label = switch (state) {
+      PresenceState.online => l10n.isAr ? 'متصل' : 'Online',
+      PresenceState.weak => l10n.isAr ? 'اتصال ضعيف' : 'Weak connection',
+      PresenceState.offline => l10n.isAr ? 'انقطع الاتصال' : 'Connection lost',
+    };
+    return Center(
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: color,
+          fontSize: 10,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0.4,
+        ),
+      ),
+    );
+  }
+}
+
+class _KickButton extends StatelessWidget {
+  final VoidCallback onTap;
+  const _KickButton({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 6),
+      child: Material(
+        color: AppPalette.danger.withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(10),
+          child: Container(
+            width: 30,
+            height: 30,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: AppPalette.danger.withValues(alpha: 0.65),
+                width: 1,
+              ),
+            ),
+            child: const Icon(
+              Icons.person_remove_alt_1_rounded,
+              size: 16,
+              color: AppPalette.danger,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

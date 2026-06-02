@@ -11,10 +11,22 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == uid;
     }
 
+    // Admin check — passes for EITHER:
+    //   • token.email == 'adminarena77@gmail.com' (the hardcoded bootstrap admin), OR
+    //   • /admins/{uid} doc exists with active == true (new admins onboarded
+    //     by writing the doc from the Firebase console — no code change needed).
     function isAdmin() {
       return signedIn()
-        && request.auth.token.email != null
-        && request.auth.token.email == 'adminarena77@gmail.com';
+        && (
+          (
+            request.auth.token.email != null
+            && request.auth.token.email == 'adminarena77@gmail.com'
+          )
+          || (
+            exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+            && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.active == true
+          )
+        );
     }
 
     function validReferralCode(code) {
@@ -106,11 +118,21 @@ service cloud.firestore {
           || isReferralReferrerCredit(uid)
         );
 
-      // Subcollections (wallet_ledger, onlineRoomHistory, user_logs,
-      // transactions, purchase_counts, Arena) remain owner-writable.
-      // wallet_ledger entries are idempotent by transactionId doc id.
-      // TODO: tighten wallet_ledger to create-only (no update/delete) once
-      // all writers have migrated to set-by-id, then move to Cloud Functions.
+      // wallet_ledger: immutable audit trail — owner can read and create,
+      // but never update or delete. Admin retains full access.
+      match /wallet_ledger/{transactionId} {
+        allow read, create: if isMe(uid) || isAdmin();
+        allow update, delete: if isAdmin();
+      }
+
+      // ownedAvatars: once unlocked, cannot be revoked by the client.
+      match /ownedAvatars/{avatarId} {
+        allow read, create: if isMe(uid) || isAdmin();
+        allow update, delete: if isAdmin();
+      }
+
+      // Remaining subcollections (onlineRoomHistory, user_logs,
+      // transactions, purchase_counts, Arena, etc.) — owner-writable.
       match /{subPath=**} {
         allow read, create, update, delete: if isMe(uid) || isAdmin();
       }
@@ -123,6 +145,58 @@ service cloud.firestore {
     match /iap_transactions/{purchaseTokenHash} {
       allow read: if isAdmin()
         || (signedIn() && resource.data.uid == request.auth.uid);
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ── /purchase_orders/{transactionId} ──────────────────────────────────────
+    // Client-reported, unverified purchase log. The client writes one row
+    // per state transition (started → pending → purchased_client_reported →
+    // coin_granted_client_fallback / avatar_unlocked_client_fallback …).
+    // Records are ALWAYS verified:false / trustedRevenue:false — the rules
+    // enforce this so the client can never mark itself as trusted revenue.
+    //
+    // Free client-fallback mode (no Cloud Functions) adds these SAFE,
+    // client-reported fields, none of which grant trust:
+    //   • purchaseTokenHash  (SHA-256 only — raw token is NEVER written)
+    //   • grantMode          ('client_fallback')
+    //   • verificationError  ('functions_not_available')
+    //   • transactionId      (deterministic id, mirrors the doc id)
+    // Raw purchaseToken / rawPurchaseToken remain forbidden below.
+    // Backend verification (a future Cloud Function) will write to a
+    // separate trusted collection.
+
+    match /purchase_orders/{orderId} {
+      allow read: if isAdmin()
+        || (signedIn() && resource.data.uid == request.auth.uid);
+
+      allow create: if signedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.verified == false
+        && request.resource.data.trustedRevenue == false
+        && request.resource.data.source == 'google_play_client'
+        && request.resource.data.platform == 'android'
+        && !('purchaseToken' in request.resource.data)
+        && !('rawPurchaseToken' in request.resource.data);
+
+      allow update: if signedIn()
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.verified == false
+        && request.resource.data.trustedRevenue == false
+        && request.resource.data.source == 'google_play_client'
+        && request.resource.data.platform == 'android'
+        && !('purchaseToken' in request.resource.data)
+        && !('rawPurchaseToken' in request.resource.data);
+
+      allow delete: if false;
+    }
+
+    // ── /admins/{uid} ─────────────────────────────────────────────────────────
+    // Admin onboarding docs. Created manually from the Firebase console.
+    // Readable by admins (so the admin dashboard can introspect itself).
+    // Writes are never allowed from the client.
+    match /admins/{uid} {
+      allow read: if isMe(uid) || isAdmin();
       allow create, update, delete: if isAdmin();
     }
 

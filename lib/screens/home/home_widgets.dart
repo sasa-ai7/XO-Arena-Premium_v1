@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/app_theme.dart';
@@ -265,6 +266,18 @@ class HomeModeConfig {
   });
 }
 
+/// Picks a styled fallback icon for a mode card when its art fails to load,
+/// inferred from the asset path (AI → robot, Friend → handshake, Online →
+/// globe, Levels → trophy).
+IconData _fallbackIconForAsset(String path) {
+  final p = path.toLowerCase();
+  if (p.contains('friend')) return Icons.handshake_rounded;
+  if (p.contains('online') || p.contains('money')) return Icons.public_rounded;
+  if (p.contains('level')) return Icons.emoji_events_rounded;
+  if (p.contains('ai')) return Icons.smart_toy_rounded;
+  return Icons.videogame_asset_rounded;
+}
+
 class BigModeCard extends StatefulWidget {
   final String title;
   final String subtitle;
@@ -488,6 +501,28 @@ class _BigModeCardState extends State<BigModeCard> {
                                 child: Image.asset(
                                   widget.assetPath,
                                   fit: BoxFit.contain,
+                                  // Downsample large mode GIFs/PNGs on decode to
+                                  // avoid "Could not create Impeller texture"
+                                  // from oversized full-resolution source art.
+                                  cacheWidth: 720,
+                                  // Styled dark-glass fallback (the surrounding
+                                  // Container already supplies the glass + glow)
+                                  // — never a red broken-image box.
+                                  errorBuilder: (context, error, stack) {
+                                    if (kDebugMode) {
+                                      debugPrint('[ASSET] load_failed '
+                                          'path=${widget.assetPath} error=$error');
+                                      debugPrint('[ASSET] fallback_used '
+                                          'path=${widget.assetPath}');
+                                    }
+                                    return Center(
+                                      child: Icon(
+                                        _fallbackIconForAsset(widget.assetPath),
+                                        color: widget.accent.withOpacity(0.6),
+                                        size: 44,
+                                      ),
+                                    );
+                                  },
                                 ),
                               ),
                             ),

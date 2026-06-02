@@ -1,180 +1,141 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:flutter_timezone/flutter_timezone.dart';
-import 'package:timezone/data/latest_all.dart' as tz;
-import 'package:timezone/timezone.dart' as tz;
 
-/// Manages daily "Let's play" notifications.
+/// Local-notification helper.
+///
+/// Responsibilities are intentionally narrow:
+///   • request the OS notification permission (Android 13+ / iOS), and
+///   • render a heads-up notification while the app is in the FOREGROUND in
+///     response to a real received FCM push (FCM does not show its own banner
+///     when the app is already foregrounded).
+///
+/// There is deliberately NO scheduled/daily reminder here. The old 9 PM
+/// "Let's play" reminder and the in-app "test notification" button were
+/// removed — real notifications now originate from FCM only (see
+/// `FcmService`).
 class NotificationService {
   static final NotificationService _instance = NotificationService._();
   factory NotificationService() => _instance;
-
   NotificationService._();
 
-  final FlutterLocalNotificationsPlugin _notifications = FlutterLocalNotificationsPlugin();
+  final FlutterLocalNotificationsPlugin _notifications =
+      FlutterLocalNotificationsPlugin();
   bool _initialized = false;
 
-  /// Initialize the notification service (does not auto-schedule).
-  /// Call scheduleDailyReminder() separately after user enables notifications in Settings.
+  /// Android channel used to display foreground FCM messages. Keep this id in
+  /// sync with the `default_notification_channel_id` metadata declared in
+  /// AndroidManifest.xml so background pushes use the same channel.
+  static const String channelId = 'xo_arena_general';
+  static const String _channelName = 'XO Arena';
+  static const String _channelDescription =
+      'XO Arena game notifications (rewards, invites).';
+
   Future<void> init() async {
     if (_initialized) return;
 
-    // Initialize timezone data
-    tz.initializeTimeZones();
-    
-    // Get device timezone and set it as local location
-    // This ensures notifications schedule at 9:00 AM in device's local time (not UTC)
-    try {
-      final tzName = await FlutterTimezone.getLocalTimezone();
-      tz.setLocalLocation(tz.getLocation(tzName));
-      if (kDebugMode) {
-        debugPrint('[NOTIF] Timezone initialized: $tzName');
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        debugPrint('[NOTIF] Failed to get device timezone, using default: $e');
-      }
-      // If timezone detection fails, tz.local will use system default
-    }
-
-    // Initialize Android settings
-    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
-    
-    // Initialize iOS settings (do NOT request permissions on init)
-    // Permissions will be requested only when user enables Daily Reminders in Settings
+    const androidSettings =
+        AndroidInitializationSettings('@mipmap/ic_launcher');
+    // Do NOT request permissions on init — the permission prompt is driven
+    // explicitly (first-launch flow / Settings toggle / FCM init).
     const iosSettings = DarwinInitializationSettings(
       requestAlertPermission: false,
       requestBadgePermission: false,
       requestSoundPermission: false,
     );
-
     const initSettings = InitializationSettings(
       android: androidSettings,
       iOS: iosSettings,
     );
 
-    await _notifications.initialize(initSettings);
+    await _notifications.initialize(
+      initSettings,
+      onDidReceiveNotificationResponse: (details) {
+        if (kDebugMode) {
+          debugPrint(
+              '[NOTIF] tapped: id=${details.id} payload=${details.payload}');
+        }
+      },
+    );
 
-    // Create notification channel for Android
-    final androidPlugin = _notifications.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+    final androidPlugin =
+        _notifications.resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
     if (androidPlugin != null) {
-      const androidChannel = AndroidNotificationChannel(
-        'daily_reminder',
-        'XO ARENA Daily Reminder',
-        description: 'Daily reminder to play XO ARENA',
-        importance: Importance.defaultImportance,
+      const channel = AndroidNotificationChannel(
+        channelId,
+        _channelName,
+        description: _channelDescription,
+        importance: Importance.high,
+        playSound: true,
+        enableVibration: true,
       );
-      await androidPlugin.createNotificationChannel(androidChannel);
+      await androidPlugin.createNotificationChannel(channel);
     }
 
     _initialized = true;
+    if (kDebugMode) debugPrint('[NOTIF] init complete');
   }
 
-  /// Request notification permission (Android 13+).
-  /// Returns true if permission is granted or not required (Android < 13), false otherwise.
+  /// Request the OS notification permission.
+  /// Returns true if granted (or not required, e.g. Android < 13).
   Future<bool> requestNotificationsPermission() async {
-    final androidPlugin = _notifications.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+    if (!_initialized) await init();
+    final androidPlugin =
+        _notifications.resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
     if (androidPlugin != null) {
-      // On Android < 13, permission is not required, so null means granted
-      return await androidPlugin.requestNotificationsPermission() ?? true;
+      final granted =
+          await androidPlugin.requestNotificationsPermission() ?? true;
+      if (kDebugMode) debugPrint('[NOTIF] permission result: granted=$granted');
+      return granted;
+    }
+    final iosPlugin =
+        _notifications.resolvePlatformSpecificImplementation<
+            IOSFlutterLocalNotificationsPlugin>();
+    if (iosPlugin != null) {
+      final granted = await iosPlugin.requestPermissions(
+            alert: true,
+            badge: true,
+            sound: true,
+          ) ??
+          false;
+      if (kDebugMode) {
+        debugPrint('[NOTIF] iOS permission result: granted=$granted');
+      }
+      return granted;
     }
     return false;
   }
 
-  /// Schedule daily reminder. Checks permission first and only schedules if granted.
-  /// Should only be called when user explicitly enables notifications in Settings.
-  /// Returns true if scheduled successfully, false if permission denied or failed.
-  Future<bool> scheduleDailyReminder() async {
-    if (!_initialized) {
-      await init();
-    }
-
-    // Request permission if not already granted (Android 13+)
-    final androidPlugin = _notifications.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
-    if (androidPlugin != null) {
-      final granted = await requestNotificationsPermission();
-      if (!granted) {
-        // Permission not granted, don't schedule
-        return false;
-      }
-    }
-
-    // Request permissions (iOS)
-    final iosPlugin = _notifications.resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>();
-    if (iosPlugin != null) {
-      await iosPlugin.requestPermissions(alert: true, badge: true, sound: true);
-    }
-
-    try {
-      await scheduleDaily();
-      return true;
-    } catch (e) {
-      if (kDebugMode) {
-        debugPrint('[NOTIF] scheduleDailyReminder: Failed to schedule: $e');
-      }
-      return false;
-    }
-  }
-
-  /// Cancel the scheduled daily notification.
-  Future<void> cancelDaily() async {
-    await _notifications.cancel(0);
-  }
-
-  /// Cancel the scheduled daily reminder (alias for cancelDaily for consistency).
-  Future<void> cancelDailyReminder() async {
-    await cancelDaily();
-  }
-
-  /// Schedule a daily repeating notification at 9:00 AM local time.
-  Future<void> scheduleDaily() async {
-    // Cancel any existing daily notification first
-    await _notifications.cancel(0);
-
-    // Schedule for 9:00 PM local time, repeating daily.
-    final now = tz.TZDateTime.now(tz.local);
-    var scheduledDate = tz.TZDateTime(
-      tz.local,
-      now.year,
-      now.month,
-      now.day,
-      21,
-      0,
-    );
-
-    // If 9 PM has already passed today, schedule for tomorrow.
-    if (scheduledDate.isBefore(now)) {
-      scheduledDate = scheduledDate.add(const Duration(days: 1));
-    }
-
+  /// Display a heads-up notification immediately. Used to surface a real FCM
+  /// message while the app is foregrounded.
+  Future<void> showLocalNotification({
+    required String title,
+    required String body,
+    String? payload,
+  }) async {
+    if (!_initialized) await init();
     const androidDetails = AndroidNotificationDetails(
-      'daily_reminder',
-      'XO ARENA Daily Reminder',
-      channelDescription: 'Daily reminder to play XO ARENA',
-      importance: Importance.defaultImportance,
-      priority: Priority.defaultPriority,
+      channelId,
+      _channelName,
+      channelDescription: _channelDescription,
+      importance: Importance.high,
+      priority: Priority.high,
+      playSound: true,
     );
-
     const iosDetails = DarwinNotificationDetails(
       presentAlert: true,
       presentBadge: true,
       presentSound: true,
     );
-
-    const notificationDetails = NotificationDetails(
-      android: androidDetails,
-      iOS: iosDetails,
-    );
-
-    await _notifications.zonedSchedule(
-      0,
-      'XO ARENA',
-      "Let's play!",
-      scheduledDate,
-      notificationDetails,
-      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-      uiLocalNotificationDateInterpretation: UILocalNotificationDateInterpretation.absoluteTime,
-      matchDateTimeComponents: DateTimeComponents.time,
+    const details =
+        NotificationDetails(android: androidDetails, iOS: iosDetails);
+    await _notifications.show(
+      DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      title,
+      body,
+      details,
+      payload: payload,
     );
   }
 }

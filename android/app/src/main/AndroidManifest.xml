@@ -34,6 +34,13 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- FCM: default channel used for background/terminated notification
+             messages on Android 8+. Must match NotificationService.channelId
+             ('xo_arena_general'), which is created at app start with high
+             importance. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="xo_arena_general" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

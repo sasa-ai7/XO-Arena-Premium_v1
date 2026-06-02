@@ -5,7 +5,9 @@
       "Bash(flutter pub *)",
       "Bash(findstr /i \"error\")",
       "Bash(git rm *)",
-      "Bash(flutter build *)"
+      "Bash(flutter build *)",
+      "Bash(xargs head -20)",
+      "Bash(flutter run *)"
     ]
   }
 }
