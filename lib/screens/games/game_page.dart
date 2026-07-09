@@ -13,6 +13,7 @@ import '../../services/app_mode_service.dart';
 import '../../services/audit_service.dart';
 import '../../services/game_reward_service.dart';
 import '../../services/local_store.dart';
+import '../../services/mission_service.dart';
 import '../../services/sound_service.dart';
 import '../../utils/ai_engine.dart';
 import '../../utils/board_utils.dart';
@@ -327,6 +328,24 @@ class _GamePageState extends State<GamePage> {
       'difficulty': widget.difficulty.name,
       'result': resultStr,
     });
+
+    // Missions tracking (local-only; never credits coins here). Guarded by the
+    // _isResolvingResult re-entry gate above + per-matchId dedupe in the service.
+    MissionService.instance.trackEvent('any_match_completed', matchId: _matchId);
+    if (resultStr == 'win') {
+      MissionService.instance.trackEvent('any_match_won', matchId: _matchId);
+    }
+    if (isFriendMode) {
+      MissionService.instance
+          .trackEvent('friend_match_completed', matchId: _matchId);
+    } else {
+      MissionService.instance.trackEvent('ai_match_completed', matchId: _matchId);
+      if (resultStr == 'win') {
+        MissionService.instance
+            .trackEvent('ai_win_${widget.difficulty.name}', matchId: _matchId);
+      }
+    }
+
     if (!isFriendMode) {
       _persistAIResult(resultStr, coinsToAdd, balanceBefore: balanceBefore, balanceAfter: balanceAfter);
     }

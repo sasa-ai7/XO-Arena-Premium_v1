@@ -12,6 +12,7 @@ import '../../services/app_mode_service.dart';
 import '../../services/audit_service.dart';
 import '../../services/game_reward_service.dart';
 import '../../services/local_store.dart';
+import '../../services/mission_service.dart';
 import '../../services/sound_service.dart';
 import '../../utils/ai_engine.dart';
 import '../../utils/board_utils.dart';
@@ -374,6 +375,9 @@ class _LevelGamePageState extends State<LevelGamePage> {
         'level': _currentLevel,
         'result': resultStr
       });
+      // Missions: a completed level (win branch only) = level_completed.
+      MissionService.instance
+          .trackEvent('level_completed', matchId: _levelMatchId);
       _persistLevelResult(
         resultStr,
         reward,

@@ -11,6 +11,7 @@ import '../../core/keys.dart';
 import '../../services/arena/arena_cosmetics_loader.dart';
 import '../../services/arena/arena_repo.dart';
 import '../../services/local_store.dart';
+import '../../services/mission_service.dart';
 import '../../widgets/app_ui.dart';
 import '../../widgets/arena_toast.dart';
 import 'arena_lobby_page.dart';
@@ -77,6 +78,9 @@ class _ArenaJoinRoomPageState extends State<ArenaJoinRoomPage> {
           .timeout(const Duration(seconds: 10));
       if (!mounted) return;
       if (res.isSuccess) {
+        // Missions: joined a room by code (auth-gated → guests excluded).
+        MissionService.instance.trackEvent('online_room_joined_by_code',
+            matchId: res.room!.matchId);
         Navigator.of(context).pushReplacement(MaterialPageRoute(
           builder: (_) => ArenaLobbyPage(initialRoom: res.room!),
         ));

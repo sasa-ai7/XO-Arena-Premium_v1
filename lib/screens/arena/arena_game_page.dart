@@ -17,6 +17,7 @@ import '../../services/arena/arena_bet_service.dart';
 import '../../services/arena/arena_match_summary.dart';
 import '../../services/arena/arena_presence_service.dart';
 import '../../services/arena/arena_repo.dart';
+import '../../services/mission_service.dart';
 import '../../utils/board_utils.dart';
 import '../../widgets/app_ui.dart';
 import '../../widgets/arena_toast.dart';
@@ -783,6 +784,21 @@ class _ArenaGamePageState extends State<ArenaGamePage>
     _finalCoinsWon = coinsWon;
     // Write summary (idempotent via matchId), user_logs, audit_logs.
     await ArenaMatchSummary.writeForRoom(room: _room, coinsWon: coinsWon);
+
+    // Missions: online match actually finished (gated upstream by
+    // _summaryWritten + status=='finished', plus per-matchId dedupe). This code
+    // path is only reachable by signed-in players, so guests never progress.
+    MissionService.instance
+        .trackEvent('online_match_completed', matchId: _room.matchId);
+    MissionService.instance
+        .trackEvent('any_match_completed', matchId: _room.matchId);
+    if (isLiveWinner) {
+      MissionService.instance
+          .trackEvent('online_match_won', matchId: _room.matchId);
+      MissionService.instance
+          .trackEvent('any_match_won', matchId: _room.matchId);
+    }
+
     final opponentUid = _room.opponentOf(selfUid);
     final opponentName = (selfUid == _room.hostUid)
         ? (_room.guestName ?? '')

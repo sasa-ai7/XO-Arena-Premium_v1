@@ -8,6 +8,7 @@ import '../../core/keys.dart';
 import '../../services/arena/arena_cosmetics_loader.dart';
 import '../../services/arena/arena_repo.dart';
 import '../../services/local_store.dart';
+import '../../services/mission_service.dart';
 import '../../widgets/app_ui.dart';
 import '../../widgets/arena_toast.dart';
 import 'arena_lobby_page.dart';
@@ -97,6 +98,9 @@ class _ArenaCreateRoomPageState extends State<ArenaCreateRoomPage> {
         betAmount: _betEnabled ? _betAmount : 0,
         hostProfile: hostProfile,
       );
+      // Missions: online room successfully created (auth-gated → guests excluded).
+      MissionService.instance
+          .trackEvent('online_room_created', matchId: room.matchId);
       if (!mounted) return;
       Navigator.of(context).pushReplacement(MaterialPageRoute(
         builder: (_) => ArenaLobbyPage(initialRoom: room),
