@@ -1406,7 +1406,8 @@ class _BoardGrid extends StatelessWidget {
     final spacing = matchBoardSpacing(boardSize);
     final cellRadius = matchBoardCellRadius(boardSize);
     final cellCount = boardSize * boardSize;
-    return Container(
+    return RepaintBoundary(
+      child: Container(
       padding: EdgeInsets.all(padding),
       decoration: BoxDecoration(
         color: AppPalette.panel,
@@ -1484,7 +1485,7 @@ class _BoardGrid extends StatelessWidget {
         },
       ),
       ),
-    );
+    ));
   }
 }
 

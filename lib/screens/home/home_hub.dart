@@ -1396,6 +1396,9 @@ class _HomeHubState extends State<HomeHub>
                       width: iconSize,
                       height: iconSize,
                       fit: BoxFit.contain,
+                      // Small icon: cap decode resolution so the full-size
+                      // source isn't re-decoded on every coin-balance rebuild.
+                      cacheWidth: 96,
                     ),
                     SizedBox(width: compact ? 6 : 8),
                     Text(
@@ -1472,6 +1475,7 @@ class _HomeHubState extends State<HomeHub>
         child: Image.asset(
           profile.avatarAssetPath,
           fit: BoxFit.cover,
+          cacheWidth: 256,
           errorBuilder: (_, __, ___) => Icon(
             Icons.person,
             size: size * 0.6,

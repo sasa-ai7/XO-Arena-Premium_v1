@@ -801,7 +801,10 @@ class _GamePageState extends State<GamePage> {
                       ),
                       child: Directionality(
                         textDirection: TextDirection.ltr,
-                        child: GridView.builder(
+                        // Isolate board repaints from the rest of the page so a
+                        // move/win-glow only repaints the board layer.
+                        child: RepaintBoundary(
+                          child: GridView.builder(
                         physics: const NeverScrollableScrollPhysics(),
                         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: _boardConfig.boardSize,
@@ -876,6 +879,7 @@ class _GamePageState extends State<GamePage> {
                             ),
                           );
                         },
+                      ),
                       ),
                       ),
                     ),

@@ -46,10 +46,16 @@ class _StorePageState extends State<StorePage>
   List<String> _ownedXSkins = ['default'];
   List<String> _ownedOSkins = ['default'];
 
+  // Lazily build the Avatar tab (heavy image grid) only after it is first
+  // opened, mirroring the _visitedTabs lazy-tab pattern in home_hub. Colors
+  // and Coins tabs stay eagerly built (Coins hosts billing UI — unchanged).
+  bool _avatarTabVisited = false;
+
   @override
   void initState() {
     super.initState();
     _selectedTab = widget.initialTab;
+    _avatarTabVisited = widget.initialTab == 1;
     LocalStore.coinsNotifier.addListener(_onCoinsChanged);
     PremiumAvatarService.instance.owned.addListener(_onPremiumAvatarChanged);
     // Bind premium avatar entitlement listener so ownership is fresh.
@@ -660,7 +666,10 @@ class _StorePageState extends State<StorePage>
           padding: const EdgeInsets.symmetric(horizontal: 14),
           child: _StoreTabBar(
             selectedIndex: _selectedTab,
-            onTabSelected: (i) => setState(() => _selectedTab = i),
+            onTabSelected: (i) => setState(() {
+              _selectedTab = i;
+              if (i == 1) _avatarTabVisited = true;
+            }),
           ),
         ),
         const SizedBox(height: 12),
@@ -686,13 +695,15 @@ class _StorePageState extends State<StorePage>
                 onSelectOSkin: _selectOSkin,
                 coins: _coins,
               ),
-              AvatarStoreTab(
-                ownedAvatars: _ownedAvatars,
-                equippedAvatar: _equippedAvatar,
-                busy: _busy,
-                onBuyAvatar: _buyAvatar,
-                onEquipAvatar: _equipAvatar,
-              ),
+              _avatarTabVisited
+                  ? AvatarStoreTab(
+                      ownedAvatars: _ownedAvatars,
+                      equippedAvatar: _equippedAvatar,
+                      busy: _busy,
+                      onBuyAvatar: _buyAvatar,
+                      onEquipAvatar: _equipAvatar,
+                    )
+                  : const SizedBox.shrink(),
               const CoinsScreen(),
             ],
           ),

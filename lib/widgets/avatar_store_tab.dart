@@ -225,7 +225,7 @@ class _AvatarCard extends StatelessWidget {
               : isGoldCard
                   ? goldColor.withOpacity(0.22)
                   : meta.color.withOpacity(owned ? 0.14 : 0.10),
-          blurRadius: equipped ? 36 : (isGoldCard ? 28 : 22),
+          blurRadius: equipped ? 24 : (isGoldCard ? 22 : 18),
           spreadRadius: equipped ? -1 : -4,
         ),
       ],
