@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../core/coin_format.dart';
 import '../core/app_theme.dart';
+import '../services/perf_mode_service.dart';
 
 /// ==========================
 ///   REUSABLE UI
@@ -33,23 +34,42 @@ class ArenaLogo extends StatelessWidget {
   Widget build(BuildContext context) {
     final dpr = MediaQuery.of(context).devicePixelRatio;
     final cache = (height * dpr).clamp(160.0, 1400.0).round();
-    return Image.asset(
-      'assets/xo.webp',
-      height: height,
-      fit: BoxFit.contain,
-      gaplessPlayback: true,
-      filterQuality: FilterQuality.medium,
-      cacheHeight: cache,
-      errorBuilder: (_, __, ___) => Image.asset(
-        'assets/xo.png',
-        height: height,
-        fit: BoxFit.contain,
-        errorBuilder: (_, __, ___) => Icon(
-          Icons.grid_3x3_rounded,
-          size: height * 0.6,
-          color: AppPalette.primary,
-        ),
-      ),
+    return ValueListenableBuilder<bool>(
+      valueListenable: PerfMode.enabled,
+      builder: (context, perf, __) {
+        // Performance Mode: show the static PNG logo instead of decoding and
+        // looping the animated WebP — much cheaper on low-end devices.
+        if (perf) {
+          return Image.asset(
+            'assets/xo.png',
+            height: height,
+            fit: BoxFit.contain,
+            errorBuilder: (_, __, ___) => Icon(
+              Icons.grid_3x3_rounded,
+              size: height * 0.6,
+              color: AppPalette.primary,
+            ),
+          );
+        }
+        return Image.asset(
+          'assets/xo.webp',
+          height: height,
+          fit: BoxFit.contain,
+          gaplessPlayback: true,
+          filterQuality: FilterQuality.medium,
+          cacheHeight: cache,
+          errorBuilder: (_, __, ___) => Image.asset(
+            'assets/xo.png',
+            height: height,
+            fit: BoxFit.contain,
+            errorBuilder: (_, __, ___) => Icon(
+              Icons.grid_3x3_rounded,
+              size: height * 0.6,
+              color: AppPalette.primary,
+            ),
+          ),
+        );
+      },
     );
   }
 }

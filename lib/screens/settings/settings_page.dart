@@ -18,6 +18,7 @@ import '../../services/connectivity_service.dart';
 import '../../services/local_store.dart';
 import '../../services/fcm_service.dart';
 import '../../services/notification_service.dart';
+import '../../services/perf_mode_service.dart';
 import '../../services/sound_service.dart';
 import '../../services/user_repo.dart';
 import '../../widgets/app_ui.dart';
@@ -1489,6 +1490,45 @@ class _SettingsPageState extends State<SettingsPage>
                       ],
                     ),
                   ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            // ── PERFORMANCE SECTION ──────────────────────────────────────
+            AppGlassCard(
+              padding: const EdgeInsets.all(16),
+              borderColor: AppPalette.strokeSoft,
+              child: Row(
+                children: [
+                  const Icon(Icons.speed_rounded,
+                      color: Colors.white, size: 20),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(AppL10n.of(context).performanceModeLabel,
+                            style: safeOrbitron(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white)),
+                        const SizedBox(height: 2),
+                        Text(AppL10n.of(context).performanceModeHint,
+                            style: safeInter(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w500,
+                                color: AppPalette.textMuted)),
+                      ],
+                    ),
+                  ),
+                  ValueListenableBuilder<bool>(
+                    valueListenable: PerfMode.enabled,
+                    builder: (_, on, __) => Switch(
+                      value: on,
+                      activeColor: AppPalette.primary,
+                      onChanged: (val) => PerfMode.setEnabled(val),
+                    ),
+                  ),
                 ],
               ),
             ),

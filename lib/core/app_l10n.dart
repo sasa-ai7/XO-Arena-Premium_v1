@@ -371,6 +371,11 @@ class AppL10n {
 
   // ── A6 — Settings screen ──────────────────────────────────────────────
   String get musicLabel => isAr ? 'الموسيقى' : 'MUSIC';
+  String get performanceModeLabel =>
+      isAr ? 'وضع الأداء' : 'PERFORMANCE MODE';
+  String get performanceModeHint => isAr
+      ? 'تقليل المؤثرات والحركات لأداء أنعم'
+      : 'Reduce effects and animations for smoother play';
   String get accountSection => isAr ? 'الحساب' : 'ACCOUNT';
   String get supportAndLegal => isAr ? 'الدعم والقانونية' : 'SUPPORT & LEGAL';
   String get accountDetailsRow => isAr ? 'تفاصيل الحساب' : 'Account Details';

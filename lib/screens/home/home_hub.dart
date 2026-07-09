@@ -26,6 +26,7 @@ import '../../services/audit_service.dart';
 import '../../services/connectivity_service.dart';
 import '../../services/local_store.dart';
 import '../../services/notification_service.dart';
+import '../../services/perf_mode_service.dart';
 import '../../services/fcm_service.dart';
 import '../../services/referral/pending_referral_reward_service.dart';
 import '../../services/session_service.dart';
@@ -159,9 +160,15 @@ class _HomeHubState extends State<HomeHub>
             curve: Interval(starts[i], ends[i], curve: Curves.easeOutCubic)),
       );
     });
-    Future.delayed(const Duration(milliseconds: 80), () {
-      if (mounted) _cardAnim.forward();
-    });
+    if (PerfMode.enabled.value) {
+      // Performance Mode: skip the staggered entrance animation and show the
+      // cards immediately in their final position.
+      _cardAnim.value = 1.0;
+    } else {
+      Future.delayed(const Duration(milliseconds: 80), () {
+        if (mounted) _cardAnim.forward();
+      });
+    }
   }
 
   /// Schedule the one-shot global "Active Room Found" check shortly after the

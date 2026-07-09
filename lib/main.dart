@@ -19,6 +19,7 @@ import 'screens/maintenance_screen.dart';
 import 'screens/welcome_screen.dart';
 import 'services/fcm_service.dart';
 import 'services/local_store.dart';
+import 'services/perf_mode_service.dart';
 import 'widgets/weak_connection_overlay.dart';
 
 /// App Check is intentionally DISABLED until Firebase Blaze + App Check
@@ -52,6 +53,10 @@ Future<void> main() async {
     startupZone = Zone.current;
 
     WidgetsFlutterBinding.ensureInitialized();
+
+    // Load the Performance Mode flag early (non-blocking) so low-end-device
+    // visual reductions apply as soon as the first screens build.
+    unawaited(PerfMode.init());
 
     // Hard kill switch for google_fonts: never fetch from fonts.gstatic.com
     // at runtime. All text uses locally bundled Inter / Orbitron families
