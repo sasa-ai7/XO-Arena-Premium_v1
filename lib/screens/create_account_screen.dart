@@ -34,6 +34,45 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
   // Age gate state: null = unanswered, true = Yes (13+), false = No.
   bool? _isAdultConfirmed;
 
+  @override
+  void initState() {
+    super.initState();
+    // Rebuild on every keystroke so the Create button's enabled/disabled state
+    // stays in sync with the form in real time.
+    for (final c in [_username, _email, _pass, _pass2]) {
+      c.addListener(_onFieldChanged);
+    }
+  }
+
+  void _onFieldChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// True only when every required field holds valid input. Coin amounts and
+  /// account creation must never proceed with missing data.
+  bool get _allFieldsFilled {
+    final name = _username.text.trim();
+    final email = _email.text.trim();
+    final pass = _pass.text;
+    final pass2 = _pass2.text;
+    final emailLooksValid = email.contains('@') && email.contains('.');
+    return name.length >= 3 &&
+        emailLooksValid &&
+        pass.length >= 6 && // Firebase Auth minimum — no pattern rules applied.
+        pass2.isNotEmpty &&
+        pass2 == pass;
+  }
+
+  /// The Create Account button only lights up when ALL of these are true:
+  ///   1. every required field is filled/valid,
+  ///   2. the privacy confirmation checkbox is checked,
+  ///   3. the user confirmed they are older than 13.
+  bool get _canCreate =>
+      !_loading &&
+      _allFieldsFilled &&
+      _privacyConsent &&
+      _isAdultConfirmed == true;
+
   Future<void> _create() async {
     FocusScope.of(context).unfocus();
     if (!(_form.currentState?.validate() ?? false)) return;
@@ -255,8 +294,23 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
     );
   }
 
+  /// Cancel / close the Create Account screen. Falls back to the login route
+  /// if there is nothing to pop, so it never dead-ends.
+  void _cancel() {
+    FocusScope.of(context).unfocus();
+    final navigator = Navigator.of(context);
+    if (navigator.canPop()) {
+      navigator.pop();
+    } else {
+      navigator.pushReplacementNamed('/login');
+    }
+  }
+
   @override
   void dispose() {
+    for (final c in [_username, _email, _pass, _pass2]) {
+      c.removeListener(_onFieldChanged);
+    }
     _username.dispose();
     _email.dispose();
     _pass.dispose();
@@ -268,17 +322,27 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
   Widget build(BuildContext context) {
     final l10n = AppL10n.of(context);
     return Scaffold(
-      body: AppBackground(
-        variant: AppBackgroundVariant.homeNeon,
+      backgroundColor: AppPalette.bgDepth,
+      // Same full-screen XO-BACK.png treatment as the login screen.
+      body: AuthImageBackground(
         child: SafeArea(
           child: Column(
             children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
                 child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    AppIconButton(icon: Icons.arrow_back, onTap: () => Navigator.pop(context)),
-                    const SizedBox(width: 12),
+                    // Larger, square, premium Cancel button near the top.
+                    AppIconButton(
+                      icon: Icons.close_rounded,
+                      onTap: _cancel,
+                      size: 58,
+                      iconSize: 28,
+                      radius: 18,
+                      borderColor: AppPalette.homeStroke.withOpacity(0.55),
+                    ),
+                    const SizedBox(width: 14),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -297,13 +361,18 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
                   ],
                 ),
               ),
+              // Form anchored toward the BOTTOM; artwork stays visible above.
               Expanded(
-                child: Center(
+                child: Align(
+                  alignment: Alignment.bottomCenter,
                   child: SingleChildScrollView(
-                    padding: const EdgeInsets.all(18),
+                    keyboardDismissBehavior:
+                        ScrollViewKeyboardDismissBehavior.onDrag,
+                    padding: const EdgeInsets.fromLTRB(18, 12, 18, 18),
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 560),
                       child: Column(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
                           AppGlassCard(
                             padding: const EdgeInsets.fromLTRB(22, 22, 22, 20),
@@ -355,6 +424,11 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
                             borderColor: AppPalette.homeStroke.withOpacity(0.30),
                             child: Form(
                               key: _form,
+                              // Show inline validation messages as the user
+                              // types, so it's clear what's still missing while
+                              // the Create button stays disabled.
+                              autovalidateMode:
+                                  AutovalidateMode.onUserInteraction,
                               child: Column(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
@@ -467,10 +541,13 @@ class _CreateAccountScreenState extends State<CreateAccountScreen> {
                                     ),
                                   ),
                                   const SizedBox(height: 16),
+                                  // Stays visually inactive (dimmed) until all
+                                  // fields are valid AND the checkbox + age 13+
+                                  // confirmation are satisfied.
                                   AppPillButton(
                                     label: l10n.createAccount,
                                     loading: _loading,
-                                    onPressed: _loading ? null : _create,
+                                    onPressed: _canCreate ? _create : null,
                                     minHeight: 56,
                                   ),
                                 ],

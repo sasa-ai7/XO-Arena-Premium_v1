@@ -31,6 +31,19 @@ class AppL10n {
   String get male => isAr ? 'ذكر' : 'Male';
   String get female => isAr ? 'أنثى' : 'Female';
   String get next => isAr ? 'التالي' : 'NEXT';
+
+  // ── Offline player setup (first launch, no sign-in) ────────────────────
+  String get offlineSetupTitle => isAr ? 'أنشئ لاعبك' : 'Create Your Player';
+  String get offlineSetupSubtitle => isAr
+      ? 'العب دون اتصال الآن. سجّل الدخول لاحقاً للأونلاين والمتجر.'
+      : 'Play offline now. Sign in later for online play & store.';
+  String get playerNameLabel => isAr ? 'اسم اللاعب' : 'PLAYER NAME';
+  String get playerNameHint => isAr ? 'أدخل اسمك' : 'Enter your name';
+  String get playerNameRequired =>
+      isAr ? 'الرجاء إدخال اسم صحيح' : 'Please enter a valid name';
+  String get boy => isAr ? 'ولد' : 'Boy';
+  String get girl => isAr ? 'بنت' : 'Girl';
+  String get startPlaying => isAr ? 'ابدأ اللعب' : 'START PLAYING';
   String get canChangeCharacterLater => isAr
       ? 'يمكنك تغيير شخصيتك لاحقاً في إعدادات ملفك الشخصي.'
       : 'You can change your character later in your profile settings.';
@@ -127,6 +140,7 @@ class AppL10n {
   String get signIn => isAr ? 'تسجيل الدخول' : 'SIGN IN';
   String get enterArena => isAr ? 'دخول الساحة' : 'ENTER ARENA';
   String get continueWithGoogle => isAr ? 'المتابعة عبر Google' : 'CONTINUE WITH GOOGLE';
+  String get continueAsGuest => isAr ? 'المتابعة كضيف' : 'CONTINUE AS GUEST';
   String get alreadyHaveAccount => isAr ? 'لديك حساب بالفعل؟ ' : 'Already have an account? ';
   String get signInLink => isAr ? 'تسجيل الدخول' : 'Sign In';
   String get language => isAr ? 'اللغة' : 'Language';

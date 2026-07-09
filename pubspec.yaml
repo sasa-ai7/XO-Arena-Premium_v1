@@ -1,7 +1,7 @@
 name: xo_arena_neon_clash
 
-version: 1.0.26+49
-description: XO Arena Neon Clash - Premium Tic Tac Toe Arena
+version: 1.0.26+50
+description: Arena - Premium multi-game neon platform
 publish_to: "none"
 
 environment:
@@ -60,6 +60,8 @@ dependencies:
   timezone: ^0.9.4
 
 dev_dependencies:
+  flutter_test:
+    sdk: flutter
   flutter_launcher_icons: ^0.13.1
   flutter_lints: ^5.0.0
 
@@ -69,12 +71,28 @@ flutter:
   assets:
     - assets/music/
     - assets/xo.png
+    - assets/XO-BACK.png
+    - assets/xo.webp
     - assets/avatar/
     - assets/game/
     - assets/coin/
     - assets/x/
     - assets/o/
     - assets/account/
+    - assets/data/
+    - assets/images/arena/home/
+    - assets/images/arena/xo/
+    - assets/images/arena/snake_ladder/
+    - assets/images/arena/mafia/
+    - assets/images/arena/movies/
+    - assets/MAFAY/data/
+    - assets/MAFAY/FAMAN/
+    - assets/MAFAY/iloveimg-compressed/
+    - assets/MAFAY/images/
+    - assets/MAFAY/MAN/
+    - assets/MAFAY/mp3/
+    - assets/MAFAY/pdf/
+    - assets/iloveimg-compressed (5)/
 
   fonts:
     - family: Inter

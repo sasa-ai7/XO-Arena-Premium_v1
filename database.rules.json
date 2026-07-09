@@ -557,6 +557,100 @@
       }
     },
 
+    "gameRooms": {
+      "snake_ladder": {
+        "$code": {
+          ".read": "auth != null",
+          ".write": "auth != null && $code.matches(/^[0-9]{6}$/) && ((!data.exists() && newData.exists() && newData.child('hostUid').val() == auth.uid) || (data.exists() && !newData.exists() && data.child('hostUid').val() == auth.uid) || (data.exists() && newData.exists() && (data.child('players').child(auth.uid).exists() || newData.child('players').child(auth.uid).exists()) && ((!newData.child('diceRollVersion').exists() || newData.child('diceRollVersion').val() == data.child('diceRollVersion').val()) || data.child('currentTurnUid').val() == auth.uid) && ((!newData.child('moveVersion').exists() || newData.child('moveVersion').val() == data.child('moveVersion').val()) || data.child('currentTurnUid').val() == auth.uid) && ((!newData.child('positions').exists() || newData.child('positions').val() == data.child('positions').val()) || data.child('currentTurnUid').val() == auth.uid)))",
+          ".validate": "!newData.exists() || (newData.hasChildren(['gameType','roomCode','hostUid','players','status','boardSize','boardConfigId','createdAt','updatedAt','expiresAt','matchId']) && newData.child('gameType').val() == 'snake_ladder' && newData.child('roomCode').isString() && newData.child('roomCode').val() == $code && newData.child('roomCode').val().matches(/^[0-9]{6}$/))",
+
+          "gameType": {
+            ".validate": "newData.val() == 'snake_ladder' && (!data.exists() || data.val() == newData.val())"
+          },
+          "roomCode": {
+            ".validate": "newData.isString() && newData.val() == $code && newData.val().matches(/^[0-9]{6}$/) && (!data.exists() || data.val() == newData.val())"
+          },
+          "hostUid": {
+            ".validate": "newData.isString() && (!data.exists() || data.val() == newData.val())"
+          },
+          "players": {
+            "$uid": {
+              ".validate": "!newData.exists() || newData.hasChildren(['uid','name','ready','joinedAt'])",
+              "uid": {
+                ".validate": "newData.isString() && newData.val() == $uid"
+              },
+              "name": {
+                ".validate": "newData.isString() && newData.val().length <= 24"
+              },
+              "ready": {
+                ".validate": "newData.isBoolean()"
+              },
+              "joinedAt": {
+                ".validate": "newData.isNumber()"
+              },
+              "$other": {
+                ".validate": true
+              }
+            }
+          },
+          "status": {
+            ".validate": "newData.isString() && (newData.val() == 'waiting' || newData.val() == 'ready' || newData.val() == 'countdown' || newData.val() == 'playing' || newData.val() == 'finished' || newData.val() == 'cancelled' || newData.val() == 'expired')"
+          },
+          "boardSize": {
+            ".validate": "newData.isNumber() && (newData.val() == 5 || newData.val() == 8 || newData.val() == 10)"
+          },
+          "boardConfigId": {
+            ".validate": "newData.isString()"
+          },
+          "currentTurnUid": {
+            ".validate": "!newData.exists() || newData.isString()"
+          },
+          "positions": {
+            "$uid": {
+              ".validate": "newData.isNumber() && newData.val() >= 1 && newData.val() <= 100"
+            }
+          },
+          "diceValue": {
+            ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= 1 && newData.val() <= 6)"
+          },
+          "diceRollVersion": {
+            ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= 0)"
+          },
+          "moveVersion": {
+            ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= 0)"
+          },
+          "winnerUid": {
+            ".validate": "!newData.exists() || newData.isString()"
+          },
+          "createdAt": {
+            ".validate": "newData.isNumber() && (!data.exists() || data.val() == newData.val())"
+          },
+          "updatedAt": {
+            ".validate": "newData.isNumber()"
+          },
+          "expiresAt": {
+            ".validate": "newData.isNumber() && newData.val() > 0"
+          },
+          "matchId": {
+            ".validate": "newData.isString()"
+          },
+          "presence": {
+            "$uid": {
+              ".validate": "!newData.exists() || newData.hasChildren()"
+            }
+          },
+          "ready": {
+            "$uid": {
+              ".validate": "!newData.exists() || newData.isBoolean()"
+            }
+          },
+          "$other": {
+            ".validate": true
+          }
+        }
+      }
+    },
+
     "usersOnline": {
       "$uid": {
         ".read": "auth != null",

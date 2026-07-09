@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:xo_arena_neon_clash/screens/intro_screen.dart';
 
 void main() {
-  testWidgets('Intro screen renders XO Arena branding',
+  testWidgets('Intro screen renders Arena branding',
       (WidgetTester tester) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -18,7 +18,7 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.text('XO ARENA'), findsOneWidget);
+    expect(find.text('ARENA'), findsOneWidget);
     expect(find.text('PREMIUM CYBER BATTLES'), findsOneWidget);
   });
 }

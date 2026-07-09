@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:ui' show ImageFilter;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
@@ -11,8 +12,11 @@ import '../core/app_theme.dart';
 import '../core/keys.dart';
 import '../core/language_switch_dialog.dart';
 import '../services/auth_service.dart';
+import '../services/local_store.dart';
+import '../utils/navigation_utils.dart';
 import '../widgets/app_ui.dart';
 import 'account_character_select_screen.dart';
+import 'offline_player_setup_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -32,21 +36,12 @@ class _LoginScreenState extends State<LoginScreen>
   bool _loading = false;
   String? _errorMessage;
 
-  late final AnimationController _pulseController;
   late final AnimationController _fadeController;
-  late final Animation<double> _pulseAnim;
   late final Animation<double> _fadeAnim;
 
   @override
   void initState() {
     super.initState();
-
-    _pulseController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1400),
-    )..repeat(reverse: true);
-    _pulseAnim =
-        CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut);
 
     _fadeController = AnimationController(
       vsync: this,
@@ -63,7 +58,6 @@ class _LoginScreenState extends State<LoginScreen>
   void dispose() {
     _email.removeListener(_onEmailChanged);
     _emailSaveDebounce?.cancel();
-    _pulseController.dispose();
     _fadeController.dispose();
     _email.dispose();
     _pass.dispose();
@@ -209,168 +203,119 @@ class _LoginScreenState extends State<LoginScreen>
     await confirmAndSwitchLanguage(context);
   }
 
+  /// Continue without signing in. Uses the existing local OfflinePlayerProfile
+  /// if present (→ Home), otherwise opens the one-page offline setup. No
+  /// Firebase account is created and signInAnonymously is never called.
+  Future<void> _continueAsGuest() async {
+    final profile = await LocalStore.getOfflineProfile();
+    if (!mounted) return;
+    if (profile != null) {
+      LocalStore.offlineAvatarAssetNotifier.value = profile.avatarAssetPath;
+      navigateToHomeHub(context);
+    } else {
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const OfflinePlayerSetupScreen()),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppL10n.of(context);
     final isAr = l10n.isAr;
+    final media = MediaQuery.of(context);
+    // Large, crisp logo anchored in the upper-middle zone. Scales with screen
+    // width and clamps so it stays dominant yet never overlaps the card on
+    // small phones.
+    final logoHeight =
+        (media.size.width * 0.66).clamp(190.0, 260.0).toDouble();
+
     return Scaffold(
       backgroundColor: AppPalette.bgDepth,
-      body: AppBackground(
-        variant: AppBackgroundVariant.homeNeon,
-        child: Stack(
-          children: [
-            Positioned.fill(
-              child: IgnorePointer(
-                child: Opacity(
-                  opacity: 0.20,
-                  child: CustomPaint(
-                    painter: _ArenaGridPainter(),
+      body: AuthImageBackground(
+        child: SafeArea(
+          child: FadeTransition(
+            opacity: _fadeAnim,
+            child: Column(
+              children: [
+                // Language switch — fixed-height top row so toggling it never
+                // shifts the logo / login panel below.
+                Align(
+                  alignment: isAr ? Alignment.topLeft : Alignment.topRight,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+                    child: _LangSquareButton(
+                      label: isAr ? 'EN' : 'ع',
+                      onTap: _toggleLanguage,
+                    ),
                   ),
                 ),
-              ),
-            ),
-            SafeArea(
-              child: FadeTransition(
-                opacity: _fadeAnim,
-                child: Column(
-                  children: [
-                    // Language toggle — pinned top-right
-                    Align(
-                      alignment: isAr ? Alignment.topLeft : Alignment.topRight,
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
-                        child: GestureDetector(
-                          onTap: _toggleLanguage,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 14, vertical: 7),
-                            decoration: BoxDecoration(
-                              color: AppPalette.panelDeep.withOpacity(0.85),
-                              borderRadius: BorderRadius.circular(999),
-                              border: Border.all(
-                                color: AppPalette.primary.withOpacity(0.38),
-                              ),
-                            ),
-                            child: Text(
-                              isAr ? 'en' : 'ع',
-                              style: safeOrbitron(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                                color: AppPalette.primary,
-                                letterSpacing: 1.2,
-                              ),
-                            ),
+                // Logo + login panel scroll together as one stable unit and
+                // stay vertically centered, so nothing jumps on language switch
+                // or when the keyboard opens.
+                Expanded(
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      return SingleChildScrollView(
+                        keyboardDismissBehavior:
+                            ScrollViewKeyboardDismissBehavior.onDrag,
+                        padding: const EdgeInsets.fromLTRB(18, 8, 18, 24),
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(
+                            minHeight: constraints.maxHeight - 32,
                           ),
-                        ),
-                      ),
-                    ),
-                    Expanded(
-                      child: Center(
-                        child: SingleChildScrollView(
-                          keyboardDismissBehavior:
-                              ScrollViewKeyboardDismissBehavior.onDrag,
-                          padding: const EdgeInsets.fromLTRB(18, 10, 18, 24),
-                          child: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 560),
-                            child: Column(
-                              children: [
-                                // Floating logo + title — no frame, no chips.
-                                Padding(
-                                  padding: const EdgeInsets.fromLTRB(0, 16, 0, 0),
-                                  child: Column(
-                                    children: [
-                                      Stack(
-                                        alignment: Alignment.center,
-                                        children: [
-                                          // Soft neon glow behind the logo.
-                                          Container(
-                                            width: 200,
-                                            height: 200,
-                                            decoration: BoxDecoration(
-                                              shape: BoxShape.circle,
-                                              boxShadow: [
-                                                BoxShadow(
-                                                  color: AppPalette.primary
-                                                      .withOpacity(0.18),
-                                                  blurRadius: 80,
-                                                  spreadRadius: 20,
-                                                ),
-                                                BoxShadow(
-                                                  color: AppPalette.accentPurple
-                                                      .withOpacity(0.12),
-                                                  blurRadius: 60,
-                                                  spreadRadius: 10,
-                                                ),
-                                              ],
-                                            ),
+                          child: Column(
+                            // Logo sits in the upper-middle, the compact card in
+                            // the lower half; spaceBetween keeps them balanced.
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Padding(
+                                padding: EdgeInsets.only(
+                                    top: constraints.maxHeight * 0.06),
+                                child: ArenaLogo(height: logoHeight),
+                              ),
+                              Padding(
+                                padding: EdgeInsets.only(
+                                    bottom: constraints.maxHeight * 0.03),
+                                child: ConstrainedBox(
+                                  constraints:
+                                      const BoxConstraints(maxWidth: 480),
+                                  child: _LoginGlassPanel(
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(
+                                          l10n.signIn,
+                                          textAlign: TextAlign.center,
+                                          style: safeOrbitron(
+                                            fontSize: 22,
+                                            fontWeight: FontWeight.w800,
+                                            color: AppPalette.homeSky,
+                                            letterSpacing: 4,
                                           ),
-                                          AnimatedBuilder(
-                                            animation: _pulseAnim,
-                                            builder: (context, child) =>
-                                                Transform.scale(
-                                              scale: 1.0 +
-                                                  (_pulseAnim.value * 0.04),
-                                              child: SizedBox(
-                                                width: 136,
-                                                height: 136,
-                                                child: CustomPaint(
-                                                  painter: XOArenaLogoPainter(
-                                                      animValue:
-                                                          _pulseAnim.value),
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      const SizedBox(height: 14),
-                                      Text(
-                                        l10n.gameTitle,
-                                        style: brandFont(context, fontSize: 34),
-                                        textAlign: TextAlign.center,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(height: 20),
-                                AppGlassCard(
-                                  padding: const EdgeInsets.fromLTRB(
-                                      20, 22, 20, 24),
-                                  radius: 28,
-                                  borderColor:
-                                      AppPalette.homeStroke.withOpacity(0.30),
-                                  child: Column(
-                                    children: [
-                                      Text(
-                                        l10n.signIn,
-                                        style: safeOrbitron(
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w700,
-                                          color: AppPalette.homeSky,
-                                          letterSpacing: 1.8,
                                         ),
-                                      ),
-                                      const SizedBox(height: 24),
-                                      _buildAccountForm(
-                                          key: const ValueKey('account')),
-                                      const SizedBox(height: 14),
-                                      _buildFeedbackBanner(),
-                                      const SizedBox(height: 18),
-                                      _buildActions(l10n),
-                                    ],
+                                        const SizedBox(height: 16),
+                                        _buildAccountForm(
+                                            key: const ValueKey('account')),
+                                        const SizedBox(height: 10),
+                                        _buildFeedbackBanner(),
+                                        const SizedBox(height: 14),
+                                        _buildActions(l10n),
+                                      ],
+                                    ),
                                   ),
                                 ),
-                              ],
-                            ),
+                              ),
+                            ],
                           ),
                         ),
-                      ),
-                    ),
-                  ],
+                      );
+                    },
+                  ),
                 ),
-              ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -388,6 +333,7 @@ class _LoginScreenState extends State<LoginScreen>
             hint: l10n.emailHint,
             icon: Icons.email_outlined,
             keyboardType: TextInputType.emailAddress,
+            margin: EdgeInsets.zero,
             validator: (v) {
               final s = (v ?? '').trim();
               if (s.isEmpty) return AppL10n.of(context).emailRequired;
@@ -402,6 +348,7 @@ class _LoginScreenState extends State<LoginScreen>
             hint: l10n.passwordHint,
             icon: Icons.lock_outline,
             isPassword: true,
+            margin: EdgeInsets.zero,
             validator: (v) {
               final s = v ?? '';
               if (s.isEmpty) return AppL10n.of(context).passwordRequired;
@@ -419,7 +366,7 @@ class _LoginScreenState extends State<LoginScreen>
       child: _loading
           ? Container(
               key: const ValueKey('loading-account'),
-              margin: const EdgeInsets.symmetric(horizontal: 24),
+              margin: EdgeInsets.zero,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               decoration: BoxDecoration(
                 color: AppPalette.homeSky.withOpacity(0.12),
@@ -455,7 +402,7 @@ class _LoginScreenState extends State<LoginScreen>
           : _errorMessage != null
               ? Container(
                   key: ValueKey(_errorMessage),
-                  margin: const EdgeInsets.symmetric(horizontal: 24),
+                  margin: EdgeInsets.zero,
                   padding:
                       const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   decoration: BoxDecoration(
@@ -505,10 +452,192 @@ class _LoginScreenState extends State<LoginScreen>
           loading: _loading,
           onTap: _loading ? null : _signInWithGoogle,
         ),
+        const SizedBox(height: 12),
+        _ArenaGuestButton(
+          label: l10n.continueAsGuest,
+          onTap: _loading ? null : _continueAsGuest,
+        ),
       ],
     );
   }
 
+}
+
+/// Large square glass language-switch button for the top corner. Shares the
+/// same glass / blur / neon-border language as the login card so it reads as an
+/// intentional premium control rather than a tiny hidden icon.
+class _LangSquareButton extends StatelessWidget {
+  final String label;
+  final VoidCallback onTap;
+
+  const _LangSquareButton({required this.label, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    // Solid semi-opaque glass (no BackdropFilter) — one fewer expensive
+    // backdrop pass on the auth screen.
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            AppPalette.panelElevated.withOpacity(0.82),
+            AppPalette.panelDeep.withOpacity(0.78),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AppPalette.homeSky.withOpacity(0.45),
+          width: 1.3,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: AppPalette.homeSky.withOpacity(0.18),
+            blurRadius: 16,
+            spreadRadius: -2,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: SizedBox(
+        width: 56,
+        height: 56,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(16),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.language,
+                    size: 18, color: AppPalette.primary),
+                const SizedBox(height: 3),
+                Text(
+                  label,
+                  style: safeOrbitron(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: AppPalette.primary,
+                    letterSpacing: 1.0,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Secondary "Continue as Guest" button — an outlined ghost control so it reads
+/// as clearly optional next to the primary ENTER ARENA / Google actions.
+class _ArenaGuestButton extends StatelessWidget {
+  final String label;
+  final VoidCallback? onTap;
+
+  const _ArenaGuestButton({required this.label, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: EdgeInsets.zero,
+      height: 48,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: AppPalette.homeStroke.withOpacity(0.45),
+          width: 1.2,
+        ),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(18),
+          child: Center(
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.person_outline,
+                    size: 18, color: AppPalette.homeSky),
+                const SizedBox(width: 10),
+                Text(
+                  label,
+                  style: safeOrbitron(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: AppPalette.homeSky,
+                    letterSpacing: 1.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Light frosted-glass login panel. Deliberately NOT a heavy dark box — a very
+/// subtle backdrop blur plus a translucent light→dark gradient (max ~0.30
+/// opacity) let the XO-BACK.png artwork stay visible through it, so the panel
+/// reads as part of the same scene rather than a separate solid block.
+class _LoginGlassPanel extends StatelessWidget {
+  final Widget child;
+
+  const _LoginGlassPanel({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(26),
+      child: BackdropFilter(
+        // Lighter blur — cleaner glassmorphism, cheaper GPU pass.
+        filter: ImageFilter.blur(sigmaX: 4, sigmaY: 4),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 18),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Colors.white.withOpacity(0.10),
+                AppPalette.bgDepth.withOpacity(0.24),
+              ],
+            ),
+            borderRadius: BorderRadius.circular(26),
+            // Subtle neon-sky border glow to match the XO Arena atmosphere.
+            border: Border.all(
+              color: AppPalette.homeSky.withOpacity(0.32),
+              width: 1.3,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.28),
+                blurRadius: 28,
+                offset: const Offset(0, 16),
+              ),
+              BoxShadow(
+                color: AppPalette.homeSky.withOpacity(0.16),
+                blurRadius: 26,
+                spreadRadius: -6,
+              ),
+              BoxShadow(
+                color: AppPalette.accentPurple.withOpacity(0.08),
+                blurRadius: 30,
+                spreadRadius: -10,
+              ),
+            ],
+          ),
+          child: child,
+        ),
+      ),
+    );
+  }
 }
 
 class _ArenaPrimaryButton extends StatelessWidget {
@@ -527,22 +656,32 @@ class _ArenaPrimaryButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 24),
-      height: 56,
+      margin: EdgeInsets.zero,
+      height: 58,
       decoration: BoxDecoration(
+        // Vivid cyan→blue gradient — the clear primary action.
         gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [AppPalette.homeSky, AppPalette.homeBlue],
+          colors: [
+            AppPalette.homeCyan,
+            AppPalette.homeSky,
+            AppPalette.homeBlue,
+          ],
         ),
         borderRadius: BorderRadius.circular(18),
         border:
-            Border.all(color: AppPalette.homeStrokeStrong.withOpacity(0.55)),
-        boxShadow: const [
+            Border.all(color: AppPalette.homeStrokeStrong.withOpacity(0.60)),
+        boxShadow: [
           BoxShadow(
-            color: Color(0x402EA8FF),
-            blurRadius: 24,
-            offset: Offset(0, 10),
+            color: AppPalette.homeSky.withOpacity(0.45),
+            blurRadius: 26,
+            offset: const Offset(0, 12),
+          ),
+          BoxShadow(
+            color: AppPalette.homeBlue.withOpacity(0.30),
+            blurRadius: 30,
+            spreadRadius: -4,
           ),
         ],
       ),
@@ -599,19 +738,27 @@ class _ArenaGoogleButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 24),
+      margin: EdgeInsets.zero,
       height: 52,
       decoration: BoxDecoration(
+        // Understated dark glass so it stays clearly secondary to ENTER ARENA.
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            AppPalette.panelElevated.withOpacity(0.96),
-            AppPalette.panelDeep.withOpacity(0.94),
+            AppPalette.panelElevated.withOpacity(0.72),
+            AppPalette.panelDeep.withOpacity(0.68),
           ],
         ),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppPalette.homeStroke.withOpacity(0.26)),
+        border: Border.all(color: AppPalette.homeStroke.withOpacity(0.32)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.20),
+            blurRadius: 16,
+            offset: const Offset(0, 8),
+          ),
+        ],
       ),
       child: Material(
         color: Colors.transparent,
@@ -702,37 +849,6 @@ class _GoogleLogoPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
-class _ArenaGridPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = AppPalette.primary.withOpacity(0.06)
-      ..strokeWidth = 0.5;
-
-    for (double y = 0; y < size.height; y += 60) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
-    }
-    for (double x = 0; x < size.width; x += 60) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
-    }
-
-    final accentPaint = Paint()
-      ..color = AppPalette.primary.withOpacity(0.16)
-      ..strokeWidth = 1
-      ..style = PaintingStyle.stroke;
-
-    canvas.drawLine(const Offset(24, 60), const Offset(24, 90), accentPaint);
-    canvas.drawLine(const Offset(24, 60), const Offset(54, 60), accentPaint);
-    canvas.drawLine(
-        Offset(size.width - 24, 60), Offset(size.width - 24, 90), accentPaint);
-    canvas.drawLine(
-        Offset(size.width - 24, 60), Offset(size.width - 54, 60), accentPaint);
-  }
-
-  @override
-  bool shouldRepaint(_) => false;
 }
 
 class XOArenaLogoPainter extends CustomPainter {

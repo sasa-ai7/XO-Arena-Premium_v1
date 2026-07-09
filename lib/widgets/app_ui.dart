@@ -14,6 +14,46 @@ enum AppBackgroundVariant { defaultTheme, homeNeon }
 
 enum CoinPillVariant { defaultTheme, homeNeon }
 
+/// The animated "XO ARENA" logo backed by `assets/xo.webp`.
+///
+/// Flutter decodes animated WebP natively and loops it forever via its
+/// multi-frame image stream, so the badge keeps animating on its own.
+/// [gaplessPlayback] keeps the last frame painted during any reload so it
+/// never blinks out, and [cacheHeight] down-samples the source so decoding
+/// stays memory-safe. If the animated asset ever fails, the static
+/// `assets/xo.png` is shown (then a neutral icon) so the logo is never blank.
+///
+/// Reused by the startup gate, the login screen and the offline setup screen
+/// so the branded logo is identical everywhere.
+class ArenaLogo extends StatelessWidget {
+  final double height;
+  const ArenaLogo({super.key, this.height = 170});
+
+  @override
+  Widget build(BuildContext context) {
+    final dpr = MediaQuery.of(context).devicePixelRatio;
+    final cache = (height * dpr).clamp(160.0, 1400.0).round();
+    return Image.asset(
+      'assets/xo.webp',
+      height: height,
+      fit: BoxFit.contain,
+      gaplessPlayback: true,
+      filterQuality: FilterQuality.medium,
+      cacheHeight: cache,
+      errorBuilder: (_, __, ___) => Image.asset(
+        'assets/xo.png',
+        height: height,
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => Icon(
+          Icons.grid_3x3_rounded,
+          size: height * 0.6,
+          color: AppPalette.primary,
+        ),
+      ),
+    );
+  }
+}
+
 class AppBackground extends StatelessWidget {
   final Widget child;
   final AppBackgroundVariant variant;
@@ -227,6 +267,85 @@ class AppBackground extends StatelessWidget {
           child,
         ],
       ),
+    );
+  }
+}
+
+/// Full-screen auth background built around the `XO-BACK.png` artwork.
+///
+/// Used by the Login and Create Account screens. The `XO-BACK.png` scene (which
+/// already contains the XO Arena hero logo at the top and an empty neon stage at
+/// the bottom) IS the whole page background — there is no separate Flutter
+/// decoration, glow panel, or blur layer behind the form. The image fills the
+/// entire screen with `BoxFit.cover`, anchored to the top so the hero logo stays
+/// visible on any aspect ratio. A single, continuous dark gradient (transparent
+/// across the hero, easing to a strong dark tint at the very bottom) is the only
+/// overlay — just enough to keep a bottom-anchored form readable over the stage,
+/// with no hard band so the top and bottom read as one cohesive screen.
+class AuthImageBackground extends StatelessWidget {
+  final Widget child;
+
+  const AuthImageBackground({
+    super.key,
+    required this.child,
+  });
+
+  static const String backgroundAsset = 'assets/XO-BACK.png';
+
+  @override
+  Widget build(BuildContext context) {
+    final mq = MediaQuery.of(context);
+    // Down-sample the 941×1672 source to the device pixel width so decode and
+    // memory stay light — it is only ever shown full-bleed.
+    final cacheW = (mq.size.width * mq.devicePixelRatio).round();
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        // 1) The XO-BACK.png scene — the single, unified visual base for the
+        //    whole page. Anchored to the top so the baked-in hero logo is
+        //    preserved when `cover` crops on very tall/short screens.
+        Image.asset(
+          backgroundAsset,
+          fit: BoxFit.cover,
+          alignment: Alignment.topCenter,
+          cacheWidth: cacheW,
+          errorBuilder: (context, error, stackTrace) => const DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [AppPalette.homeBgBase, AppPalette.bgDepth],
+              ),
+            ),
+          ),
+        ),
+        // 2) One continuous readability gradient — NO blur, NO frosted fog band.
+        //    Fully transparent across the hero area, then eases into a darker
+        //    tint toward the bottom where the form sits. A single smooth ramp
+        //    means there is no hard edge / "two screens" break.
+        Positioned.fill(
+          child: IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.transparent,
+                    Colors.transparent,
+                    AppPalette.bgDepth.withOpacity(0.30),
+                    AppPalette.bgDepth.withOpacity(0.68),
+                    AppPalette.bgDepth.withOpacity(0.90),
+                  ],
+                  stops: const [0.0, 0.40, 0.62, 0.82, 1.0],
+                ),
+              ),
+            ),
+          ),
+        ),
+        // 3) Foreground content (forms, buttons, etc.).
+        child,
+      ],
     );
   }
 }
@@ -1028,6 +1147,10 @@ class ArenaField extends StatefulWidget {
   final int? maxLength;
   final String? Function(String?)? validator;
 
+  /// Outer margin. Defaults to the standard side inset; pass [EdgeInsets.zero]
+  /// (e.g. from the login card) to let the field span the full content width.
+  final EdgeInsetsGeometry? margin;
+
   const ArenaField({
     super.key,
     required this.controller,
@@ -1038,6 +1161,7 @@ class ArenaField extends StatefulWidget {
     this.inputFormatters,
     this.maxLength,
     this.validator,
+    this.margin,
   });
 
   @override
@@ -1060,7 +1184,7 @@ class _ArenaFieldState extends State<ArenaField> {
       onFocusChange: (focused) => setState(() => _isFocused = focused),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        margin: const EdgeInsets.symmetric(horizontal: 24),
+        margin: widget.margin ?? const EdgeInsets.symmetric(horizontal: 24),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topLeft,

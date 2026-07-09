@@ -58,12 +58,17 @@ class PurchaseOrdersLogger {
 
   /// Build the canonical, deterministic transactionId for a [PurchaseDetails].
   ///
-  /// Format: `iap_client_${uid}_${productId}_${suffix}` where suffix is the
-  /// Google Play orderId/purchaseID when present, otherwise sha256(purchaseToken).
-  /// Binding the id to uid + productId guarantees a single, stable doc id per
-  /// real purchase so duplicate Google Play stream emits collapse to one row
-  /// (set, never add). Returns null when neither orderId nor purchaseToken is
-  /// present — callers must then skip Firestore writes.
+  /// Format: `iap_client_${uid}_${productId}_${suffix}` where the suffix is the
+  /// SHA-256 of the Google Play purchaseToken (the per-purchase unique value),
+  /// falling back to the sanitized orderId only when the token is missing.
+  ///
+  /// DUPLICATE-PREVENTION KEY IS THE purchaseTokenHash, NOT the productId. Every
+  /// new Google Play purchase carries a fresh purchaseToken, so the same coin
+  /// pack can be bought many times (different token → different doc id → new
+  /// grant), while a retry / app-restart / stream-replay of ONE purchase reuses
+  /// the same token → same doc id → collapses to a single row (set, never add).
+  /// The productId is included only for readability. Returns null when neither a
+  /// purchaseToken nor an orderId is present — callers must then skip writes.
   ///
   /// NOTE: the raw purchaseToken is never used as an id or stored; only its
   /// SHA-256 hash is used.
@@ -72,13 +77,15 @@ class PurchaseOrdersLogger {
     if (resolvedUid == null) return null;
     final productId = purchase.productID;
 
-    final orderId = purchase.purchaseID;
     String? suffix;
-    if (orderId != null && orderId.isNotEmpty) {
-      suffix = _sanitizeOrderId(orderId);
+    final token = purchase.verificationData.serverVerificationData;
+    if (token.isNotEmpty) {
+      suffix = _hashToken(token);
     } else {
-      final token = purchase.verificationData.serverVerificationData;
-      if (token.isNotEmpty) suffix = _hashToken(token);
+      final orderId = purchase.purchaseID;
+      if (orderId != null && orderId.isNotEmpty) {
+        suffix = _sanitizeOrderId(orderId);
+      }
     }
     if (suffix == null) return null;
 
@@ -351,8 +358,8 @@ class PurchaseOrdersLogger {
         ..._purchaseFields(purchase),
         'transactionId': txId,
         'status': 'coin_grant_started',
-        'grantMode': 'client_fallback',
-        'verificationError': 'functions_not_available',
+        'grantMode': 'google_play_client_only',
+        'verificationError': 'cloud_functions_disabled_client_only',
         'coins': coinsToGrant,
         'grantedCoins': coinsToGrant,
         'createdAt': FieldValue.serverTimestamp(),
@@ -396,7 +403,7 @@ class PurchaseOrdersLogger {
         // exact purchase was already granted. Marked unverified/untrusted.
         tx.set(ledgerRef, <String, dynamic>{
           'uid': uid,
-          'type': 'iap_client_fallback',
+          'type': 'iap_google_play',
           'productId': productId,
           'packageName': _kPackageName,
           'coins': coinsToGrant,
@@ -412,9 +419,9 @@ class PurchaseOrdersLogger {
           'platform': _kPlatform,
           'verified': false,
           'trustedRevenue': false,
-          'grantMode': 'client_fallback',
+          'grantMode': 'google_play_client_only',
           'note':
-              'Client fallback grant because Cloud Functions are disabled',
+              'Granted from Google Play Billing client without backend verification',
           'createdAt': FieldValue.serverTimestamp(),
         });
 
@@ -448,7 +455,7 @@ class PurchaseOrdersLogger {
     try {
       await orderRef.set(<String, dynamic>{
         'status': 'coin_granted_client_fallback',
-        'grantMode': 'client_fallback',
+        'grantMode': 'google_play_client_only',
         if (balanceBefore != null) 'balanceBefore': balanceBefore,
         if (balanceAfter != null) 'balanceAfter': balanceAfter,
         'coins': coinsToGrant,
@@ -513,8 +520,8 @@ class PurchaseOrdersLogger {
         ..._purchaseFields(purchase),
         'transactionId': txId,
         'status': 'avatar_unlock_started',
-        'grantMode': 'client_fallback',
-        'verificationError': 'functions_not_available',
+        'grantMode': 'google_play_client_only',
+        'verificationError': 'cloud_functions_disabled_client_only',
         'avatarId': avatarIdStr,
         'createdAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
@@ -540,9 +547,9 @@ class PurchaseOrdersLogger {
           'platform': _kPlatform,
           'verified': false,
           'trustedRevenue': false,
-          'grantMode': 'client_fallback',
+          'grantMode': 'google_play_client_only',
           'note':
-              'Client fallback unlock because Cloud Functions are disabled',
+              'Unlocked from Google Play Billing client without backend verification',
           'unlockedAt': FieldValue.serverTimestamp(),
           'createdAt': FieldValue.serverTimestamp(),
         });

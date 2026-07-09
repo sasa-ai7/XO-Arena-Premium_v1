@@ -1,4 +1,4 @@
-# ProGuard Rules for XO Arena
+# ProGuard Rules for Arena
 # This file contains keep rules to prevent crashes when minification is enabled
 # Currently minification is disabled, but these rules are prepared for future use
 

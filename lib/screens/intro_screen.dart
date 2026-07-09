@@ -1,10 +1,17 @@
 import 'package:flutter/material.dart';
 
 import '../core/app_theme.dart';
-import '../widgets/app_ui.dart';
 
 typedef StartupPageRouteBuilder = Route<void> Function(String routeName);
 
+/// Short, premium, Flutter-built intro shown on EVERY cold launch.
+///
+/// The "X" glides in from the left, the "O" glides in from the right, then the
+/// "ARENA" wordmark rises below — over a dark blue/purple stage with gently
+/// drifting XO glyphs. It resolves the startup route in parallel and, once both
+/// the ~2.2s animation and the route are ready, replaces itself with the target
+/// (Home / Offline Setup). It never forces login and is never gated by a
+/// "seen" flag, so it plays on every fresh open.
 class IntroScreen extends StatefulWidget {
   final Future<String> startupRouteFuture;
   final StartupPageRouteBuilder startupRouteBuilder;
@@ -20,18 +27,19 @@ class IntroScreen extends StatefulWidget {
 }
 
 class _IntroScreenState extends State<IntroScreen>
-    with TickerProviderStateMixin {
-  late AnimationController _ctrl;
-  late Animation<double> _xFade;
-  late Animation<double> _oFade;
-  late Animation<double> _arenaFade;
-  late Animation<Offset> _arenaSlide;
-  late Animation<double> _loaderFade;
-  late Animation<double> _transitionGlow;
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _bgFade;
+  late final Animation<double> _xFade;
+  late final Animation<Offset> _xSlide;
+  late final Animation<double> _oFade;
+  late final Animation<Offset> _oSlide;
+  late final Animation<double> _arenaFade;
+  late final Animation<Offset> _arenaSlide;
+  late final Animation<double> _loaderFade;
+
   bool _didNavigate = false;
-  bool _isAwaitingStartup = false;
   bool _didFinishIntro = false;
-  bool _isRouting = false;
   String? _resolvedRoute;
 
   @override
@@ -39,106 +47,85 @@ class _IntroScreenState extends State<IntroScreen>
     super.initState();
     _ctrl = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 3000),
+      duration: const Duration(milliseconds: 2200),
     );
 
-    _xFade = Tween<double>(begin: 0.0, end: 1.0).animate(CurvedAnimation(
-        parent: _ctrl,
-        curve: const Interval(0.0, 0.27, curve: Curves.easeOut)));
+    _bgFade = CurvedAnimation(
+        parent: _ctrl, curve: const Interval(0.0, 0.30, curve: Curves.easeOut));
 
-    _oFade = Tween<double>(begin: 0.0, end: 1.0).animate(CurvedAnimation(
-        parent: _ctrl,
-        curve: const Interval(0.27, 0.53, curve: Curves.easeOut)));
-
-    _arenaFade = Tween<double>(begin: 0.0, end: 1.0).animate(CurvedAnimation(
-        parent: _ctrl,
-        curve: const Interval(0.53, 0.80, curve: Curves.easeOut)));
-
-    _arenaSlide = Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero)
+    _xFade = CurvedAnimation(
+        parent: _ctrl, curve: const Interval(0.05, 0.32, curve: Curves.easeOut));
+    _xSlide = Tween<Offset>(begin: const Offset(-1.4, 0), end: Offset.zero)
         .animate(CurvedAnimation(
             parent: _ctrl,
-            curve: const Interval(0.53, 0.80, curve: Curves.easeOut)));
+            curve: const Interval(0.05, 0.42, curve: Curves.easeOutCubic)));
 
-    _loaderFade = Tween<double>(begin: 0.0, end: 1.0).animate(CurvedAnimation(
-        parent: _ctrl,
-        curve: const Interval(0.76, 1.0, curve: Curves.easeOut)));
-
-    _transitionGlow = Tween<double>(begin: 0.0, end: 1.0).animate(
-        CurvedAnimation(
+    _oFade = CurvedAnimation(
+        parent: _ctrl, curve: const Interval(0.28, 0.55, curve: Curves.easeOut));
+    _oSlide = Tween<Offset>(begin: const Offset(1.4, 0), end: Offset.zero)
+        .animate(CurvedAnimation(
             parent: _ctrl,
-            curve: const Interval(0.72, 1.0, curve: Curves.easeOut)));
+            curve: const Interval(0.28, 0.64, curve: Curves.easeOutCubic)));
 
-    _ctrl.addListener(_handleAnimationTick);
+    _arenaFade = CurvedAnimation(
+        parent: _ctrl, curve: const Interval(0.55, 0.82, curve: Curves.easeOut));
+    _arenaSlide = Tween<Offset>(begin: const Offset(0, 0.5), end: Offset.zero)
+        .animate(CurvedAnimation(
+            parent: _ctrl,
+            curve: const Interval(0.55, 0.86, curve: Curves.easeOutCubic)));
+
+    _loaderFade = CurvedAnimation(
+        parent: _ctrl, curve: const Interval(0.80, 1.0, curve: Curves.easeOut));
+
     _resolveStartupRoute();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      // Warm the auth/setup assets while the intro plays so the next screen
+      // paints instantly (no first-frame decode jank).
+      precacheImage(const AssetImage('assets/XO-BACK.png'), context,
+          onError: (_, __) {});
+      precacheImage(const AssetImage('assets/xo.webp'), context,
+          onError: (_, __) {});
       _runIntroSequence();
     });
   }
 
-  void _handleAnimationTick() {
-    if (_isAwaitingStartup || !mounted || _ctrl.value < 0.76) return;
-    setState(() => _isAwaitingStartup = true);
-  }
-
   Future<void> _runIntroSequence() async {
     await _ctrl.forward();
-    if (!mounted || _didNavigate) return;
+    if (!mounted) return;
     _didFinishIntro = true;
-    if (!_isAwaitingStartup) {
-      setState(() => _isAwaitingStartup = true);
-    }
-    await _navigateIfReady();
+    _navigateIfReady();
   }
 
   Future<void> _resolveStartupRoute() async {
-    String nextRoute = '/login';
+    String next = '/offlineSetup';
     try {
-      nextRoute = await widget.startupRouteFuture;
+      next = await widget.startupRouteFuture;
     } catch (error) {
-      debugPrint('[IntroScreen] Startup route resolution failed: $error');
+      debugPrint('[IntroScreen] startup route resolution failed: $error');
     }
-
-    if (!mounted || _didNavigate) return;
-    setState(() => _resolvedRoute = nextRoute);
-    await _navigateIfReady();
+    if (!mounted) return;
+    _resolvedRoute = next;
+    _navigateIfReady();
   }
 
-  Future<void> _navigateIfReady() async {
-    final nextRoute = _resolvedRoute;
-    if (_didNavigate || !_didFinishIntro || !mounted || nextRoute == null) {
+  void _navigateIfReady() {
+    if (_didNavigate ||
+        !_didFinishIntro ||
+        !mounted ||
+        _resolvedRoute == null) {
       return;
     }
-
     _didNavigate = true;
-    setState(() => _isRouting = true);
-    await WidgetsBinding.instance.endOfFrame;
-    if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
-      widget.startupRouteBuilder(nextRoute),
+      widget.startupRouteBuilder(_resolvedRoute!),
       (_) => false,
     );
   }
 
-  String _statusMessage() {
-    if (_isRouting) {
-      return _resolvedRoute == '/home'
-          ? 'Opening your arena hub'
-          : 'Opening sign in';
-    }
-    if (_resolvedRoute != null) {
-      return 'Destination ready. Starting transition';
-    }
-    if (_isAwaitingStartup) {
-      return 'Syncing session and loading destination';
-    }
-    return 'Preparing startup systems';
-  }
-
   @override
   void dispose() {
-    _ctrl.removeListener(_handleAnimationTick);
     _ctrl.dispose();
     super.dispose();
   }
@@ -147,218 +134,206 @@ class _IntroScreenState extends State<IntroScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppPalette.bgDepth,
-      body: AppBackground(
-        variant: AppBackgroundVariant.homeNeon,
-        child: AnimatedBuilder(
-          animation: _ctrl,
-          builder: (context, _) {
-            return Stack(
+      body: Stack(
+        children: [
+          // Static dark neon base — built once, const, cheap.
+          const Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    AppPalette.homeBgBase,
+                    AppPalette.homeBgSecondary,
+                    AppPalette.bgDepth,
+                  ],
+                ),
+              ),
+            ),
+          ),
+          // Soft central glow for depth (static).
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    center: const Alignment(0, -0.12),
+                    radius: 0.95,
+                    colors: [
+                      AppPalette.homeBlue.withValues(alpha: 0.14),
+                      AppPalette.homePurple.withValues(alpha: 0.05),
+                      Colors.transparent,
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          // Gently drifting XO glyphs — isolated in its own RepaintBoundary so
+          // only this layer repaints as the drift value changes.
+          Positioned.fill(
+            child: RepaintBoundary(
+              child: IgnorePointer(
+                child: FadeTransition(
+                  opacity: _bgFade,
+                  child: AnimatedBuilder(
+                    animation: _ctrl,
+                    builder: (_, __) => CustomPaint(
+                      size: Size.infinite,
+                      painter: _DriftingXOPainter(progress: _ctrl.value),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          // Foreground X · O · ARENA. Each piece is driven by its own
+          // transition, so the static painters never rebuild.
+          Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: Opacity(
-                      opacity: 0.22,
-                      child: CustomPaint(
-                        size: Size.infinite,
-                        painter: _ArenaGridPainter(),
-                      ),
-                    ),
-                  ),
-                ),
-                AnimatedAlign(
-                  duration: const Duration(milliseconds: 400),
-                  curve: Curves.easeOut,
-                  alignment: _ctrl.value > 0.0
-                      ? const Alignment(-0.55, -0.05)
-                      : const Alignment(-3.0, -0.05),
-                  child: FadeTransition(
-                    opacity: _xFade,
-                    child: const SizedBox(
-                      width: 100,
-                      height: 100,
-                      child: CustomPaint(
-                        painter: _GlowXPainter(color: AppPalette.primary),
-                      ),
-                    ),
-                  ),
-                ),
-                AnimatedOpacity(
-                  opacity: _ctrl.value > 0.38 ? 1.0 : 0.0,
-                  duration: const Duration(milliseconds: 150),
-                  child: Align(
-                    alignment: const Alignment(0, -0.05),
-                    child: Container(
-                      width: 1.5,
-                      height: 68,
-                      color: AppPalette.homeStrokeStrong.withValues(alpha: 0.72),
-                    ),
-                  ),
-                ),
-                AnimatedAlign(
-                  duration: const Duration(milliseconds: 400),
-                  curve: Curves.easeOut,
-                  alignment: _ctrl.value > 0.27
-                      ? const Alignment(0.55, -0.05)
-                      : const Alignment(3.0, -0.05),
-                  child: FadeTransition(
-                    opacity: _oFade,
-                    child: const SizedBox(
-                      width: 100,
-                      height: 100,
-                      child: CustomPaint(
-                        painter: _GlowOPainter(color: AppPalette.accentPurple),
-                      ),
-                    ),
-                  ),
-                ),
-                Align(
-                  alignment: const Alignment(0, 0.30),
-                  child: SlideTransition(
-                    position: _arenaSlide,
-                    child: FadeTransition(
-                      opacity: _arenaFade,
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            'XO ARENA',
-                            style: brandFont(context, fontSize: 40),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SlideTransition(
+                      position: _xSlide,
+                      child: FadeTransition(
+                        opacity: _xFade,
+                        child: const SizedBox(
+                          width: 118,
+                          height: 118,
+                          child: CustomPaint(
+                            painter: _GlowXPainter(color: AppPalette.primary),
                           ),
-                          const SizedBox(height: 12),
-                          Text(
-                            'PREMIUM CYBER BATTLES',
-                            style: homeLabelFont(
-                              context,
-                              fontSize: 10,
-                              color: AppPalette.goldHighlight,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                IgnorePointer(
-                  child: FadeTransition(
-                    opacity: _transitionGlow,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: RadialGradient(
-                          center: const Alignment(0, -0.08),
-                          radius: 1.0,
-                          colors: [
-                            AppPalette.homeCyan.withValues(alpha: 0.16),
-                            AppPalette.homePurple.withValues(alpha: 0.08),
-                            Colors.transparent,
-                          ],
                         ),
                       ),
                     ),
-                  ),
-                ),
-                IgnorePointer(
-                  child: AnimatedOpacity(
-                    opacity: _isRouting ? 1.0 : 0.0,
-                    duration: const Duration(milliseconds: 220),
-                    curve: Curves.easeOut,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [
-                            AppPalette.homeCyan.withValues(alpha: 0.08),
-                            AppPalette.homePurple.withValues(alpha: 0.12),
-                            AppPalette.homeBlue.withValues(alpha: 0.06),
-                          ],
+                    const SizedBox(width: 6),
+                    SlideTransition(
+                      position: _oSlide,
+                      child: FadeTransition(
+                        opacity: _oFade,
+                        child: const SizedBox(
+                          width: 118,
+                          height: 118,
+                          child: CustomPaint(
+                            painter:
+                                _GlowOPainter(color: AppPalette.accentPurple),
+                          ),
                         ),
                       ),
                     ),
-                  ),
+                  ],
                 ),
-                Align(
-                  alignment: const Alignment(0, 0.76),
+                const SizedBox(height: 16),
+                SlideTransition(
+                  position: _arenaSlide,
                   child: FadeTransition(
-                    opacity: _loaderFade,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 18,
-                        vertical: 14,
-                      ),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(22),
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [
-                            AppPalette.homePanelStrong.withValues(alpha: 0.92),
-                            AppPalette.homePanel.withValues(alpha: 0.88),
-                          ],
+                    opacity: _arenaFade,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text('ARENA', style: brandFont(context, fontSize: 44)),
+                        const SizedBox(height: 8),
+                        Text(
+                          'PREMIUM CYBER BATTLES',
+                          style: homeLabelFont(
+                            context,
+                            fontSize: 10,
+                            color: AppPalette.goldHighlight,
+                          ),
                         ),
-                        border: Border.all(
-                          color: AppPalette.homeStrokeStrong
-                              .withValues(alpha: 0.34),
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.22),
-                            blurRadius: 18,
-                            offset: const Offset(0, 10),
-                          ),
-                        ],
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2.2,
-                              valueColor: const AlwaysStoppedAnimation<Color>(
-                                AppPalette.homeCyan,
-                              ),
-                              backgroundColor:
-                                  AppPalette.homeStroke.withValues(alpha: 0.22),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'ENTERING XO ARENA',
-                                style: homeLabelFont(
-                                  context,
-                                  fontSize: 9,
-                                  color: AppPalette.goldHighlight,
-                                ),
-                              ),
-                              const SizedBox(height: 3),
-                              Text(
-                                _statusMessage(),
-                                style: homeBodyFont(
-                                  context,
-                                  fontSize: 11,
-                                  color: AppPalette.homeBody,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
+                      ],
                     ),
                   ),
                 ),
               ],
-            );
-          },
-        ),
+            ),
+          ),
+          // Minimal loading hint near the bottom, fades in at the end.
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 56,
+            child: FadeTransition(
+              opacity: _loaderFade,
+              child: const Center(
+                child: SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.2,
+                    valueColor:
+                        AlwaysStoppedAnimation<Color>(AppPalette.homeCyan),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
+}
+
+/// Faint, drifting XO glyphs for the intro backdrop. Plain low-opacity strokes
+/// (NO mask-filter blur) so a full field of them stays cheap to paint.
+class _DriftingXOPainter extends CustomPainter {
+  final double progress;
+  const _DriftingXOPainter({required this.progress});
+
+  static const List<_Glyph> _glyphs = <_Glyph>[
+    _Glyph(0.12, 0.14, true, 26),
+    _Glyph(0.82, 0.10, false, 30),
+    _Glyph(0.20, 0.40, false, 22),
+    _Glyph(0.90, 0.44, true, 24),
+    _Glyph(0.08, 0.66, true, 28),
+    _Glyph(0.72, 0.70, false, 26),
+    _Glyph(0.30, 0.86, false, 24),
+    _Glyph(0.60, 0.22, true, 18),
+    _Glyph(0.50, 0.56, false, 16),
+    _Glyph(0.16, 0.90, true, 20),
+    _Glyph(0.88, 0.86, true, 22),
+    _Glyph(0.40, 0.06, false, 20),
+  ];
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final drift = progress * 14.0; // gentle motion over the intro
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2
+      ..strokeCap = StrokeCap.round;
+    for (final g in _glyphs) {
+      final cx = g.fx * size.width + (g.isX ? drift : -drift) * 0.4;
+      final cy = g.fy * size.height + drift;
+      final r = g.size / 2;
+      paint.color = (g.isX ? AppPalette.homeCyan : AppPalette.homePurple)
+          .withValues(alpha: 0.10);
+      if (g.isX) {
+        canvas.drawLine(
+            Offset(cx - r, cy - r), Offset(cx + r, cy + r), paint);
+        canvas.drawLine(
+            Offset(cx + r, cy - r), Offset(cx - r, cy + r), paint);
+      } else {
+        canvas.drawCircle(Offset(cx, cy), r, paint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _DriftingXOPainter old) =>
+      old.progress != progress;
+}
+
+class _Glyph {
+  final double fx;
+  final double fy;
+  final bool isX;
+  final double size;
+  const _Glyph(this.fx, this.fy, this.isX, this.size);
 }
 
 class _GlowXPainter extends CustomPainter {
@@ -377,13 +352,13 @@ class _GlowXPainter extends CustomPainter {
       ..color = color.withValues(alpha: 0.3)
       ..strokeWidth = 20
       ..strokeCap = StrokeCap.round
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 20);
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 18);
     canvas.drawLine(p1, p2, glow);
     canvas.drawLine(p3, p4, glow);
 
     final main = Paint()
       ..color = color
-      ..strokeWidth = 7
+      ..strokeWidth = 8
       ..strokeCap = StrokeCap.round;
     canvas.drawLine(p1, p2, main);
     canvas.drawLine(p3, p4, main);
@@ -409,49 +384,18 @@ class _GlowOPainter extends CustomPainter {
           ..color = color.withValues(alpha: 0.3)
           ..strokeWidth = 20
           ..style = PaintingStyle.stroke
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 20));
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 18));
 
     canvas.drawCircle(
         center,
         radius,
         Paint()
           ..color = color
-          ..strokeWidth = 7
+          ..strokeWidth = 8
           ..style = PaintingStyle.stroke
           ..strokeCap = StrokeCap.round);
   }
 
   @override
   bool shouldRepaint(covariant _GlowOPainter old) => old.color != color;
-}
-
-class _ArenaGridPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = AppPalette.primary.withValues(alpha: 0.06)
-      ..strokeWidth = 0.5;
-
-    for (double y = 0; y < size.height; y += 60) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
-    }
-    for (double x = 0; x < size.width; x += 60) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
-    }
-
-    final accent = Paint()
-      ..color = AppPalette.primary.withValues(alpha: 0.16)
-      ..strokeWidth = 1
-      ..style = PaintingStyle.stroke;
-
-    canvas.drawLine(const Offset(24, 60), const Offset(24, 90), accent);
-    canvas.drawLine(const Offset(24, 60), const Offset(54, 60), accent);
-    canvas.drawLine(
-        Offset(size.width - 24, 60), Offset(size.width - 24, 90), accent);
-    canvas.drawLine(
-        Offset(size.width - 24, 60), Offset(size.width - 54, 60), accent);
-  }
-
-  @override
-  bool shouldRepaint(_) => false;
 }

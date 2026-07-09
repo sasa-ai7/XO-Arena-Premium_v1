@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
@@ -22,13 +21,16 @@ import 'services/fcm_service.dart';
 import 'services/local_store.dart';
 import 'widgets/weak_connection_overlay.dart';
 
-/// Set to true only after enabling the Firebase App Check API in Google Cloud Console
-/// for project 928308967161. Activating without enabling the API causes log spam.
+/// App Check is intentionally DISABLED until Firebase Blaze + App Check
+/// (Play Integrity attestation) are configured for project 928308967161.
 ///
-/// NOTE: The server CFs enforce App Check via requireAppCheck(). While this is
-/// false, sensitive CF calls fail with failed-precondition and paid purchases
-/// are not granted. Do NOT flip to true without first enabling the App Check API
-/// in Firebase Console and configuring Play Integrity attestation provider.
+/// The IAP coin flow now uses a Google Play *client-only* fulfillment path that
+/// does NOT depend on Cloud Functions or App Check, so nothing in the purchase
+/// flow needs App Check to grant coins. Activating an unconfigured provider only
+/// causes log spam / failures, so we never call FirebaseAppCheck.instance
+/// .activate() while this is false. Do NOT flip to true without first enabling
+/// the App Check API in Firebase Console and configuring the Play Integrity
+/// attestation provider.
 const bool kEnableAppCheck = false;
 
 Future<void> main() async {
@@ -83,23 +85,13 @@ Future<void> main() async {
       }
     }
 
-    if (kEnableAppCheck) {
-      try {
-        await FirebaseAppCheck.instance.activate(
-          androidProvider: kDebugMode
-              ? AndroidProvider.debug
-              : AndroidProvider.playIntegrity,
-        );
-        if (kDebugMode) debugPrint('[main] App Check activated');
-      } catch (error, stackTrace) {
-        if (kDebugMode) {
-          debugPrint('[main] App Check activation failed (non-fatal): $error');
-          debugPrintStack(stackTrace: stackTrace);
-        }
-      }
-    } else if (kDebugMode) {
+    // App Check stays disabled until Firebase Blaze + Play Integrity are ready.
+    // The Google Play client-only IAP flow does not depend on App Check, so we
+    // deliberately do NOT call FirebaseAppCheck.instance.activate() here.
+    if (kDebugMode) {
       debugPrint(
-          '[main] App Check skipped (kEnableAppCheck=false). Enable in Firebase Console first.');
+          '[main] App Check disabled until Blaze/App Check setup is ready. '
+          '(kEnableAppCheck=$kEnableAppCheck)');
     }
 
     // Register the FCM background isolate handler before the app starts so
@@ -190,6 +182,9 @@ class _AppEntryState extends State<_AppEntry> {
 
   @override
   Widget build(BuildContext context) {
+    // Proper animated intro on every cold launch. It resolves the startup route
+    // in parallel and replaces itself with Home / Offline Setup when done —
+    // a visual gate, never an auth gate, never gated by a "seen" flag.
     return IntroScreen(
       startupRouteFuture: _startupRouteFuture,
       startupRouteBuilder: buildStartupPageRoute,

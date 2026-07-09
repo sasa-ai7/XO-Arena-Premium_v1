@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../core/keys.dart';
 import '../screens/home/home_hub.dart';
 import '../screens/login_screen.dart';
+import '../screens/offline_player_setup_screen.dart';
 import '../screens/welcome_screen.dart';
 import '../services/local_store.dart';
 import '../widgets/full_avatar_display.dart';
@@ -60,6 +61,26 @@ Future<void> _warmStartupServices() async {
     }
   }
 
+  // Offline-first: when there is no signed-in user but a local offline profile
+  // exists, seed the Home avatar with the chosen boy/girl portrait so it
+  // persists across launches. Signed-in users keep their online avatar (the
+  // notifier stays null and is re-cleared by HomeHub on mount).
+  try {
+    final hasUser =
+        Firebase.apps.isNotEmpty && FirebaseAuth.instance.currentUser != null;
+    if (!hasUser) {
+      final profile = await LocalStore.getOfflineProfile();
+      if (profile != null) {
+        LocalStore.offlineAvatarAssetNotifier.value = profile.avatarAssetPath;
+      }
+    }
+  } catch (error, stackTrace) {
+    if (kDebugMode) {
+      debugPrint('[startup] offline avatar seed failed: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
+  }
+
   unawaited(Future.wait<void>([
     _initializeDateFormattingSafely('en_US'),
     _initializeDateFormattingSafely('pt_BR'),
@@ -105,15 +126,22 @@ Future<String> _resolveStartupRouteName() async {
     }
   }
 
-  final hasGuestName =
-      (prefs.getString(Keys.guestName) ?? '').trim().isNotEmpty;
-  final offlineGuest = prefs.getBool(Keys.offlineGuest) ?? false;
+  // Offline-first: a completed offline profile (or a signed-in user) goes
+  // straight to Home. A legacy guest that only has guestName/offlineGuest but
+  // no full profile (no character chosen yet) is routed through setup so it can
+  // be migrated into a full OfflinePlayerProfile — the setup screen pre-fills
+  // the saved name and just asks the player to pick a character.
+  final offlineProfileExists =
+      prefs.getBool(Keys.offlineProfileExists) ?? false;
 
-  if (hasUser || hasGuestName || offlineGuest) return '/home';
+  if (hasUser || offlineProfileExists) {
+    return '/home';
+  }
 
-  // First-time user: show welcome screen if not yet seen.
-  final hasSeenWelcome = prefs.getBool(Keys.hasSeenWelcomeScreen) ?? false;
-  return hasSeenWelcome ? '/login' : '/welcome';
+  // New install OR legacy guest → one-page offline player setup. We NEVER force
+  // welcome/login at startup anymore — sign-in is optional and only needed
+  // later for online / store features.
+  return '/offlineSetup';
 }
 
 Route<void> buildStartupPageRoute(String routeName) {
@@ -128,12 +156,16 @@ Route<void> buildStartupPageRoute(String routeName) {
     case '/welcome':
       page = const WelcomeScreen();
       break;
+    case '/offlineSetup':
+      page = const OfflinePlayerSetupScreen();
+      break;
     default:
       if (kDebugMode) {
-        debugPrint('[startup] Unknown route "$routeName", defaulting to /login');
+        debugPrint(
+            '[startup] Unknown route "$routeName", defaulting to /offlineSetup');
       }
-      routeName = '/login';
-      page = const LoginScreen();
+      routeName = '/offlineSetup';
+      page = const OfflinePlayerSetupScreen();
       break;
   }
 

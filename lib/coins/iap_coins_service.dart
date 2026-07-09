@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -9,12 +11,9 @@ import 'package:in_app_purchase_android/in_app_purchase_android.dart';
 
 import '../core/app_config.dart';
 import '../services/app_mode_service.dart';
-import '../services/local_store.dart';
-import '../services/audit_service.dart';
 
 import 'coins_catalog.dart';
 import 'coins_repo.dart';
-import 'coins_verification_service.dart';
 import 'premium_avatar_service.dart';
 import 'purchase_orders_logger.dart';
 
@@ -60,9 +59,15 @@ class IapCoinsService {
   static String get kIAPSource =>
       Platform.isAndroid ? 'google_play' : 'store_kit';
 
+  /// Short, log-safe SHA-256 prefix of [token] for debug logs. The raw
+  /// purchaseToken is NEVER logged.
+  static String _shortTokenHash(String token) {
+    if (token.isEmpty) return '-';
+    final hash = sha256.convert(utf8.encode(token)).toString();
+    return '${hash.substring(0, 12)}…';
+  }
+
   final InAppPurchase _iap = InAppPurchase.instance;
-  final CoinsVerificationService _verificationService =
-      CoinsVerificationService();
   StreamSubscription<List<PurchaseDetails>>? _purchaseSubscription;
   bool _isAvailable = false;
   Future<void>? _initFuture;
@@ -119,7 +124,7 @@ class IapCoinsService {
     }
 
     // Auth guard: never start billing without a signed-in user. Without
-    // a uid we can't credit purchases or call verifyGooglePlayPurchase.
+    // a uid we can't credit the wallet or write the wallet_ledger.
     if (FirebaseAuth.instance.currentUser == null) {
       _isAvailable = false;
       if (kDebugMode) debugPrint('[IAP] skipped because user is null');
@@ -237,14 +242,14 @@ class IapCoinsService {
 
   /// Buy a product.
   ///
-  /// Uses autoConsume: false to allow server-side verification and consumption.
-  /// This ensures:
-  /// 1. Server verification happens before consuming
-  /// 2. Prevents duplicate grants if verification fails
-  /// 3. Allows manual control over consume timing
-  /// 4. Required for proper security in production
+  /// Uses autoConsume: false so WE control consume timing. This ensures:
+  /// 1. Coins are granted (idempotent Firestore transaction) BEFORE consuming.
+  /// 2. If granting fails, we do NOT consume, so Google Play re-delivers the
+  ///    purchase and it is retried on the next launch (no lost purchase).
+  /// 3. The same individual purchase can never grant coins twice.
   ///
-  /// The purchase will be consumed on the server after successful verification.
+  /// This is the **Google Play Client Only** flow — it does NOT use Cloud
+  /// Functions or the Google Play Developer API for verification.
   ///
   /// Handles network errors, billing disconnection, and "already owned" errors with retry logic.
   Future<bool> buy(ProductDetails product, {bool isRetry = false}) async {
@@ -445,11 +450,14 @@ class IapCoinsService {
     }
   }
 
-  /// Handle a single purchase.
+  /// Handle a single purchase (Google Play Client Only flow).
   ///
-  /// Flow: Verify → Grant → Consume (server) → Complete Purchase (client)
-  /// - completePurchase: Acknowledges purchase to Google Play, prevents re-delivery
-  /// - consume: Marks consumable as used, allows re-purchase (done on server)
+  /// Only [PurchaseStatus.purchased] (and [PurchaseStatus.restored]) continue to
+  /// validation + granting. pending/canceled/error never grant, never consume,
+  /// and never completePurchase.
+  /// - consume: marks a consumable as used so the pack can be bought again —
+  ///   done ONLY after coins are granted + logged.
+  /// - completePurchase: acknowledges to Google Play — done ONLY after grant.
   Future<void> _handlePurchase(PurchaseDetails purchase) async {
     if (kDebugMode) {
       debugPrint(
@@ -482,39 +490,15 @@ class IapCoinsService {
         break;
 
       case PurchaseStatus.error:
+        // Log clearly. Do NOT grant, do NOT consume, do NOT completePurchase.
         if (kDebugMode) {
-          debugPrint('[IAP] Purchase error: ${purchase.error}');
-          if (purchase.error != null) {
-            debugPrint(
-                '[IAP] Error code: ${purchase.error!.code}, message: ${purchase.error!.message}');
-
-            // Handle ITEM_ALREADY_OWNED error by querying and processing past purchases
-            final errorCode = purchase.error!.code.toLowerCase();
-            final errorMessage = purchase.error!.message.toLowerCase();
-
-            if (errorCode.contains('item_already_owned') ||
-                errorCode.contains('already_owned') ||
-                errorMessage.contains('already owned') ||
-                errorMessage.contains('item_already_owned') ||
-                errorMessage.contains('you already own this item')) {
-              debugPrint(
-                  '[IAP] ITEM_ALREADY_OWNED in error handler — will not re-grant here');
-            }
-          }
+          debugPrint('[IAP] purchase_error productId=${purchase.productID} '
+              'code=${purchase.error?.code ?? '-'} '
+              'message=${purchase.error?.message ?? '-'}');
         }
-        // Complete error purchases to prevent them from blocking future purchases
-        // (only if not already_owned, which is handled above)
-        if (purchase.pendingCompletePurchase) {
-          try {
-            await _iap.completePurchase(purchase);
-          } catch (e) {
-            // Non-fatal if already acknowledged
-            if (kDebugMode) {
-              debugPrint(
-                  '[IAP] Error completing failed purchase (non-fatal): $e');
-            }
-          }
-        }
+        try {
+          await PurchaseOrdersLogger.instance.logError(purchase);
+        } catch (_) {}
         _billingFlowActive = false;
         _coinGrantController.add(PurchaseGrantResult(
           ok: false,
@@ -537,13 +521,13 @@ class IapCoinsService {
         break;
 
       case PurchaseStatus.canceled:
+        // User backed out. Do NOT grant, do NOT consume, do NOT completePurchase.
         if (kDebugMode) {
-          debugPrint('[IAP] Purchase canceled: ${purchase.productID}');
+          debugPrint('[IAP] purchase_canceled productId=${purchase.productID}');
         }
-        // Complete canceled purchases
-        if (purchase.pendingCompletePurchase) {
-          await _iap.completePurchase(purchase);
-        }
+        try {
+          await PurchaseOrdersLogger.instance.logCancelled(purchase);
+        } catch (_) {}
         _billingFlowActive = false;
         _coinGrantController.add(PurchaseGrantResult(
           ok: false,
@@ -554,387 +538,149 @@ class IapCoinsService {
     }
   }
 
-  /// Process a purchased item: Verify → Grant → Consume → Complete
+  /// Process a purchased item using the **Google Play Client Only** flow.
   ///
-  /// Flow:
-  /// 1. Idempotency check (local cache, then Firestore transaction)
-  /// 2. Verify + Grant on server (CF)
-  /// 3. Consume (coins only — AFTER grant so crash can't lose the purchase)
-  /// 4. completePurchase
-  /// 5. Emit success with coinsAdded
+  /// This flow does NOT use Cloud Functions or the Google Play Developer API.
+  /// Coin amounts come only from the hardcoded [CoinsCatalog]; the grant is
+  /// performed inside a deterministic, idempotent Firestore transaction keyed by
+  /// the SHA-256 of the Google Play purchaseToken. Every record it writes is
+  /// marked verified:false / trustedRevenue:false.
+  ///
+  /// Order (safety-critical):
+  ///   1. Validate productId against CoinsCatalog (reject unknown).
+  ///   2. Validate purchaseToken is present (reject empty).
+  ///   3. Grant atomically in Firestore (idempotent by purchaseTokenHash).
+  ///   4. ONLY after a successful grant: consume (consumables) + completePurchase.
+  /// If granting throws we do NOT consume/complete, so Google Play re-delivers
+  /// the purchase and we retry on the next launch (no lost purchase).
   Future<void> _processPurchased(PurchaseDetails purchase) async {
     final productId = purchase.productID;
     final isAvatar = CoinsCatalog.isAvatarProduct(productId);
+    final purchaseToken = purchase.verificationData.serverVerificationData;
+    final tokenHashShort = _shortTokenHash(purchaseToken);
 
     if (kDebugMode) {
       debugPrint('[IAP] purchase_received productId=$productId '
-          'status=${purchase.status.name} orderId=${purchase.purchaseID ?? '-'}');
+          'status=${purchase.status.name} orderId=${purchase.purchaseID ?? '-'} '
+          'tokenHash=$tokenHashShort');
     }
 
-    // Trust ONLY the hardcoded in-app catalog. Coin amounts are never read from
-    // Firestore or supplied by the client/store payload — only the product id
-    // is used to look up a fixed, trusted coin amount. Unknown product ids are
-    // rejected and logged as suspicious; nothing is granted or consumed.
+    // 1) Validate productId. Trust ONLY the hardcoded in-app catalog. Coin
+    // amounts are never read from the UI/store payload — only the productId is
+    // used to look up a fixed, trusted amount. Unknown ids are rejected and left
+    // untouched (no consume/complete) so a correct future build can process them.
     if (!CoinsCatalog.isValidProductId(productId)) {
-      if (kDebugMode) debugPrint('[IAP] unknown_product_rejected productId=$productId');
+      if (kDebugMode) {
+        debugPrint('[IAP] unknown_product_rejected productId=$productId');
+      }
       _coinGrantController.add(PurchaseGrantResult(
         ok: false,
         error: 'Product is currently unavailable.',
         productId: productId,
       ));
-      // Do NOT consume/complete an unknown product — leave it untouched so a
-      // legitimate future build with the correct catalog can process it.
+      return;
+    }
+
+    // 2) Validate purchaseToken. A real Google Play purchase must carry a
+    // token; without it we cannot build a stable idempotency key, so we reject
+    // without granting and without consuming/completing.
+    if (purchaseToken.isEmpty) {
+      if (kDebugMode) {
+        debugPrint('[IAP] empty_purchase_token_rejected productId=$productId');
+      }
+      _coinGrantController.add(PurchaseGrantResult(
+        ok: false,
+        error: 'Purchase could not be validated. Please contact support.',
+        productId: productId,
+      ));
       return;
     }
 
     if (kDebugMode) {
       debugPrint('[IAP] product_validated productId=$productId '
-          'type=${isAvatar ? 'avatar' : 'coins'}');
+          'type=${isAvatar ? 'avatar' : 'coins'} tokenHash=$tokenHashShort');
     }
 
-    try {
-      final purchaseToken = purchase.verificationData.serverVerificationData;
-      final orderId = purchase.purchaseID;
-
-      // 0) Dedup guard: prevent concurrent server calls for same purchaseToken
-      // Google Play can fire duplicate PurchaseStatus.purchased events
-      final dedupKey = '$productId:$purchaseToken';
-      if (_pendingVerifications.contains(dedupKey)) {
-        if (kDebugMode) {
-          debugPrint(
-              '[IAP] Skipping duplicate verification for $productId (already in-flight)');
-        }
-        return;
-      }
-      _pendingVerifications.add(dedupKey);
-
+    // Dedup guard: Google Play can fire duplicate purchased/restored events for
+    // the same token. Prevent concurrent processing of the same purchaseToken.
+    final dedupKey = '$productId:$purchaseToken';
+    if (_pendingVerifications.contains(dedupKey)) {
       if (kDebugMode) {
-        final base = CoinsCatalog.baseCoinsForProductId(productId);
-        final bonus = CoinsCatalog.bonusForProductId(productId);
-        final total = CoinsCatalog.coinsForProductId(productId);
-        debugPrint('[IAP] === Processing Purchase ===');
-        debugPrint('[IAP]   productId=$productId isAvatar=$isAvatar');
-        debugPrint('[IAP]   orderId=$orderId');
-        debugPrint(
-            '[IAP]   baseCoins=$base bonusCoins=$bonus totalCoins=$total');
+        debugPrint('[IAP] duplicate_event_skipped productId=$productId '
+            'tokenHash=$tokenHashShort (already in-flight)');
+      }
+      return;
+    }
+    _pendingVerifications.add(dedupKey);
+
+    try {
+      // Always log the client-reported purchase first so admins see the
+      // timeline even if a later step throws.
+      try {
+        await PurchaseOrdersLogger.instance
+            .logPurchasedClientReported(purchase);
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint('[IAP_LOG] logPurchasedClientReported error: $e');
+        }
       }
 
-      try {
-        // 0.5) Always log "purchased_client_reported" before we touch consume/verify
-        // so admins see the timeline even if a later step crashes.
-        try {
-          await PurchaseOrdersLogger.instance
-              .logPurchasedClientReported(purchase);
-        } catch (e) {
-          if (kDebugMode) {
-            debugPrint('[IAP_LOG] logPurchasedClientReported error: $e');
-          }
-        }
-
-        // 1) Idempotency check (local)
-        final alreadyProcessed =
-            await CoinsRepo.isPurchaseProcessed(productId, purchaseToken);
-        if (alreadyProcessed) {
-          try {
-            await PurchaseOrdersLogger.instance.logAlreadyProcessed(purchase);
-          } catch (_) {}
-          // Coins: consume so the user can re-purchase. Avatar: acknowledge only.
-          if (Platform.isAndroid && !isAvatar) {
-            try {
-              final androidAddition = _iap
-                  .getPlatformAddition<InAppPurchaseAndroidPlatformAddition>();
-              await androidAddition.consumePurchase(purchase);
-            } catch (e) {
-              if (kDebugMode) {
-                debugPrint(
-                    '[IAP] Error consuming already-processed purchase (non-fatal): $e');
-              }
-            }
-          }
-          if (purchase.pendingCompletePurchase) {
-            try {
-              await _iap.completePurchase(purchase);
-            } catch (e) {
-              if (kDebugMode) {
-                debugPrint(
-                    '[IAP] Error completing already-processed purchase (non-fatal): $e');
-              }
-            }
-          }
-          // Re-assert local entitlement so the shop card hides on cold start.
-          if (isAvatar) {
-            await PremiumAvatarService.instance
-                .markOwnedLocally(CoinsCatalog.avatarIdForProductId(productId));
-          }
-          _coinGrantController.add(PurchaseGrantResult(
-            ok: true,
-            coinsAdded: 0,
-            message: isAvatar
-                ? 'Premium avatar already owned.'
-                : 'Purchase already processed',
-            productId: productId,
-            productType: isAvatar
-                ? PurchaseProductType.avatar
-                : PurchaseProductType.coins,
-            avatarId: isAvatar
-                ? (CoinsCatalog.entitlementForProductId(productId) ??
-                    CoinsCatalog.premiumAvatarEntitlement)
-                : null,
-          ));
-          return;
-        }
-
-        // 2) Verify + Grant on server (server is the source of truth)
-        final user = FirebaseAuth.instance.currentUser;
-        if (user == null) {
-          _coinGrantController.add(PurchaseGrantResult(
-            ok: false,
-            error: 'User not logged in',
-            productId: productId,
-          ));
-          return;
-        }
-
-        // Token refresh handled inside verifyAndGrantCoins() — no need to refresh here
+      // Fast local idempotency check (SharedPrefs). The Firestore ledger doc is
+      // the authoritative idempotency key; this is a cheap early-out that also
+      // lets us finish consume/complete for an already-granted purchase so it
+      // does not remain stuck in Google Play.
+      final alreadyProcessed =
+          await CoinsRepo.isPurchaseProcessed(productId, purchaseToken);
+      if (alreadyProcessed) {
         if (kDebugMode) {
-          debugPrint('[IAP] server_verify_attempt productId=$productId');
+          debugPrint('[IAP] alreadyGranted=true productId=$productId '
+              'tokenHash=$tokenHashShort — finishing consume/complete only');
         }
-        final result = await _verificationService.verifyAndGrantCoins(
-          uid: user.uid,
-          productId: productId,
-          purchaseToken: purchaseToken,
-          orderId: orderId,
-          packageName: 'com.xoarena.neonclash',
-        );
-
-        // FREE CLIENT-SIDE FALLBACK (no Blaze / no Cloud Functions).
-        //
-        // When `verifyGooglePlayPurchase` is not deployed (Spark/free plan) the
-        // callable returns NOT_FOUND / UNAVAILABLE. The verification service maps
-        // those to functionsUnavailable=true. Rather than failing a REAL Google
-        // Play purchase (status == purchased), we grant the coins/avatar locally
-        // through a deterministic, idempotent Firestore transaction. Every record
-        // it writes is marked verified:false / trustedRevenue:false.
-        //
-        // SECURITY LIMITATION: this is NOT equivalent to server-side Google Play
-        // verification (Google Play Developer API / Cloud Functions). It trusts
-        // the in-memory purchase object from the billing client. Add backend
-        // verification later for production-grade, trusted revenue.
-        if (result['functionsUnavailable'] == true) {
-          if (kDebugMode) {
-            debugPrint(
-                '[IAP] server_verify_skipped_functions_not_available productId=$productId');
-          }
-          await _grantViaClientFallback(purchase);
-          return;
-        }
-
-        var ok = result['ok'] == true;
-        var coinsAdded = result['coinsAdded'] as int?;
-        // Support both new (balanceAfter/balanceBefore) and old (newBalance/previousBalance) field names
-        final newBalance =
-            (result['balanceAfter'] ?? result['newBalance']) as int?;
-        final message = result['message'] as String?;
-        final error = result['error'] as String?;
-        final productType = result['productType'] as String?;
-        final avatarId = result['avatarId'] as String?;
-        final serverIsAvatar = isAvatar || productType == 'avatar';
-        // Detect ALREADY_PROCESSED from both old format (ok:true, alreadyProcessed:true)
-        // and new format (ok:false, error:'ALREADY_PROCESSED')
-        final serverAlreadyProcessed = result['alreadyProcessed'] == true ||
-            result['error'] == 'ALREADY_PROCESSED';
-
-        // Handle ALREADY_PROCESSED: server confirmed purchase was already granted
-        // This is NOT an error — just a duplicate request. Skip local fallback.
-        if (serverAlreadyProcessed) {
-          if (kDebugMode) {
-            debugPrint(
-                '[IAP] Server says already processed for $productId — skipping local fallback');
-          }
-          try {
-            await PurchaseOrdersLogger.instance.logAlreadyProcessed(purchase);
-          } catch (_) {}
-          // Mark as processed locally to stay in sync
-          await CoinsRepo.markPurchaseProcessed(productId, purchaseToken);
-          if (serverIsAvatar) {
-            await PremiumAvatarService.instance
-                .markOwnedLocally(CoinsCatalog.avatarIdForProductId(productId));
-          }
-
-          // Complete purchase to allow future purchases
-          if (purchase.pendingCompletePurchase) {
-            try {
-              await _iap.completePurchase(purchase);
-            } catch (e) {
-              if (kDebugMode) {
-                debugPrint(
-                    '[IAP] Error completing already-processed purchase (non-fatal): $e');
-              }
-            }
-          }
-
-          _coinGrantController.add(PurchaseGrantResult(
-            ok: true,
-            coinsAdded: 0,
-            newBalance: newBalance,
-            message: message ??
-                (serverIsAvatar
-                    ? 'Premium avatar already owned.'
-                    : 'Purchase already processed'),
-            productId: productId,
-            productType: serverIsAvatar
-                ? PurchaseProductType.avatar
-                : PurchaseProductType.coins,
-            avatarId: serverIsAvatar
-                ? (avatarId ??
-                    CoinsCatalog.entitlementForProductId(productId) ??
-                    CoinsCatalog.premiumAvatarEntitlement)
-                : null,
-          ));
-          return;
-        }
-
-        // Instant balance update from server response (Firestore listener will also sync)
-        if (ok && newBalance != null) {
-          LocalStore.setCoins(newBalance);
-        }
-
-        // Server verification is authoritative. Do not grant locally when the
-        // Cloud Function rejects or cannot verify the purchase; otherwise a
-        // NOT_FOUND/failed-precondition response can unlock paid products.
-        if (!ok) {
-          if (kDebugMode) {
-            debugPrint(
-                '[IAP] Server verification failed. Purchase was not granted.');
-          }
-        } else if (serverIsAvatar) {
-          // Server granted the avatar — sync local ownership immediately so the
-          // shop card hides without waiting for the Firestore listener.
+        try {
+          await PurchaseOrdersLogger.instance.logAlreadyProcessed(purchase);
+        } catch (_) {}
+        await _finishConsumeAndComplete(purchase, isAvatar: isAvatar);
+        // Re-assert local entitlement so the shop card hides on cold start.
+        if (isAvatar) {
           await PremiumAvatarService.instance
               .markOwnedLocally(CoinsCatalog.avatarIdForProductId(productId));
         }
-
-        // Mirror the CF outcome into purchase_orders so admins see the final
-        // balance/avatar state. Always verified:false — the mirror does not
-        // claim revenue trust.
-        try {
-          await PurchaseOrdersLogger.instance.logCfMirror(
-            p: purchase,
-            ok: ok,
-            coinsAdded: coinsAdded,
-            balanceAfter: newBalance,
-            avatarId: serverIsAvatar
-                ? (avatarId ??
-                    CoinsCatalog.entitlementForProductId(productId) ??
-                    CoinsCatalog.premiumAvatarEntitlement)
-                : null,
-            error: ok ? null : error,
-          );
-        } catch (e) {
-          if (kDebugMode) debugPrint('[IAP_LOG] logCfMirror error: $e');
-        }
-
-        // 3) Consume AFTER grant (coins only — never avatars).
-        // If this fails, consumePendingPurchases() will pick it up on next launch
-        // and consume without re-granting (already marked processed).
-        if (Platform.isAndroid && !isAvatar && ok) {
-          try {
-            final androidAddition = _iap
-                .getPlatformAddition<InAppPurchaseAndroidPlatformAddition>();
-            await androidAddition.consumePurchase(purchase);
-          } catch (e) {
-            if (kDebugMode) {
-              debugPrint('[IAP] Error consuming after grant (non-fatal): $e');
-            }
-          }
-        }
-
-        // 4) completePurchase
-        if (ok && purchase.pendingCompletePurchase) {
-          try {
-            await _iap.completePurchase(purchase);
-          } catch (e) {
-            if (kDebugMode) {
-              debugPrint('[IAP] Error completing purchase (non-fatal): $e');
-            }
-          }
-        }
-
-        // 4) Increment purchase count for limit tracking
-        if (ok && coinsAdded != null && coinsAdded > 0) {
-          try {
-            await CoinsRepo.incrementPurchaseCount(productId);
-          } catch (_) {}
-        }
-
-        // 4b) Audit log
-        if (ok) {
-          if (serverIsAvatar) {
-            AuditService.log('avatar_purchase_completed', {
-              'productId': productId,
-              'avatarId': avatarId ??
-                  CoinsCatalog.entitlementForProductId(productId) ??
-                  CoinsCatalog.premiumAvatarEntitlement,
-              'orderId': orderId ?? 'unknown',
-            });
-          } else if (coinsAdded != null && coinsAdded > 0) {
-            AuditService.log('purchase_completed', {
-              'productId': productId,
-              'coinsAdded': coinsAdded,
-              'orderId': orderId ?? 'unknown',
-            });
-          }
-        }
-
-        // 5) Record purchase history
-        if (ok && serverIsAvatar) {
-          await LocalStore.addTopupHistory(
-            usd: 0.0,
-            coins: 0,
-            type: 'avatar',
-            source: 'avatar_purchase',
-            description: 'Premium Arena Avatar',
-            transactionId: orderId ?? purchaseToken,
-          );
-        } else if (ok && coinsAdded != null && coinsAdded > 0) {
-          final serverPreviousBalance =
-              (result['balanceBefore'] ?? result['previousBalance']) as int?;
-          final serverBalanceAfter =
-              (result['balanceAfter'] ?? result['newBalance']) as int?;
-          await LocalStore.addTopupHistory(
-            usd: 0.0,
-            coins: coinsAdded,
-            type: 'recharge',
-            source: 'iap_purchase',
-            description: 'Coin Purchase',
-            transactionId: orderId,
-            balanceBefore: serverPreviousBalance,
-            balanceAfter: serverBalanceAfter,
-          );
-        }
-
-        // 6) Emit event to UI + release billing lock
         _billingFlowActive = false;
         _coinGrantController.add(PurchaseGrantResult(
-          ok: ok,
-          coinsAdded: coinsAdded,
-          newBalance: newBalance,
-          message: message,
-          error: ok ? null : (error ?? 'Verification failed'),
+          ok: true,
+          coinsAdded: 0,
+          message: isAvatar
+              ? 'Premium avatar already owned.'
+              : 'Purchase already processed',
           productId: productId,
-          productType: serverIsAvatar
+          productType: isAvatar
               ? PurchaseProductType.avatar
               : PurchaseProductType.coins,
-          avatarId: serverIsAvatar
-              ? (avatarId ??
-                  CoinsCatalog.entitlementForProductId(productId) ??
+          avatarId: isAvatar
+              ? (CoinsCatalog.entitlementForProductId(productId) ??
                   CoinsCatalog.premiumAvatarEntitlement)
               : null,
         ));
-      } finally {
-        // Always remove dedup key when done
-        _pendingVerifications.remove(dedupKey);
+        return;
       }
+
+      // Must be signed in to credit a wallet / write the ledger.
+      if (FirebaseAuth.instance.currentUser == null) {
+        if (kDebugMode) {
+          debugPrint('[IAP] grant_blocked_no_user productId=$productId');
+        }
+        _coinGrantController.add(PurchaseGrantResult(
+          ok: false,
+          error: 'Please sign in to receive your purchase.',
+          productId: productId,
+        ));
+        return;
+      }
+
+      // Google Play Client Only grant. NO Cloud Functions, NO Google Play
+      // Developer API. Grant + consume + complete all happen inside here, in the
+      // safety-critical order (grant → consume → complete).
+      await _grantViaClientFallback(purchase);
     } catch (e) {
       if (kDebugMode) {
         debugPrint('[IAP] Unexpected error in _processPurchased: $e');
@@ -945,18 +691,58 @@ class IapCoinsService {
         error: 'Unexpected error: $e',
         productId: productId,
       ));
+    } finally {
+      // Always remove the dedup key when done.
+      _pendingVerifications.remove(dedupKey);
     }
   }
 
-  /// Free client-side grant path used when Cloud Functions are not deployed.
+  /// Finish an already-granted purchase without granting again: consume
+  /// consumables (Android) and completePurchase if still pending. Safe to call
+  /// for already-processed purchases so they don't stay stuck in Google Play.
+  Future<void> _finishConsumeAndComplete(PurchaseDetails purchase,
+      {required bool isAvatar}) async {
+    // Coins are consumable → consume so the pack can be bought again.
+    // Avatars are non-consumable → acknowledge only, never consume.
+    if (Platform.isAndroid && !isAvatar) {
+      try {
+        final androidAddition =
+            _iap.getPlatformAddition<InAppPurchaseAndroidPlatformAddition>();
+        await androidAddition.consumePurchase(purchase);
+        if (kDebugMode) debugPrint('[IAP] consume success (already-granted)');
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint('[IAP] consume failure (already-granted, non-fatal): $e');
+        }
+      }
+    }
+    if (purchase.pendingCompletePurchase) {
+      try {
+        await _iap.completePurchase(purchase);
+        if (kDebugMode) {
+          debugPrint('[IAP] completePurchase success (already-granted)');
+        }
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint(
+              '[IAP] completePurchase failure (already-granted, non-fatal): $e');
+        }
+      }
+    }
+  }
+
+  /// Google Play Client Only grant path (no Cloud Functions, no Google Play
+  /// Developer API).
   ///
   /// Coins are granted ONLY for a real Google Play purchase object that already
-  /// reached this point with [PurchaseStatus.purchased] (validated, known
-  /// product). The grant itself is performed inside a deterministic, idempotent
-  /// Firestore transaction (see [PurchaseOrdersLogger.grantCoinsClientFallback]
-  /// / [PurchaseOrdersLogger.unlockAvatarClientFallback]) keyed by a
-  /// deterministic transactionId so repeated stream emits / app restarts can
-  /// never double-grant.
+  /// reached this point with [PurchaseStatus.purchased] (validated productId,
+  /// non-empty purchaseToken). The grant itself is performed inside a
+  /// deterministic, idempotent Firestore transaction (see
+  /// [PurchaseOrdersLogger.grantCoinsClientFallback] /
+  /// [PurchaseOrdersLogger.unlockAvatarClientFallback]) keyed by the SHA-256 of
+  /// the purchaseToken so repeated stream emits / app restarts can never
+  /// double-grant, while a NEW purchaseToken (a fresh purchase of the same pack)
+  /// always grants again.
   ///
   /// Order of operations is safety-critical:
   ///   1. Grant atomically in Firestore (throws on real failure).
@@ -964,17 +750,18 @@ class IapCoinsService {
   /// If the grant throws we DO NOT consume/complete — Google Play re-delivers
   /// the purchase and we retry on the next launch.
   ///
-  /// SECURITY LIMITATION: client-side fallback only. Not equivalent to
+  /// SECURITY LIMITATION: Google Play client-only fulfillment. NOT equivalent to
   /// server-side Google Play verification. All records are verified:false /
   /// trustedRevenue:false until backend verification is added.
   Future<void> _grantViaClientFallback(PurchaseDetails purchase) async {
     final productId = purchase.productID;
     final isAvatar = CoinsCatalog.isAvatarProduct(productId);
     final purchaseToken = purchase.verificationData.serverVerificationData;
+    final tokenHashShort = _shortTokenHash(purchaseToken);
 
     if (kDebugMode) {
-      debugPrint('[IAP] client_fallback_start productId=$productId '
-          'type=${isAvatar ? 'avatar' : 'coins'}');
+      debugPrint('[IAP] client_only_grant_start productId=$productId '
+          'type=${isAvatar ? 'avatar' : 'coins'} tokenHash=$tokenHashShort');
     }
 
     try {
@@ -1034,9 +821,10 @@ class IapCoinsService {
           .grantCoinsClientFallback(purchase: purchase, coinsToGrant: coins);
 
       if (kDebugMode) {
-        debugPrint(granted
-            ? '[IAP] client_fallback_granted productId=$productId coins=$coins'
-            : '[IAP] duplicate_purchase_ignored productId=$productId');
+        debugPrint('[IAP] client_only_grant_result productId=$productId '
+            'tokenHash=$tokenHashShort '
+            'alreadyGranted=${!granted} '
+            'coinsGranted=${granted ? coins : 0}');
       }
 
       // Mark processed locally as an extra (non-authoritative) guard. The
@@ -1052,10 +840,10 @@ class IapCoinsService {
           final androidAddition =
               _iap.getPlatformAddition<InAppPurchaseAndroidPlatformAddition>();
           await androidAddition.consumePurchase(purchase);
-          if (kDebugMode) debugPrint('[IAP] consume_complete');
+          if (kDebugMode) debugPrint('[IAP] consume success productId=$productId');
         } catch (e) {
           if (kDebugMode) {
-            debugPrint('[IAP] Error consuming after fallback grant (non-fatal): $e');
+            debugPrint('[IAP] consume failure (non-fatal) productId=$productId: $e');
           }
         }
       }
@@ -1063,13 +851,15 @@ class IapCoinsService {
       if (purchase.pendingCompletePurchase) {
         try {
           await _iap.completePurchase(purchase);
+          if (kDebugMode) {
+            debugPrint('[IAP] completePurchase success productId=$productId');
+          }
         } catch (e) {
           if (kDebugMode) {
-            debugPrint('[IAP] Error completing purchase (non-fatal): $e');
+            debugPrint('[IAP] completePurchase failure (non-fatal) productId=$productId: $e');
           }
         }
       }
-      if (kDebugMode) debugPrint('[IAP] complete_purchase_done');
 
       if (granted) {
         // NOTE: do NOT call LocalStore.addTopupHistory here — the canonical,

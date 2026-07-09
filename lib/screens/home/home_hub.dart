@@ -31,7 +31,6 @@ import '../../services/referral/pending_referral_reward_service.dart';
 import '../../services/session_service.dart';
 import '../../services/sound_service.dart';
 import '../../services/user_repo.dart';
-import '../../screens/login_screen.dart';
 import '../../screens/games/setup_page.dart';
 import '../../screens/games/friend_setup_page.dart';
 import '../../screens/games/level_game_setup_page.dart';
@@ -84,6 +83,14 @@ class _HomeHubState extends State<HomeHub>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     AuditService.log('app_open');
+
+    // Offline-first: a signed-in user must never inherit a guest's offline
+    // character portrait. Clear it on mount; guests keep theirs (seeded at
+    // startup / during offline setup). The disconnect-based offline mode sets
+    // this notifier without remounting HomeHub, so it is unaffected.
+    if (!_isGuest) {
+      LocalStore.offlineAvatarAssetNotifier.value = null;
+    }
 
     // Register the listener-cancel hook so LocalStore.restartIntoOfflineMode()
     // can cancel Firestore/session streams without holding a HomeHub reference.
@@ -326,8 +333,12 @@ class _HomeHubState extends State<HomeHub>
   Future<void> _checkNewUserOnboarding() async {
     if (!_isGuest) return; // only for guests
     final prefs = await SharedPreferences.getInstance();
+    // Offline-first: the setup screen already collected name + character, so
+    // never show the legacy in-home onboarding name prompt again.
+    final offlineProfileExists =
+        prefs.getBool(Keys.offlineProfileExists) ?? false;
     final done = prefs.getBool(Keys.hasCompletedFirstEntry) ?? false;
-    if (done || !mounted) return;
+    if (offlineProfileExists || done || !mounted) return;
     await prefs.setBool(Keys.hasCompletedFirstEntry, true);
     if (!mounted) return;
     _showOnboardingSheet();
@@ -1303,6 +1314,9 @@ class _HomeHubState extends State<HomeHub>
   }
 
   Future<void> _openHomeCoinsStore() async {
+    // Store / coins are browsable by guests. The purchase actions inside
+    // (StorePage / coins_screen) still guard on FirebaseAuth before starting
+    // any Google Play Billing, so guests can look but not buy.
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => const StorePage(initialTab: 2),
@@ -1312,18 +1326,9 @@ class _HomeHubState extends State<HomeHub>
   }
 
   Future<void> _handleHomeProfileTap() async {
-    if (_isGuest) {
-      await Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => const LoginScreen(),
-        ),
-      );
-      await _refresh();
-      return;
-    }
-
-    // Arena tab removed from bottom nav — Online Friends opens ArenaPage
-    // via the Home card instead. Settings is always at index 2.
+    // Offline-first: tapping the profile never forces login. Guests and
+    // signed-in users alike open the local Settings tab (index 2), which is
+    // already guest-safe (reachable from the bottom nav).
     const settingsIndex = 2;
     if (_currentTab != settingsIndex) {
       setState(() {
@@ -1815,6 +1820,11 @@ class _HomeHubState extends State<HomeHub>
         accent: AppPalette.homeGold,
         accentSecondary: AppPalette.homePink,
         onTap: () async {
+          // Online Arena requires sign-in. Offline users get the login prompt.
+          if (_isGuest) {
+            showSignInRequiredDialog(context);
+            return;
+          }
           await Navigator.of(context).push(_fadeRoute(const ArenaPage()));
           _refresh();
           unawaited(_onGameReturned());
@@ -1981,6 +1991,8 @@ class _HomeHubState extends State<HomeHub>
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onTap: () {
+                  // All tabs (incl. Store) are browsable by guests; purchases
+                  // inside the Store remain gated by their own auth checks.
                   if (_currentTab != i) {
                     setState(() {
                       _currentTab = i;
