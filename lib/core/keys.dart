@@ -118,4 +118,11 @@ class Keys {
 
   /// Daily reminder toggle state (Settings → Daily Reminders).
   static const notificationsEnabled = 'notifications_enabled';
+
+  /// Missions/Quests system — local-only progress + claim state.
+  static const missionsProgress = 'missions_progress';      // JSON map id->int
+  static const missionsClaimed = 'missions_claimed';        // JSON map (id | id#tier)->bool
+  static const missionsLastDaily = 'missions_last_daily';   // yyyy-MM-dd
+  static const missionsWeekId = 'missions_week_id';         // Monday-of-week yyyy-MM-dd
+  static const missionsDedupe = 'missions_dedupe';          // JSON list of eventKey|matchId (today)
 }

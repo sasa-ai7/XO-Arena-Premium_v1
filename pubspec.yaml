@@ -75,6 +75,8 @@ flutter:
     - assets/x/
     - assets/o/
     - assets/account/
+    - assets/moh.png
+    - assets/shop.png
 
   fonts:
     - family: Inter

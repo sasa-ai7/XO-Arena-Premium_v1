@@ -13,6 +13,7 @@ import '../screens/login_screen.dart';
 import '../screens/offline_player_setup_screen.dart';
 import '../screens/welcome_screen.dart';
 import '../services/local_store.dart';
+import '../services/mission_service.dart';
 import '../widgets/full_avatar_display.dart';
 
 Future<String>? _startupRouteFuture;
@@ -53,6 +54,9 @@ Future<void> _warmStartupServices() async {
     await Future.wait<void>([
       LocalStore.initCoinsNotifier(),
       LocalStore.initProfileNotifier(),
+      // Arms daily_login + runs daily/weekly resets so the Missions badge is
+      // correct on the first Home frame. Local-only; never credits coins.
+      MissionService.instance.init(),
     ]);
   } catch (error, stackTrace) {
     if (kDebugMode) {

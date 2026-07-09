@@ -34,4 +34,7 @@ class LedgerType {
 
   /// Per-game reward (local games).
   static const String gameReward = 'game_reward';
+
+  /// Daily/weekly mission reward — credited only on manual claim.
+  static const String missionReward = 'mission_reward';
 }
