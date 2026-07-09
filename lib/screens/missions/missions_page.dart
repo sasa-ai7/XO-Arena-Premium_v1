@@ -80,8 +80,7 @@ class _MissionsPageState extends State<MissionsPage> {
               errorBuilder: (_, __, ___) => Icon(Icons.assignment_rounded,
                   color: AppPalette.homeCyan, size: 28)),
           const SizedBox(width: 10),
-          Text(l10n.missionsTitle,
-              style: homeTitleFont(context, fontSize: 22)),
+          Text(l10n.missionsTitle, style: homeTitleFont(context, fontSize: 22)),
         ],
       ),
     );

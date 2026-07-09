@@ -154,7 +154,8 @@ class MissionBadge extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppPalette.danger,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.85), width: 1.5),
+        border:
+            Border.all(color: Colors.white.withValues(alpha: 0.85), width: 1.5),
         boxShadow: [
           BoxShadow(
             color: AppPalette.danger.withValues(alpha: 0.55),
@@ -179,7 +180,8 @@ class MissionBadge extends StatelessWidget {
 class MissionProgressBar extends StatelessWidget {
   final double value; // 0..1
   final Color color;
-  const MissionProgressBar({super.key, required this.value, required this.color});
+  const MissionProgressBar(
+      {super.key, required this.value, required this.color});
 
   @override
   Widget build(BuildContext context) {
@@ -463,7 +465,8 @@ class _TierChip extends StatelessWidget {
                 style: safeOrbitron(
                     fontSize: 12,
                     fontWeight: FontWeight.w800,
-                    color: reached ? AppPalette.homeTitle : AppPalette.textMuted)),
+                    color:
+                        reached ? AppPalette.homeTitle : AppPalette.textMuted)),
             const SizedBox(height: 3),
             FittedBox(
               child: Row(
@@ -491,7 +494,8 @@ class _TierChip extends StatelessWidget {
                       color: AppPalette.gold))
             else
               Icon(Icons.lock_outline,
-                  size: 13, color: AppPalette.textSubtle.withValues(alpha: 0.7)),
+                  size: 13,
+                  color: AppPalette.textSubtle.withValues(alpha: 0.7)),
           ],
         ),
       ),

@@ -141,7 +141,9 @@ class MissionService {
       final int reward;
       final String claimedKey;
       if (def.isWeekly) {
-        if (tierIndex == null || tierIndex < 0 || tierIndex >= def.tiers.length) {
+        if (tierIndex == null ||
+            tierIndex < 0 ||
+            tierIndex >= def.tiers.length) {
           return ClaimResult.error;
         }
         target = def.tiers[tierIndex].target;
@@ -247,8 +249,7 @@ class MissionService {
     return best;
   }
 
-  bool allDailyDone() =>
-      dailyViews().every((v) => v.progress >= v.def.target);
+  bool allDailyDone() => dailyViews().every((v) => v.progress >= v.def.target);
   bool allWeeklyDone() =>
       weeklyViews().every((v) => v.progress >= v.def.topTarget);
 
@@ -269,8 +270,8 @@ class MissionService {
   /// Time until the next weekly reset (next Monday 00:00).
   Duration untilWeeklyReset() {
     final now = DateTime.now();
-    final startOfWeek =
-        DateTime(now.year, now.month, now.day).subtract(Duration(days: now.weekday - 1));
+    final startOfWeek = DateTime(now.year, now.month, now.day)
+        .subtract(Duration(days: now.weekday - 1));
     final nextWeek = startOfWeek.add(const Duration(days: 7));
     return nextWeek.difference(now);
   }
@@ -314,8 +315,8 @@ class MissionService {
   /// Monday-of-current-week date, used as the weekly bucket id.
   static String weekKey() {
     final now = DateTime.now();
-    final monday =
-        DateTime(now.year, now.month, now.day).subtract(Duration(days: now.weekday - 1));
+    final monday = DateTime(now.year, now.month, now.day)
+        .subtract(Duration(days: now.weekday - 1));
     return '${monday.year.toString().padLeft(4, '0')}-'
         '${monday.month.toString().padLeft(2, '0')}-'
         '${monday.day.toString().padLeft(2, '0')}';
@@ -324,7 +325,8 @@ class MissionService {
   Map<String, int> _decodeIntMap(String? s) {
     if (s == null || s.isEmpty) return {};
     try {
-      return (jsonDecode(s) as Map).map((k, v) => MapEntry(k as String, (v as num).toInt()));
+      return (jsonDecode(s) as Map)
+          .map((k, v) => MapEntry(k as String, (v as num).toInt()));
     } catch (_) {
       return {};
     }
@@ -333,7 +335,8 @@ class MissionService {
   Map<String, bool> _decodeBoolMap(String? s) {
     if (s == null || s.isEmpty) return {};
     try {
-      return (jsonDecode(s) as Map).map((k, v) => MapEntry(k as String, v == true));
+      return (jsonDecode(s) as Map)
+          .map((k, v) => MapEntry(k as String, v == true));
     } catch (_) {
       return {};
     }

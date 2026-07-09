@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:math';
 import 'dart:ui';
 
-import 'package:intl/intl.dart';
+import 'package:intl/intl.dart' hide TextDirection;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -15,7 +15,6 @@ import '../../core/app_l10n.dart';
 import '../../core/app_theme.dart';
 import '../../core/coin_format.dart';
 import '../../core/keys.dart';
-import '../../core/responsive_metrics.dart';
 import '../../models/game_avatar.dart';
 import '../../models/offline_profile.dart';
 import '../../services/app_mode_service.dart';
@@ -39,6 +38,9 @@ import '../../screens/arena/arena_page.dart';
 import '../../screens/arena/widgets/active_room_resume_dialog.dart';
 import '../../screens/store/store_page.dart';
 import '../../screens/settings/settings_page.dart';
+import '../missions/missions_page.dart';
+import '../missions/mission_widgets.dart';
+import '../../services/mission_service.dart';
 import '../../core/app_config.dart';
 import '../../utils/navigation_utils.dart';
 import '../../widgets/app_ui.dart';
@@ -62,10 +64,8 @@ class _HomeHubState extends State<HomeHub>
   bool _isReconnecting = false;
   bool _isDisconnecting = false;
   bool _globalResumeChecked = false;
-  int _currentTab = 0;
   OfflinePlayerProfile? _offlineProfile;
-  // Tracks which tabs have been visited so their widgets are built lazily
-  final _visitedTabs = <int>{0};
+  String _playerName = '';
   StreamSubscription? _authSub;
   StreamSubscription? _sessionSub;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _firestoreSub;
@@ -273,7 +273,8 @@ class _HomeHubState extends State<HomeHub>
     // Hard guard: never start Billing until the app is stably online.
     if (!AppModeService.canUseOnlineServices) {
       if (kDebugMode) {
-        debugPrint('[IAP] skipped because app is not safely online (mode=${AppModeService.current})');
+        debugPrint(
+            '[IAP] skipped because app is not safely online (mode=${AppModeService.current})');
       }
       return;
     }
@@ -310,7 +311,8 @@ class _HomeHubState extends State<HomeHub>
       if (!mounted || _iapInitialized) return;
       if (!AppModeService.canUseOnlineServices) {
         if (kDebugMode) {
-          debugPrint('[IAP] delayed until stable online (mode=${AppModeService.current})');
+          debugPrint(
+              '[IAP] delayed until stable online (mode=${AppModeService.current})');
         }
         return;
       }
@@ -330,6 +332,7 @@ class _HomeHubState extends State<HomeHub>
         tryNow();
       }
     }
+
     AppModeService.modeNotifier.addListener(listener);
   }
 
@@ -384,8 +387,8 @@ class _HomeHubState extends State<HomeHub>
     if (!AppConfig.kEnableReferralRewards) return;
     if (!AppModeService.canUseOnlineServices) return;
     try {
-      final rewards =
-          await PendingReferralRewardService.instance.fetchUnseenForCurrentUser();
+      final rewards = await PendingReferralRewardService.instance
+          .fetchUnseenForCurrentUser();
       if (kDebugMode) {
         debugPrint('[REFERRAL_REWARD] pending_found '
             'uid=${FirebaseAuth.instance.currentUser?.uid} '
@@ -398,8 +401,10 @@ class _HomeHubState extends State<HomeHub>
       try {
         final uid = FirebaseAuth.instance.currentUser?.uid;
         if (uid != null) {
-          final snap =
-              await FirebaseFirestore.instance.collection('users').doc(uid).get();
+          final snap = await FirebaseFirestore.instance
+              .collection('users')
+              .doc(uid)
+              .get();
           final referral = (snap.data() ?? const {})['Referral'];
           if (referral is Map) {
             final count =
@@ -642,7 +647,8 @@ class _HomeHubState extends State<HomeHub>
     // /failure decision.
     if (AppModeService.isReconnecting) {
       if (kDebugMode) {
-        debugPrint('[RECONNECT] stale connectivity event ignored — reconnect token active');
+        debugPrint(
+            '[RECONNECT] stale connectivity event ignored — reconnect token active');
       }
       return;
     }
@@ -689,7 +695,8 @@ class _HomeHubState extends State<HomeHub>
     if (mounted) setState(() => _isDisconnecting = true);
     AppModeService.setMode(AppMode.connectionProblem);
     if (kDebugMode) {
-      debugPrint('[NETWORK] entering weak connection (no silent offline switch)');
+      debugPrint(
+          '[NETWORK] entering weak connection (no silent offline switch)');
     }
 
     // Cancel all online listeners immediately. The Firestore SDK network is
@@ -719,8 +726,10 @@ class _HomeHubState extends State<HomeHub>
     // ── Special case: reconnected while a match overlay was active ────────────
     if (AppModeService.current == AppMode.connectionLostDuringOnlineMatch) {
       if (kDebugMode) {
-        debugPrint('[RECONNECT] connection restored during paused online match');
-        debugPrint('[RECONNECT] match resume allowed=false — returning to online home');
+        debugPrint(
+            '[RECONNECT] connection restored during paused online match');
+        debugPrint(
+            '[RECONNECT] match resume allowed=false — returning to online home');
       }
       // Run the controlled reconnect dance: enable network → pull → listeners
       // → AppMode.online. Done under a reconnect token so any stale
@@ -735,7 +744,8 @@ class _HomeHubState extends State<HomeHub>
     // button calls [_runConfirmedGoOnline] via AppModeService.
     if (AppModeService.current == AppMode.offline) {
       if (kDebugMode) {
-        debugPrint('[ONLINE_SWITCH] connection back while offline — asking user');
+        debugPrint(
+            '[ONLINE_SWITCH] connection back while offline — asking user');
       }
       AppModeService.pendingOnlineSwitch.value = true;
       return;
@@ -779,7 +789,8 @@ class _HomeHubState extends State<HomeHub>
       final user = FirebaseAuth.instance.currentUser;
       if (user == null || user.uid.isEmpty) {
         if (kDebugMode) {
-          debugPrint('[RECONNECT] attemptId=$token aborted — no authenticated user');
+          debugPrint(
+              '[RECONNECT] attemptId=$token aborted — no authenticated user');
         }
         AppModeService.setMode(AppMode.connectionProblem);
         if (mounted) setState(() => _isReconnecting = false);
@@ -819,14 +830,16 @@ class _HomeHubState extends State<HomeHub>
       final stillSignedIn = FirebaseAuth.instance.currentUser;
       if (stillSignedIn == null || stillSignedIn.uid.isEmpty) {
         if (kDebugMode) {
-          debugPrint('[RECONNECT] attemptId=$token aborted — user signed out during health check');
+          debugPrint(
+              '[RECONNECT] attemptId=$token aborted — user signed out during health check');
         }
         AppModeService.setMode(AppMode.connectionProblem);
         if (mounted) setState(() => _isReconnecting = false);
         return;
       }
       if (kDebugMode) {
-        debugPrint('[RECONNECT] attemptId=$token auth user verified uid=${stillSignedIn.uid}');
+        debugPrint(
+            '[RECONNECT] attemptId=$token auth user verified uid=${stillSignedIn.uid}');
       }
 
       // Step 5 — pull server state.
@@ -835,12 +848,14 @@ class _HomeHubState extends State<HomeHub>
         pulled = await UserRepo().pullServerToLocal(stillSignedIn.uid);
       } catch (e) {
         if (kDebugMode) {
-          debugPrint('[RECONNECT] attemptId=$token pullServerToLocal failed: $e');
+          debugPrint(
+              '[RECONNECT] attemptId=$token pullServerToLocal failed: $e');
         }
       }
       if (!pulled) {
         if (kDebugMode) {
-          debugPrint('[RECONNECT] attemptId=$token pullServerToLocal returned false — aborting');
+          debugPrint(
+              '[RECONNECT] attemptId=$token pullServerToLocal returned false — aborting');
         }
         AppModeService.setMode(AppMode.connectionProblem);
         if (mounted) setState(() => _isReconnecting = false);
@@ -871,7 +886,8 @@ class _HomeHubState extends State<HomeHub>
       }
 
       if (kDebugMode) {
-        debugPrint('[RECONNECT] attemptId=$token online account restored for uid=${stillSignedIn.uid} (reason=$reason)');
+        debugPrint(
+            '[RECONNECT] attemptId=$token online account restored for uid=${stillSignedIn.uid} (reason=$reason)');
       }
     });
   }
@@ -889,7 +905,8 @@ class _HomeHubState extends State<HomeHub>
     // WatchStream / WriteStream retry spam in the logs.
     if (!AppModeService.canUseOnlineServices) {
       if (kDebugMode) {
-        debugPrint('[FIRESTORE] blocked listener mode=${AppModeService.current}');
+        debugPrint(
+            '[FIRESTORE] blocked listener mode=${AppModeService.current}');
       }
       return;
     }
@@ -966,7 +983,9 @@ class _HomeHubState extends State<HomeHub>
             final ownedAvatarsRaw = cosmetics['ownedAvatars'];
             final ownedAvatarsList = (ownedAvatarsRaw is List)
                 ? ownedAvatarsRaw
-                    .map((e) => (e is num) ? e.toInt() : int.tryParse(e.toString()) ?? 0)
+                    .map((e) => (e is num)
+                        ? e.toInt()
+                        : int.tryParse(e.toString()) ?? 0)
                     .where((e) => e > 0)
                     .toSet()
                     .toList()
@@ -1002,8 +1021,7 @@ class _HomeHubState extends State<HomeHub>
                   Keys.ownedOColors, ownedO.map((e) => e.toString()).join(','));
             }
             // Always write owned avatars (empty string when none owned).
-            await p.setString(
-                Keys.ownedAvatars, ownedAvatarsList.join(','));
+            await p.setString(Keys.ownedAvatars, ownedAvatarsList.join(','));
             if (customXConf is String) {
               await p.setString(Keys.customXConfigs, customXConf);
             }
@@ -1031,9 +1049,12 @@ class _HomeHubState extends State<HomeHub>
           // Sync profile photo URL
           final firestorePhoto = profile?['photoURL'] as String?;
           final authPhoto = FirebaseAuth.instance.currentUser?.photoURL;
-          final profilePhotoUrl = (firestorePhoto != null && firestorePhoto.isNotEmpty)
-              ? firestorePhoto
-              : ((authPhoto != null && authPhoto.isNotEmpty) ? authPhoto : null);
+          final profilePhotoUrl =
+              (firestorePhoto != null && firestorePhoto.isNotEmpty)
+                  ? firestorePhoto
+                  : ((authPhoto != null && authPhoto.isNotEmpty)
+                      ? authPhoto
+                      : null);
           await LocalStore.setProfilePhotoUrl(profilePhotoUrl);
         } catch (e) {
           if (kDebugMode) {
@@ -1046,7 +1067,8 @@ class _HomeHubState extends State<HomeHub>
           // permission-denied after sign-out is expected — cancel silently
           _firestoreSub?.cancel();
           _firestoreSub = null;
-          if (kDebugMode) debugPrint('[HomeHub] Firestore stream closed (signed out)');
+          if (kDebugMode)
+            debugPrint('[HomeHub] Firestore stream closed (signed out)');
           return;
         }
         if (kDebugMode) debugPrint('[HomeHub] Firestore listener error: $e');
@@ -1117,7 +1139,8 @@ class _HomeHubState extends State<HomeHub>
     if (user == null) return; // Guest — no session to enforce
     if (!AppModeService.canUseOnlineServices) {
       if (kDebugMode) {
-        debugPrint('[FIRESTORE] blocked session listener mode=${AppModeService.current}');
+        debugPrint(
+            '[FIRESTORE] blocked session listener mode=${AppModeService.current}');
       }
       return;
     }
@@ -1316,9 +1339,13 @@ class _HomeHubState extends State<HomeHub>
     final p = await SharedPreferences.getInstance();
     if (!mounted) return;
     final nextPhoto = p.getString(Keys.profilePhotoUrl);
-    if (LocalStore.profilePhotoUrlNotifier.value != nextPhoto) {
+    final nextName = (_offline && _offlineProfile != null)
+        ? _offlineProfile!.name
+        : (p.getString(Keys.username) ?? '');
+    if (LocalStore.profilePhotoUrlNotifier.value != nextPhoto ||
+        _playerName != nextName) {
       LocalStore.profilePhotoUrlNotifier.value = nextPhoto;
-      setState(() {});
+      setState(() => _playerName = nextName);
     }
   }
 
@@ -1335,16 +1362,12 @@ class _HomeHubState extends State<HomeHub>
   }
 
   Future<void> _handleHomeProfileTap() async {
-    // Offline-first: tapping the profile never forces login. Guests and
-    // signed-in users alike open the local Settings tab (index 2), which is
-    // already guest-safe (reachable from the bottom nav).
-    const settingsIndex = 2;
-    if (_currentTab != settingsIndex) {
-      setState(() {
-        _currentTab = settingsIndex;
-        _visitedTabs.add(settingsIndex);
-      });
-    }
+    // Offline-first: tapping the avatar never forces login — opens the
+    // guest-safe Settings screen.
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const SettingsPage()),
+    );
+    await _refresh();
   }
 
   Widget _buildHomeCoinButton({
@@ -1417,6 +1440,25 @@ class _HomeHubState extends State<HomeHub>
                         color: AppPalette.homeTitle,
                       ),
                     ),
+                    SizedBox(width: compact ? 5 : 7),
+                    Container(
+                      width: landscape ? 20 : 22,
+                      height: landscape ? 20 : 22,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: const LinearGradient(
+                          colors: [AppPalette.goldHighlight, AppPalette.gold],
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppPalette.gold.withOpacity(0.4),
+                            blurRadius: 8,
+                          ),
+                        ],
+                      ),
+                      child: Icon(Icons.add_rounded,
+                          size: landscape ? 15 : 16, color: AppPalette.bgDepth),
+                    ),
                   ],
                 ),
               );
@@ -1451,7 +1493,8 @@ class _HomeHubState extends State<HomeHub>
                     // only. Never fall back to Avatar__1 (a paid item).
                     final avatar = gameAvatarByIdOrNull(avatarId);
                     if (kDebugMode && avatar == null) {
-                      debugPrint('[PROFILE] no equipped avatar — showing profile image only');
+                      debugPrint(
+                          '[PROFILE] no equipped avatar — showing profile image only');
                     }
                     return FullAvatarDisplay(
                       size: size,
@@ -1563,21 +1606,39 @@ class _HomeHubState extends State<HomeHub>
                 SizedBox(
                   width: centerWidth,
                   child: Center(
-                    child: IgnorePointer(
-                      child: _buildHomeIdentityPanel(
-                        compact: compact,
-                        landscape: landscape,
-                      ),
-                    ),
+                    child:
+                        ArenaLogo(height: landscape ? 46 : (compact ? 44 : 54)),
                   ),
                 ),
                 SizedBox(
                   width: sideSlotWidth,
                   child: Align(
-                    alignment: Alignment.centerRight,
-                    child: _buildHomeAvatarButton(
-                      size: avatarSize,
-                      compact: compact,
+                    alignment: Alignment.centerLeft,
+                    child: Directionality(
+                      textDirection: TextDirection.ltr,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _buildHomeAvatarButton(
+                            size: avatarSize,
+                            compact: compact,
+                          ),
+                          SizedBox(width: compact ? 5 : 7),
+                          Flexible(
+                            child: Text(
+                              _playerName.isEmpty
+                                  ? AppL10n.of(context).playerDefaultName
+                                  : _playerName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: homeBodyFont(context,
+                                  fontSize: compact ? 11 : 13,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppPalette.homeTitle),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
@@ -1586,158 +1647,6 @@ class _HomeHubState extends State<HomeHub>
           );
         },
       ),
-    );
-  }
-
-  Widget _buildHomeIdentityPanel({
-    bool compact = false,
-    bool landscape = false,
-  }) {
-    final xoSize = landscape ? 28.0 : (compact ? 34.0 : 40.0);
-    final arenaSize = landscape ? 14.0 : (compact ? 16.0 : 18.0);
-
-    final titleColumn = Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          'XO',
-          textAlign: TextAlign.center,
-          style: homeOrbitron(
-            fontSize: xoSize,
-            fontWeight: FontWeight.w900,
-            letterSpacing: landscape ? 1.8 : 2.4,
-            color: AppPalette.homeTitle,
-          ),
-        ),
-        SizedBox(height: compact ? 1 : 3),
-        Text(
-          'ARENA',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          textAlign: TextAlign.center,
-          style: brandFont(
-            context,
-            fontSize: arenaSize,
-          ).copyWith(
-            letterSpacing: landscape ? 2.2 : 3.0,
-            color: AppPalette.homeSky,
-          ),
-        ),
-      ],
-    );
-
-    final counterTile = AppGlassCard(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      backgroundColor: AppPalette.homePanel.withOpacity(0.86),
-      borderColor: AppPalette.homeStroke.withOpacity(0.30),
-      radius: 18,
-      boxShadow: [
-        BoxShadow(
-          color: Colors.black.withOpacity(0.24),
-          blurRadius: 18,
-          offset: const Offset(0, 10),
-        ),
-      ],
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            '4',
-            style: homeOrbitron(
-              fontSize: 16,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 0.6,
-              color: AppPalette.homeTitle,
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            'MODES',
-            style: homeLabelFont(
-              context,
-              fontSize: 6,
-              color: AppPalette.homeSky,
-            ),
-          ),
-        ],
-      ),
-    );
-
-    return FittedBox(
-      fit: BoxFit.scaleDown,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          titleColumn,
-          SizedBox(width: compact ? 8 : 12),
-          counterTile,
-        ],
-      ),
-    );
-  }
-
-  Widget _buildHomeSectionHeader() {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final l10n = AppL10n.of(context);
-        final compact = constraints.maxWidth < 360;
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(0, 0, 0, 4),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Text(
-                    l10n.selectMode,
-                    style: homeLabelFont(
-                      context,
-                      color: AppPalette.homeCyan,
-                    ),
-                  ),
-                  const Spacer(),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: AppPalette.homeCyan.withOpacity(0.10),
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(
-                          color: AppPalette.homeCyan.withOpacity(0.24)),
-                    ),
-                    child: Text(
-                      l10n.modesCount,
-                      style: homeLabelFont(
-                        context,
-                        fontSize: 7.5,
-                        color: AppPalette.homeCyan,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 4),
-              Text(
-                l10n.chooseYourArena,
-                style: homeTitleFont(
-                  context,
-                  fontSize: compact ? 22 : 24,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                l10n.arenaModesDesc,
-                style: homeBodyFont(
-                  context,
-                  fontSize: compact ? 11 : 12,
-                  color: AppPalette.homeMuted,
-                ),
-              ),
-            ],
-          ),
-        );
-      },
     );
   }
 
@@ -1752,23 +1661,17 @@ class _HomeHubState extends State<HomeHub>
               variant: AppBackgroundVariant.homeNeon,
               child: Column(
                 children: [
-                  if (_currentTab == 0) _buildHomeTopBar(),
-                  if (_offline && _currentTab == 0) _buildOfflineBanner(),
+                  _buildHomeTopBar(),
+                  if (_offline) _buildOfflineBanner(),
                   Expanded(
-                    child: IndexedStack(
-                      index: _currentTab,
-                      children: [
-                        _buildHomeContent(),
-                        _visitedTabs.contains(1)
-                            ? const StorePage(embedded: true)
-                            : const SizedBox.shrink(),
-                        _visitedTabs.contains(2)
-                            ? const SettingsPage(embedded: true)
-                            : const SizedBox.shrink(),
-                      ],
+                    child: FadeTransition(
+                      opacity: _cardFades[0],
+                      child: SlideTransition(
+                        position: _cardSlides[0],
+                        child: _buildHomeContent(),
+                      ),
                     ),
                   ),
-                  _buildBottomNav(),
                 ],
               ),
             ),
@@ -1796,291 +1699,436 @@ class _HomeHubState extends State<HomeHub>
     );
   }
 
+  // ── Mode navigation (shared by cards + featured card + CTA) ──────────────
+  Future<void> _openAi() async {
+    await Navigator.of(context).push(_fadeRoute(const SetupPage()));
+    _refresh();
+    unawaited(_onGameReturned());
+  }
+
+  Future<void> _openFriend() async {
+    await Navigator.of(context).push(_fadeRoute(const FriendSetupPage()));
+    _refresh();
+    unawaited(_onGameReturned());
+  }
+
+  Future<void> _openLevels() async {
+    await Navigator.of(context).push(_fadeRoute(const LevelGameSetupPage()));
+    _refresh();
+    unawaited(_onGameReturned());
+  }
+
+  Future<void> _openOnline() async {
+    // Online requires sign-in and is NEVER a random match — it opens the
+    // create/join Arena flow. Guests get the sign-in prompt.
+    if (_isGuest) {
+      showSignInRequiredDialog(context);
+      return;
+    }
+    await Navigator.of(context).push(_fadeRoute(const ArenaPage()));
+    _refresh();
+    unawaited(_onGameReturned());
+  }
+
+  void _openMissions() {
+    Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => const MissionsPage()));
+  }
+
+  Future<void> _openStore() async {
+    await Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => const StorePage()));
+    await _refresh();
+  }
+
   Widget _buildHomeContent() {
-    final l10n = AppL10n.of(context);
-    final modes = <HomeModeConfig>[
-      HomeModeConfig(
-        title: l10n.vsAiTitle,
-        subtitle: l10n.vsAiSubtitle,
-        badge: l10n.badgeAi,
-        assetPath: 'assets/game/ai.webp',
-        accent: AppPalette.homeCyan,
-        accentSecondary: AppPalette.homeBlue,
-        onTap: () async {
-          await Navigator.of(context).push(_fadeRoute(const SetupPage()));
-          _refresh();
-          unawaited(_onGameReturned());
-        },
-      ),
-      HomeModeConfig(
-        title: l10n.vsFriendTitle,
-        subtitle: l10n.vsFriendSubtitle,
-        badge: l10n.badgeHot,
-        assetPath: 'assets/game/friend.webp',
-        accent: AppPalette.homePurple,
-        accentSecondary: AppPalette.homePink,
-        onTap: () async {
-          await Navigator.of(context).push(_fadeRoute(const FriendSetupPage()));
-          _refresh();
-          unawaited(_onGameReturned());
-        },
-      ),
-      HomeModeConfig(
-        title: l10n.onlineFriendsTitle,
-        subtitle: l10n.onlineFriendsSubtitle,
-        badge: l10n.badgeMultiplayer,
-        assetPath: 'assets/game/online-money.webp',
-        accent: AppPalette.homeGold,
-        accentSecondary: AppPalette.homePink,
-        onTap: () async {
-          // Online Arena requires sign-in. Offline users get the login prompt.
-          if (_isGuest) {
-            showSignInRequiredDialog(context);
-            return;
-          }
-          await Navigator.of(context).push(_fadeRoute(const ArenaPage()));
-          _refresh();
-          unawaited(_onGameReturned());
-        },
-      ),
-      HomeModeConfig(
-        title: l10n.levelsTitle,
-        subtitle: l10n.levelsSubtitle,
-        badge: l10n.badgeReward,
-        assetPath: 'assets/game/levels.webp',
-        accent: AppPalette.homeSky,
-        accentSecondary: AppPalette.homeBlue,
-        onTap: () async {
-          await Navigator.of(context).push(_fadeRoute(const LevelGameSetupPage()));
-          _refresh();
-          unawaited(_onGameReturned());
-        },
-      ),
-    ];
-
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 2, 18, 2),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxWidth:
-                MediaQuery.orientationOf(context) == Orientation.landscape
-                    ? 880
-                    : 720,
-          ),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final metrics =
-                  UiMetrics.of(constraints, MediaQuery.orientationOf(context));
-              final gap = metrics.cardGap;
-
-              Widget buildCard(int index) {
-                final mode = modes[index];
-                final animIdx = min(index ~/ 2, 1);
-                return RepaintBoundary(
-                  child: FadeTransition(
-                    opacity: _cardFades[animIdx],
-                    child: SlideTransition(
-                      position: _cardSlides[animIdx],
-                      child: BigModeCard(
-                        title: mode.title,
-                        subtitle: mode.subtitle,
-                        badge: mode.badge,
-                        assetPath: mode.assetPath,
-                        accent: mode.accent,
-                        accentSecondary: mode.accentSecondary,
-                        onTap: mode.onTap,
-                      ),
-                    ),
-                  ),
-                );
-              }
-
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _buildHomeSectionHeader(),
-                  Expanded(
-                    child: Column(
-                      children: [
-                        Expanded(
-                          child: Row(
-                            children: [
-                              Expanded(child: buildCard(0)),
-                              SizedBox(width: gap),
-                              Expanded(child: buildCard(1)),
-                            ],
-                          ),
-                        ),
-                        SizedBox(height: gap),
-                        Expanded(
-                          child: Row(
-                            children: [
-                              Expanded(child: buildCard(2)),
-                              SizedBox(width: gap),
-                              Expanded(child: buildCard(3)),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
-        ),
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildHomeShortcutsRow(),
+          const SizedBox(height: 14),
+          _buildFeaturedOnlineCard(),
+          const SizedBox(height: 14),
+          _buildModeCardsRow(),
+          const SizedBox(height: 16),
+          MissionPreviewPanel(onViewAll: _openMissions),
+          const SizedBox(height: 12),
+          _buildWeeklyStrip(),
+          const SizedBox(height: 18),
+          _buildBottomCta(),
+        ],
       ),
     );
   }
 
-  Widget _buildBottomNav() {
-    final l10n = AppL10n.of(context);
-    final tabs = <NavTabData>[
-      NavTabData(
-          icon: Icons.home_outlined, activeIcon: Icons.home, label: l10n.home),
-      NavTabData(
-          icon: Icons.storefront_outlined,
-          activeIcon: Icons.storefront,
-          label: l10n.storeTab),
-      NavTabData(
-          icon: Icons.settings_outlined,
-          activeIcon: Icons.settings,
-          label: l10n.settingsTab),
-    ];
-
-    final screenWidth = MediaQuery.sizeOf(context).width;
-    final landscape = MediaQuery.orientationOf(context) == Orientation.landscape;
-    final compact = screenWidth < 360;
-    final navHeight = landscape ? 66.0 : (compact ? 72.0 : 78.0);
-    final outerPadding = EdgeInsets.fromLTRB(
-      landscape ? 12 : 16,
-      8,
-      landscape ? 12 : 16,
-      landscape ? 12 : 16,
+  Widget _homeShortcutButton({
+    required Widget iconChild,
+    required String label,
+    required VoidCallback onTap,
+    Widget? badge,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Container(
+                width: 56,
+                height: 56,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(18),
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      AppPalette.homePanelStrong.withOpacity(0.95),
+                      AppPalette.homeBgSecondary.withOpacity(0.92),
+                    ],
+                  ),
+                  border: Border.all(
+                      color: AppPalette.homeStroke.withOpacity(0.5),
+                      width: 1.2),
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppPalette.homeCyan.withOpacity(0.12),
+                      blurRadius: 14,
+                      spreadRadius: -3,
+                    ),
+                  ],
+                ),
+                child: iconChild,
+              ),
+              if (badge != null) Positioned(top: -6, right: -6, child: badge),
+            ],
+          ),
+          const SizedBox(height: 5),
+          Text(label,
+              style: homeLabelFont(context,
+                  fontSize: 8.5, color: AppPalette.homeBody)),
+        ],
+      ),
     );
-    final itemMargin = EdgeInsets.symmetric(horizontal: landscape ? 2 : 4);
-    final itemRadius = landscape ? 18.0 : 20.0;
-    final iconSize = landscape ? 24.0 : (compact ? 26.0 : 28.0);
-    final labelSize = landscape ? 8.0 : (compact ? 8.5 : 9.0);
+  }
 
-    return Padding(
-      padding: outerPadding,
+  Widget _buildHomeShortcutsRow() {
+    final l10n = AppL10n.of(context);
+    return Directionality(
+      textDirection: TextDirection.ltr,
+      child: Row(
+        children: [
+          _homeShortcutButton(
+            iconChild: Image.asset('assets/moh.png',
+                width: 32,
+                height: 32,
+                cacheWidth: 96,
+                errorBuilder: (_, __, ___) => Icon(Icons.assignment_rounded,
+                    color: AppPalette.homeCyan, size: 28)),
+            label: l10n.missionsTitle,
+            onTap: _openMissions,
+            badge: ValueListenableBuilder<int>(
+              valueListenable: MissionService.instance.badgeCount,
+              builder: (_, count, __) => MissionBadge(count: count),
+            ),
+          ),
+          const Spacer(),
+          _homeShortcutButton(
+            iconChild: Image.asset('assets/shop.png',
+                width: 32,
+                height: 32,
+                cacheWidth: 96,
+                errorBuilder: (_, __, ___) => Icon(Icons.storefront_rounded,
+                    color: AppPalette.homeGold, size: 28)),
+            label: l10n.storeTab,
+            onTap: _openStore,
+          ),
+          const SizedBox(width: 12),
+          _homeShortcutButton(
+            iconChild: Icon(Icons.settings_rounded,
+                color: AppPalette.homeSky, size: 30),
+            label: l10n.settingsTab,
+            onTap: _handleHomeProfileTap,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFeaturedOnlineCard() {
+    final l10n = AppL10n.of(context);
+    return AppGlassCard(
+      padding: const EdgeInsets.all(14),
+      radius: 26,
+      borderColor: AppPalette.homeGold.withOpacity(0.4),
+      boxShadow: [
+        BoxShadow(
+          color: AppPalette.homeGold.withOpacity(0.10),
+          blurRadius: 22,
+          spreadRadius: -6,
+        ),
+      ],
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(l10n.onlineFriendsTitle,
+                    style: homeTitleFont(context, fontSize: 20)),
+                const SizedBox(height: 6),
+                Text(l10n.onlineFriendsSubtitle,
+                    style: homeBodyFont(context, fontSize: 12),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis),
+                const SizedBox(height: 12),
+                SizedBox(
+                  height: 42,
+                  child: AppPillButton(
+                    label: l10n.playNowBtn,
+                    fitLabel: true,
+                    onPressed: _openOnline,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          RepaintBoundary(
+            child: Image.asset('assets/game/online-money.webp',
+                width: 108,
+                height: 108,
+                fit: BoxFit.contain,
+                cacheWidth: 320,
+                errorBuilder: (_, __, ___) => Icon(Icons.public_rounded,
+                    size: 70, color: AppPalette.homeGold.withOpacity(0.6))),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildModeCardsRow() {
+    final l10n = AppL10n.of(context);
+    Widget card({
+      required String title,
+      required String subtitle,
+      required String badge,
+      required String asset,
+      required Color accent,
+      required Color accent2,
+      required VoidCallback onTap,
+    }) {
+      return Expanded(
+        child: SizedBox(
+          height: 170,
+          child: BigModeCard(
+            title: title,
+            subtitle: subtitle,
+            badge: badge,
+            assetPath: asset,
+            accent: accent,
+            accentSecondary: accent2,
+            onTap: onTap,
+          ),
+        ),
+      );
+    }
+
+    return Directionality(
+      textDirection: TextDirection.ltr,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          card(
+            title: l10n.vsFriendTitle,
+            subtitle: l10n.vsFriendSubtitle,
+            badge: l10n.badgeHot,
+            asset: 'assets/game/friend.webp',
+            accent: AppPalette.homePurple,
+            accent2: AppPalette.homePink,
+            onTap: _openFriend,
+          ),
+          const SizedBox(width: 10),
+          card(
+            title: l10n.vsAiTitle,
+            subtitle: l10n.vsAiSubtitle,
+            badge: l10n.badgeAi,
+            asset: 'assets/game/ai.webp',
+            accent: AppPalette.homeCyan,
+            accent2: AppPalette.homeBlue,
+            onTap: _openAi,
+          ),
+          const SizedBox(width: 10),
+          card(
+            title: l10n.levelsTitle,
+            subtitle: l10n.levelsSubtitle,
+            badge: l10n.badgeReward,
+            asset: 'assets/game/levels.webp',
+            accent: AppPalette.homeSky,
+            accent2: AppPalette.homeBlue,
+            onTap: _openLevels,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWeeklyStrip() {
+    final l10n = AppL10n.of(context);
+    return ValueListenableBuilder<int>(
+      valueListenable: MissionService.instance.revision,
+      builder: (context, _, __) {
+        final allDone = MissionService.instance.allWeeklyDone();
+        final frac = MissionService.instance.weeklyProgressFraction();
+        return AppGlassCard(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          radius: 20,
+          borderColor: AppPalette.homeStroke,
+          child: Row(
+            children: [
+              Icon(
+                  allDone
+                      ? Icons.verified_rounded
+                      : Icons.calendar_month_rounded,
+                  size: 18,
+                  color: allDone ? AppPalette.success : AppPalette.homePurple),
+              const SizedBox(width: 10),
+              Expanded(
+                child: allDone
+                    ? Text(l10n.missionsWeekDone,
+                        style: safeInter(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w700,
+                            color: AppPalette.success))
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(l10n.missionsWeeklyTab,
+                              style: homeLabelFont(context,
+                                  fontSize: 9, color: AppPalette.homePurple)),
+                          const SizedBox(height: 5),
+                          MissionProgressBar(
+                              value: frac, color: AppPalette.homePurple),
+                        ],
+                      ),
+              ),
+              const SizedBox(width: 10),
+              Text('${(frac * 100).round()}%',
+                  style: safeOrbitron(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: AppPalette.homePurple)),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _handlePlayNowCta() {
+    if (!_isGuest) {
+      _openOnline();
+      return;
+    }
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        final l10n = AppL10n.of(ctx);
+        return Dialog(
+          backgroundColor: Colors.transparent,
+          child: AppGlassCard(
+            padding: const EdgeInsets.all(22),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.groups_rounded,
+                    size: 54, color: AppPalette.homeGold),
+                const SizedBox(height: 14),
+                Text(l10n.playOnlineSignInTitle,
+                    textAlign: TextAlign.center,
+                    style: safeInter(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: AppPalette.homeTitle)),
+                const SizedBox(height: 18),
+                SizedBox(
+                  width: double.infinity,
+                  child: AppPillButton(
+                    label: l10n.signInBtn,
+                    onPressed: () {
+                      Navigator.of(ctx).pop();
+                      Navigator.of(context).pushNamed('/login');
+                    },
+                  ),
+                ),
+                const SizedBox(height: 10),
+                SizedBox(
+                  width: double.infinity,
+                  child: AppPillButton(
+                    label: l10n.playVsAiBtn,
+                    fill: Colors.white.withOpacity(0.06),
+                    stroke: AppPalette.strokeStrong,
+                    onPressed: () {
+                      Navigator.of(ctx).pop();
+                      _openAi();
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildBottomCta() {
+    final l10n = AppL10n.of(context);
+    return GestureDetector(
+      onTap: _handlePlayNowCta,
       child: Container(
-        height: navHeight,
-        padding: EdgeInsets.all(landscape ? 4 : (compact ? 5 : 6)),
+        height: 60,
+        alignment: Alignment.center,
         decoration: BoxDecoration(
-          gradient: LinearGradient(
+          borderRadius: BorderRadius.circular(20),
+          gradient: const LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: [
-              AppPalette.homePanelStrong.withOpacity(0.98),
-              AppPalette.homeBgSecondary.withOpacity(0.96),
+              AppPalette.goldHighlight,
+              AppPalette.gold,
+              AppPalette.goldDeep,
             ],
-          ),
-          borderRadius: BorderRadius.circular(landscape ? 24 : 28),
-          border: Border.all(
-            color: AppPalette.homeStroke.withOpacity(0.28),
-            width: 1.2,
           ),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.34),
-              blurRadius: 28,
-              offset: const Offset(0, 18),
-            ),
-            BoxShadow(
-              color: AppPalette.homeCyan.withOpacity(0.06),
-              blurRadius: 18,
-              spreadRadius: -6,
+              color: AppPalette.gold.withOpacity(0.4),
+              blurRadius: 22,
+              spreadRadius: -4,
+              offset: const Offset(0, 8),
             ),
           ],
         ),
         child: Row(
-          children: List.generate(tabs.length, (i) {
-            final tab = tabs[i];
-            final isActive = _currentTab == i;
-            return Expanded(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () {
-                  // All tabs (incl. Store) are browsable by guests; purchases
-                  // inside the Store remain gated by their own auth checks.
-                  if (_currentTab != i) {
-                    setState(() {
-                      _currentTab = i;
-                      _visitedTabs.add(i);
-                    });
-                  }
-                },
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 220),
-                  curve: Curves.easeOutCubic,
-                    margin: itemMargin,
-                  decoration: BoxDecoration(
-                    gradient: isActive
-                        ? LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [
-                              AppPalette.homeSky.withOpacity(0.96),
-                              AppPalette.homeBlue.withOpacity(0.88),
-                            ],
-                          )
-                        : null,
-                    color: isActive ? null : Colors.transparent,
-                    borderRadius: BorderRadius.circular(itemRadius),
-                    border: Border.all(
-                      color: isActive
-                          ? AppPalette.homeStrokeStrong.withOpacity(0.70)
-                          : Colors.transparent,
-                      width: 1.1,
-                    ),
-                    boxShadow: isActive
-                        ? [
-                            BoxShadow(
-                              color: AppPalette.homeSky.withOpacity(0.20),
-                              blurRadius: 20,
-                              offset: const Offset(0, 10),
-                            ),
-                            BoxShadow(
-                              color: AppPalette.homePurple.withOpacity(0.08),
-                              blurRadius: 14,
-                              spreadRadius: -2,
-                            ),
-                          ]
-                        : null,
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        isActive ? tab.activeIcon : tab.icon,
-                        size: iconSize,
-                        color: isActive
-                            ? AppPalette.homeTitle
-                            : AppPalette.homeMuted,
-                      ),
-                      SizedBox(height: landscape ? 2 : 4),
-                      Text(
-                        tab.label,
-                        style: homeLabelFont(
-                          context,
-                          fontSize: labelSize,
-                          color: isActive
-                              ? AppPalette.homeTitle
-                              : AppPalette.homeMuted,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          }),
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.play_arrow_rounded, color: AppPalette.bgDepth, size: 26),
+            const SizedBox(width: 8),
+            Text(l10n.playNowBtn,
+                style: safeOrbitron(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 2.0,
+                    color: AppPalette.bgDepth)),
+          ],
         ),
       ),
     );
   }
 }
-

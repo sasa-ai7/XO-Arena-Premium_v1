@@ -379,6 +379,7 @@ class AppL10n {
 
   // ── Missions ──────────────────────────────────────────────────────────
   String get missionsTitle => isAr ? 'المهام' : 'MISSIONS';
+  String get playerDefaultName => isAr ? 'اللاعب' : 'PLAYER';
   String get missionsDailyTab => isAr ? 'يومية' : 'DAILY';
   String get missionsWeeklyTab => isAr ? 'أسبوعية' : 'WEEKLY';
   String get missionGo => isAr ? 'اذهب' : 'GO';
