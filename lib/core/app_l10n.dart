@@ -376,6 +376,33 @@ class AppL10n {
   String get performanceModeHint => isAr
       ? 'تقليل المؤثرات والحركات لأداء أنعم'
       : 'Reduce effects and animations for smoother play';
+
+  // ── Missions ──────────────────────────────────────────────────────────
+  String get missionsTitle => isAr ? 'المهام' : 'MISSIONS';
+  String get missionsDailyTab => isAr ? 'يومية' : 'DAILY';
+  String get missionsWeeklyTab => isAr ? 'أسبوعية' : 'WEEKLY';
+  String get missionGo => isAr ? 'اذهب' : 'GO';
+  String get missionClaim => isAr ? 'استلام' : 'CLAIM';
+  String get missionClaimedDone => isAr ? 'تم' : 'DONE';
+  String get missionCompleted => isAr ? 'مكتملة' : 'DONE';
+  String get missionViewAll => isAr ? 'عرض الكل' : 'VIEW ALL';
+  String get missionsDayDone => isAr ? 'تم إنهاء مهام اليوم' : 'All daily missions done';
+  String get missionsWeekDone =>
+      isAr ? 'تم إنهاء مهام الأسبوع' : 'All weekly missions done';
+  String get missionAlreadyClaimed =>
+      isAr ? 'تم استلام المكافأة بالفعل' : 'Reward already claimed';
+  String get missionClaimRetry =>
+      isAr ? 'غير متاح الآن، حاول لاحقًا' : 'Not available now, try later';
+  String get missionRewardClaimed =>
+      isAr ? 'تم استلام المكافأة!' : 'Reward claimed!';
+  String missionRenewsIn(int days, int hours) => isAr
+      ? 'تتجدد خلال $days أيام و $hours ساعات'
+      : 'Renews in ${days}d ${hours}h';
+  String get playNowBtn => isAr ? 'العب الآن' : 'PLAY NOW';
+  String get playOnlineSignInTitle => isAr
+      ? 'سجّل الدخول للعب أونلاين مع أصدقائك'
+      : 'Sign in to play online with friends';
+  String get playVsAiBtn => isAr ? 'العب ضد الذكاء الاصطناعي' : 'Play vs AI';
   String get accountSection => isAr ? 'الحساب' : 'ACCOUNT';
   String get supportAndLegal => isAr ? 'الدعم والقانونية' : 'SUPPORT & LEGAL';
   String get accountDetailsRow => isAr ? 'تفاصيل الحساب' : 'Account Details';
