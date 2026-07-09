@@ -18,9 +18,7 @@ dependencies:
   intl: ^0.20.2
   url_launcher: ^6.3.0
   connectivity_plus: ^6.0.5
-  app_links: ^6.1.1
   crypto: ^3.0.5
-  http: ^1.2.0
   device_info_plus: ^11.1.0
   package_info_plus: ^8.0.0
 
@@ -31,7 +29,9 @@ dependencies:
   cloud_functions: ^6.0.7
   # firebase_storage intentionally removed 2026-05-20 — custom profile photo
   # upload was dropped in favor of Google Sign-In photoURL only.
-  firebase_app_check: ^0.4.1+4
+  # firebase_app_check removed 2026-07-09 — App Check stays disabled
+  # (kEnableAppCheck=false) and was never activated; the client-only IAP
+  # flow does not depend on it. See lib/main.dart.
   firebase_database: ^12.0.1
   firebase_messaging: ^16.0.0
 
@@ -40,7 +40,6 @@ dependencies:
 
   # Auth
   google_sign_in: ^6.2.1
-  flutter_signin_button: ^2.0.0
 
   # Payments / IAP
   in_app_purchase: ^3.1.11
@@ -52,12 +51,9 @@ dependencies:
   # image_picker intentionally removed 2026-05-20 — only consumer was the
   # custom profile photo upload feature, which now uses Google photoURL only.
   cached_network_image: ^3.3.1
-  flutter_colorpicker: ^1.1.0
 
-  # Local notifications (daily 9 PM reminder)
+  # Local notifications — foreground display of incoming FCM push messages.
   flutter_local_notifications: ^17.2.3
-  flutter_timezone: ^3.0.1
-  timezone: ^0.9.4
 
 dev_dependencies:
   flutter_test:
@@ -79,20 +75,6 @@ flutter:
     - assets/x/
     - assets/o/
     - assets/account/
-    - assets/data/
-    - assets/images/arena/home/
-    - assets/images/arena/xo/
-    - assets/images/arena/snake_ladder/
-    - assets/images/arena/mafia/
-    - assets/images/arena/movies/
-    - assets/MAFAY/data/
-    - assets/MAFAY/FAMAN/
-    - assets/MAFAY/iloveimg-compressed/
-    - assets/MAFAY/images/
-    - assets/MAFAY/MAN/
-    - assets/MAFAY/mp3/
-    - assets/MAFAY/pdf/
-    - assets/iloveimg-compressed (5)/
 
   fonts:
     - family: Inter
