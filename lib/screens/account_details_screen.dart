@@ -233,7 +233,7 @@ class AccountDetailsScreen extends StatelessWidget {
   // ── Helpers ──────────────────────────────────────────────────────────────
 
   static String? _str(dynamic v) =>
-      v != null ? v.toString() : null;
+      v?.toString();
 
   static String _num(dynamic v) =>
       (v as num?)?.toInt().toString() ?? '0';

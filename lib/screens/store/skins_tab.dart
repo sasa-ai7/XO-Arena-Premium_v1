@@ -3,14 +3,12 @@ import 'package:flutter/material.dart';
 import '../../core/app_l10n.dart';
 import '../../core/app_theme.dart';
 import '../../models/xo_skin.dart';
-import '../../services/local_store.dart';
-import '../../widgets/app_ui.dart';
 
 class XOSubTabBar extends StatelessWidget {
   final int selectedIndex;
   final ValueChanged<int> onChanged;
 
-  const XOSubTabBar({required this.selectedIndex, required this.onChanged});
+  const XOSubTabBar({super.key, required this.selectedIndex, required this.onChanged});
 
   @override
   Widget build(BuildContext context) {
@@ -83,7 +81,7 @@ class SkinCard extends StatelessWidget {
   final Color xColor;
   final Color oColor;
 
-  const SkinCard({
+  const SkinCard({super.key, 
     required this.skin,
     required this.isOwned,
     required this.isSelected,
@@ -306,7 +304,7 @@ class DefaultPreview extends StatelessWidget {
   final Color xColor;
   final Color oColor;
 
-  const DefaultPreview({required this.isX, required this.xColor, required this.oColor});
+  const DefaultPreview({super.key, required this.isX, required this.xColor, required this.oColor});
 
   @override
   Widget build(BuildContext context) {

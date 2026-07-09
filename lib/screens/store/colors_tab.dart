@@ -4,8 +4,6 @@ import '../../core/app_l10n.dart';
 import '../../core/app_theme.dart';
 import '../../core/neon_colors.dart';
 import '../../models/xo_skin.dart';
-import '../../services/local_store.dart';
-import '../../widgets/app_ui.dart';
 import 'skins_tab.dart';
 
 class _ColorPickerSheet extends StatefulWidget {
@@ -214,7 +212,7 @@ class ColorsTab extends StatefulWidget {
   final Future<void> Function(String) onSelectOSkin;
   final int coins;
 
-  const ColorsTab({
+  const ColorsTab({super.key, 
     required this.ownedX,
     required this.ownedO,
     required this.selectedXIndex,
@@ -382,115 +380,6 @@ class _ColorsTabState extends State<ColorsTab> {
               ],
             ),
           ),
-        ),
-      ],
-    );
-  }
-}
-
-class _ColorSection extends StatelessWidget {
-  final String title;
-  final int ownedCount;
-  final int totalCount;
-  final bool isX;
-  final Set<int> owned;
-
-  final int selectedIndex;
-  final List<Color> colors;
-  final VoidCallback? Function(int) onTap;
-
-  const _ColorSection({
-    required this.title,
-    required this.ownedCount,
-    required this.totalCount,
-    required this.isX,
-    required this.owned,
-    required this.selectedIndex,
-    required this.colors,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final accent = isX ? AppPalette.homeCyan : AppPalette.accentPurple;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Container(
-              width: 8,
-              height: 8,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: accent,
-                boxShadow: [
-                  BoxShadow(
-                    color: accent.withOpacity(0.30),
-                    blurRadius: 10,
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            Text(title,
-                style: safeOrbitron(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 1.8,
-                    color: accent)),
-            const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: accent.withOpacity(0.10),
-                borderRadius: BorderRadius.circular(999),
-                border: Border.all(color: accent.withOpacity(0.22)),
-              ),
-              child: Text(
-                '$ownedCount/$totalCount',
-                style: safeOrbitron(
-                  fontSize: 9,
-                  fontWeight: FontWeight.w700,
-                  color: accent,
-                ),
-              ),
-            ),
-            Expanded(
-              child: Container(
-                height: 1,
-                margin: const EdgeInsets.only(left: 12),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [accent.withOpacity(0.32), Colors.transparent],
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-        GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 4,
-            crossAxisSpacing: 10,
-            mainAxisSpacing: 10,
-            childAspectRatio: 0.85,
-          ),
-          itemCount: colors.length,
-          itemBuilder: (context, i) {
-            return _ColorTile(
-              index: i,
-              isX: isX,
-              color: colors[i],
-              isOwned: owned.contains(i),
-              isSelected: i == selectedIndex,
-              onTap: onTap(i),
-            );
-          },
         ),
       ],
     );

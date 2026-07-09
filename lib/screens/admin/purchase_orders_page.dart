@@ -337,7 +337,7 @@ class _OrderRow extends StatelessWidget {
                     '${balanceBefore ?? '?'} → ${balanceAfter ?? '?'}'),
               if (gOrderId != null) _KV('OrderId', gOrderId),
               if (tokenHash != null)
-                _KV('TokenHash', tokenHash.substring(0, tokenHash.length.clamp(0, 12)) + '…'),
+                _KV('TokenHash', '${tokenHash.substring(0, tokenHash.length.clamp(0, 12))}…'),
               if (createdAt != null) _KV('Created', _fmtTs(createdAt)),
               if (updatedAt != null) _KV('Updated', _fmtTs(updatedAt)),
               _KV('Doc', orderId),

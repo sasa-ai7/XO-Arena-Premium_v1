@@ -39,7 +39,6 @@ class AvatarStoreTab extends StatelessWidget {
           metrics.sizeClass == DeviceSizeClass.compact ? 9 : 10,
           metrics.sizeClass == DeviceSizeClass.compact ? 11 : 12,
         );
-        final buttonHeight = metrics.buttonHeight;
 
         final ownedSet = Set<int>.from(ownedAvatars);
         final nonGifAvatars = kGameAvatars.where((a) => !a.isGif).toList();
@@ -51,8 +50,6 @@ class AvatarStoreTab extends StatelessWidget {
           crossAxisSpacing: spacing,
           childAspectRatio: childAspectRatio,
         );
-
-        final edgePadding = EdgeInsets.symmetric(horizontal: horizontalPadding);
 
         return CustomScrollView(
           slivers: [

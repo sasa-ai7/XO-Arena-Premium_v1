@@ -337,8 +337,9 @@ class _LoginScreenState extends State<LoginScreen>
             validator: (v) {
               final s = (v ?? '').trim();
               if (s.isEmpty) return AppL10n.of(context).emailRequired;
-              if (!s.contains('@') || !s.contains('.'))
+              if (!s.contains('@') || !s.contains('.')) {
                 return AppL10n.of(context).emailInvalid;
+              }
               return null;
             },
           ),

@@ -42,8 +42,6 @@ import '../../core/app_config.dart';
 import '../../utils/navigation_utils.dart';
 import '../../widgets/app_ui.dart';
 import '../../widgets/arena_toast.dart';
-import '../../widgets/avatar_store_tab.dart';
-import '../../widgets/connection_lost_match_overlay.dart';
 import '../../widgets/full_avatar_display.dart';
 import '../../widgets/mode_transition_overlay.dart';
 import '../../widgets/onboarding_sheet.dart';
@@ -1011,10 +1009,12 @@ class _HomeHubState extends State<HomeHub>
           if (progress != null) {
             final level = (progress['levelGameCurrentLevel'] as num?)?.toInt();
             final completed = progress['levelGameCompleted'] as bool?;
-            if (level != null)
+            if (level != null) {
               await p.setInt(Keys.levelGameCurrentLevel, level);
-            if (completed != null)
+            }
+            if (completed != null) {
               await p.setBool(Keys.levelGameCompleted, completed);
+            }
           }
 
           // Cache characterType locally for offline avatar hint
@@ -1029,8 +1029,9 @@ class _HomeHubState extends State<HomeHub>
               : ((authPhoto != null && authPhoto.isNotEmpty) ? authPhoto : null);
           await LocalStore.setProfilePhotoUrl(profilePhotoUrl);
         } catch (e) {
-          if (kDebugMode)
+          if (kDebugMode) {
             debugPrint('[HomeHub] SharedPreferences write-through error: $e');
+          }
         }
       },
       onError: (e) {
@@ -1135,8 +1136,9 @@ class _HomeHubState extends State<HomeHub>
         try {
           await AuthService().signOut();
         } catch (e) {
-          if (kDebugMode)
+          if (kDebugMode) {
             debugPrint('[SESSION] signOut during conflict failed: $e');
+          }
         }
         if (mounted) _showForceLogoutDialog(newDevice, loginTime);
       },

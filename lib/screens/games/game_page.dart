@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:math';
 
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -12,7 +11,6 @@ import '../../core/app_theme.dart';
 import '../../core/keys.dart';
 import '../../services/app_mode_service.dart';
 import '../../services/audit_service.dart';
-import '../../services/auth_service.dart';
 import '../../services/game_reward_service.dart';
 import '../../services/local_store.dart';
 import '../../services/sound_service.dart';
@@ -1024,7 +1022,7 @@ class _GamePageState extends State<GamePage> {
 class TurnPill extends StatelessWidget {
   final String text;
   final Color color;
-  const TurnPill({required this.text, required this.color});
+  const TurnPill({super.key, required this.text, required this.color});
 
   @override
   Widget build(BuildContext context) {
@@ -1056,7 +1054,7 @@ class CellContent extends StatelessWidget {
   final String xSkin;
   final String oSkin;
 
-  const CellContent({
+  const CellContent({super.key, 
     required this.v,
     required this.xColor,
     required this.oColor,
@@ -1157,7 +1155,7 @@ class EndDialog extends StatelessWidget {
   final int coinsAdded;
   final String? rewardText;
 
-  const EndDialog({
+  const EndDialog({super.key, 
     required this.title,
     required this.subtitle,
     required this.icon,
@@ -1332,7 +1330,7 @@ class ContinueDialog extends StatefulWidget {
   final VoidCallback onContinue;
   final VoidCallback onDecline;
 
-  const ContinueDialog({
+  const ContinueDialog({super.key, 
     required this.level,
     required this.cost,
     required this.currentCoins,

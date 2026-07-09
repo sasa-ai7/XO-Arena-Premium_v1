@@ -13,7 +13,7 @@ class ModeHeroCard extends StatelessWidget {
   final Color accent;
   final Widget? trailing;
 
-  const ModeHeroCard({
+  const ModeHeroCard({super.key, 
     required this.eyebrow,
     required this.title,
     required this.subtitle,
@@ -128,7 +128,7 @@ class ModeInfoChip extends StatelessWidget {
   final String label;
   final Color color;
 
-  const ModeInfoChip({
+  const ModeInfoChip({super.key, 
     required this.icon,
     required this.label,
     this.color = AppPalette.primary,
@@ -169,7 +169,7 @@ class SummaryMetricTile extends StatelessWidget {
   final String value;
   final Color accent;
 
-  const SummaryMetricTile({
+  const SummaryMetricTile({super.key, 
     required this.icon,
     required this.label,
     required this.value,
@@ -287,7 +287,7 @@ class BigModeCard extends StatefulWidget {
   final Color accentSecondary;
   final VoidCallback onTap;
 
-  const BigModeCard({
+  const BigModeCard({super.key, 
     required this.title,
     required this.subtitle,
     required this.badge,

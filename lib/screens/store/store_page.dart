@@ -11,9 +11,6 @@ import '../../core/keys.dart';
 import '../../core/neon_colors.dart';
 import '../../core/responsive_metrics.dart';
 import '../../models/game_avatar.dart';
-import '../../models/xo_skin.dart';
-import '../../services/app_mode_service.dart';
-import '../../services/auth_service.dart';
 import '../../services/local_store.dart';
 import '../../utils/navigation_utils.dart';
 import '../../widgets/app_ui.dart';
@@ -21,7 +18,6 @@ import '../../widgets/avatar_store_tab.dart';
 import '../../coins/coins_screen.dart';
 import '../../coins/premium_avatar_service.dart';
 import 'colors_tab.dart';
-import 'skins_tab.dart';
 
 class StorePage extends StatefulWidget {
   final int initialTab;
@@ -653,12 +649,6 @@ class _StorePageState extends State<StorePage>
       showTopNotification(context, '${gameAvatarById(id).name} ${l10n.storeEquipped}!',
           color: AppPalette.success);
     }
-  }
-
-  String _usernameOrFallback() {
-    final current = FirebaseAuth.instance.currentUser;
-    final raw = current?.displayName ?? current?.email ?? 'P';
-    return raw.trim().isEmpty ? 'P' : raw.trim();
   }
 
   @override

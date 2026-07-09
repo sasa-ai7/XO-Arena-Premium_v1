@@ -142,7 +142,11 @@ class NewYorkXOApp extends StatelessWidget {
             useMaterial3: true,
             brightness: Brightness.dark,
             scaffoldBackgroundColor: AppPalette.homeBgBase,
-            fontFamily: 'Rajdhani',
+            // Default family must be one that is actually bundled (see
+            // pubspec.yaml fonts:). 'Rajdhani' was never bundled and silently
+            // fell back to the platform default; 'Inter' matches the app's
+            // safeInter()/homeInter() helpers.
+            fontFamily: 'Inter',
           ),
           routes: {
             '/home': (context) => const HomeHub(),

@@ -1,14 +1,12 @@
 import 'dart:async';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../core/app_config.dart';
 import '../core/keys.dart';
 import 'local_store.dart';
 import '../models/user_data.dart';
@@ -125,10 +123,6 @@ class AuthService {
         return Exception('This email is registered with Google. Please sign in with Google first, then you can link your password.');
       case 'invalid-credential':
         return Exception('Invalid email or password. Please try again.');
-      case 'invalid-email':
-        return Exception('Invalid email address. Please check and try again.');
-      case 'user-disabled':
-        return Exception('This account has been disabled. Please contact support.');
       default:
         return Exception('Authentication failed. Please try again.');
     }
@@ -219,7 +213,7 @@ class AuthService {
 
       // Write single-device session (non-fatal)
       try {
-        await SessionService.writeSession(currentUser!.uid);
+        await SessionService.writeSession(currentUser.uid);
       } catch (e) {
         if (kDebugMode) {
           debugPrint('[AUTH] Session write failed (non-fatal): $e');

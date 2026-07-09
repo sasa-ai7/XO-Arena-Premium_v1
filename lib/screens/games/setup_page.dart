@@ -1,20 +1,9 @@
 import 'dart:async';
-import 'dart:math';
 
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/app_l10n.dart';
 import '../../core/app_theme.dart';
-import '../../core/keys.dart';
-import '../../services/app_mode_service.dart';
-import '../../services/auth_service.dart';
-import '../../services/local_store.dart';
-import '../../services/sound_service.dart';
-import '../../utils/ai_engine.dart';
 import '../../utils/board_utils.dart';
 import '../../widgets/app_ui.dart';
 import 'game_widgets.dart';

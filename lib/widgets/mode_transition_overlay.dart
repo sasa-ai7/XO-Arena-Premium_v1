@@ -9,7 +9,7 @@ import 'app_ui.dart';
 class ModeTransitionOverlay extends StatefulWidget {
   final bool isReconnecting;
 
-  const ModeTransitionOverlay({required this.isReconnecting});
+  const ModeTransitionOverlay({super.key, required this.isReconnecting});
 
   @override
   State<ModeTransitionOverlay> createState() => _ModeTransitionOverlayState();

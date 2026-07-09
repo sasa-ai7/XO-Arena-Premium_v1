@@ -106,8 +106,9 @@ class IapCoinsService {
     // Spark plan: skip Google Play Billing connection entirely.
     if (!AppConfig.kEnableRealPurchases) {
       _isAvailable = false;
-      if (kDebugMode)
+      if (kDebugMode) {
         debugPrint('[IAP] Skipping IAP init — kEnableRealPurchases=false');
+      }
       return;
     }
 
@@ -255,8 +256,9 @@ class IapCoinsService {
   Future<bool> buy(ProductDetails product, {bool isRetry = false}) async {
     // Spark plan: purchases disabled.
     if (!AppConfig.kEnableRealPurchases) {
-      if (kDebugMode)
+      if (kDebugMode) {
         debugPrint('[IAP] buy() blocked — kEnableRealPurchases=false');
+      }
       return false;
     }
 
@@ -267,8 +269,9 @@ class IapCoinsService {
     }
 
     if (_billingFlowActive) {
-      if (kDebugMode)
+      if (kDebugMode) {
         debugPrint('[IAP] buy() blocked — billing flow already active');
+      }
       return false;
     }
     _billingFlowActive = true;
@@ -902,8 +905,9 @@ class IapCoinsService {
   /// (Firestore tx prevents double-grant naturally).
   Future<void> consumePendingPurchases() async {
     if (AppModeService.isOfflineLike) {
-      if (kDebugMode)
+      if (kDebugMode) {
         debugPrint('[IAP] consumePendingPurchases skipped — offline mode');
+      }
       return;
     }
     if (!_isAvailable || !Platform.isAndroid) {
@@ -940,9 +944,10 @@ class IapCoinsService {
 
           if (alreadyProcessed) {
             // Already granted — just consume + complete to clear from Google
-            if (kDebugMode)
+            if (kDebugMode) {
               debugPrint(
                   '[IAP] Past purchase $productId already processed — consuming only');
+            }
             try {
               await androidAddition.consumePurchase(purchase);
             } catch (_) {}
@@ -953,9 +958,10 @@ class IapCoinsService {
             }
           } else {
             // Legitimate unprocessed purchase — grant via the safe path
-            if (kDebugMode)
+            if (kDebugMode) {
               debugPrint(
                   '[IAP] Past purchase $productId NOT processed — granting');
+            }
             await _processPurchased(purchase);
           }
         }
@@ -1001,9 +1007,10 @@ class IapCoinsService {
 
         if (!alreadyProcessed) {
           // Paid but never granted — run through the safe grant path first
-          if (kDebugMode)
+          if (kDebugMode) {
             debugPrint(
                 '[IAP] clearExisting: $productId NOT processed — granting first');
+          }
           await _processPurchased(purchase);
         } else {
           // Already granted — consume + complete only
@@ -1022,8 +1029,9 @@ class IapCoinsService {
 
       if (kDebugMode) debugPrint('[IAP] Finished clearing existing purchases');
     } catch (e) {
-      if (kDebugMode)
+      if (kDebugMode) {
         debugPrint('[IAP] Error during clearExistingPurchases: $e');
+      }
     }
   }
 

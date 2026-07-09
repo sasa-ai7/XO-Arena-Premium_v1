@@ -1,20 +1,16 @@
-import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../core/app_l10n.dart';
-import '../core/app_theme.dart';
 import '../services/app_mode_service.dart';
-import '../services/local_store.dart';
-import '../widgets/app_ui.dart';
 
 class ConnectionLostMatchOverlay extends StatefulWidget {
   final VoidCallback onRestartOffline;
   final VoidCallback onWaitForConnection;
   final VoidCallback onExitHome;
 
-  const ConnectionLostMatchOverlay({
+  const ConnectionLostMatchOverlay({super.key, 
     required this.onRestartOffline,
     required this.onWaitForConnection,
     required this.onExitHome,
@@ -165,7 +161,7 @@ class _ConnectionLostMatchOverlayState
                   // Button: Wait for Connection
                   OverlayButton(
                     label: _waitingForConnection
-                        ? l10n.waitForConnection + '...'
+                        ? '${l10n.waitForConnection}...'
                         : l10n.waitForConnection,
                     icon: Icons.wifi_find_outlined,
                     isPrimary: false,
@@ -198,7 +194,7 @@ class OverlayButton extends StatelessWidget {
   final bool isPrimary;
   final VoidCallback onTap;
 
-  const OverlayButton({
+  const OverlayButton({super.key, 
     required this.label,
     required this.icon,
     required this.isPrimary,

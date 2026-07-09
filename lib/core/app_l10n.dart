@@ -317,7 +317,7 @@ class AppL10n {
   String tryAgainIn(String formatted) =>
       isAr ? 'أعد المحاولة خلال $formatted' : 'Try again in $formatted';
   String resendInSeconds(int s) =>
-      isAr ? 'إعادة الإرسال خلال ${s}ث...' : 'Resend in ${s}s...';
+      isAr ? 'إعادة الإرسال خلال $sث...' : 'Resend in ${s}s...';
 
   // ── A5 — Account details screen ───────────────────────────────────────
   String get accountDetailsTitle => isAr ? 'تفاصيل الحساب' : 'ACCOUNT DETAILS';

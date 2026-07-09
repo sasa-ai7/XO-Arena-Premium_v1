@@ -8,7 +8,7 @@ class OnboardingSheet extends StatefulWidget {
   final Future<void> Function(String name) onSaveName;
   final VoidCallback onCreateAccount;
 
-  const OnboardingSheet({
+  const OnboardingSheet({super.key, 
     required this.initialName,
     required this.onSaveName,
     required this.onCreateAccount,

@@ -5,14 +5,13 @@ import 'package:flutter/material.dart';
 import '../../core/app_l10n.dart';
 import '../../core/app_theme.dart';
 import '../../utils/board_utils.dart';
-import '../../widgets/app_ui.dart';
 
 class CardAura extends StatelessWidget {
   final Color color;
   final double size;
   final double opacity;
 
-  const CardAura({
+  const CardAura({super.key, 
     required this.color,
     required this.size,
     this.opacity = 0.16,
@@ -44,7 +43,7 @@ class SymbolTile extends StatelessWidget {
   final bool dimmed;
   final VoidCallback? onTap;
 
-  const SymbolTile({
+  const SymbolTile({super.key, 
     required this.label,
     required this.selected,
     required this.dimmed,
@@ -134,7 +133,7 @@ class DifficultySegment extends StatelessWidget {
   final AIDifficulty value;
   final ValueChanged<AIDifficulty>? onChanged;
 
-  const DifficultySegment({required this.value, required this.onChanged});
+  const DifficultySegment({super.key, required this.value, required this.onChanged});
 
   @override
   Widget build(BuildContext context) {
@@ -231,7 +230,7 @@ class BoardSizeSegment extends StatelessWidget {
   final int value;
   final ValueChanged<int>? onChanged;
 
-  const BoardSizeSegment({required this.value, required this.onChanged});
+  const BoardSizeSegment({super.key, required this.value, required this.onChanged});
 
   @override
   Widget build(BuildContext context) {
@@ -344,7 +343,7 @@ class SymbolOption extends StatelessWidget {
   final VoidCallback onTap;
 
   const SymbolOption(
-      {required this.symbol, required this.selected, required this.onTap});
+      {super.key, required this.symbol, required this.selected, required this.onTap});
 
   @override
   Widget build(BuildContext context) {

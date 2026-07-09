@@ -297,7 +297,7 @@ class ProfileHeader extends StatelessWidget {
                     color: AppPalette.goldHighlight, size: 20),
                 const SizedBox(width: 8),
                 Text(
-                  'TOP LEVEL: ${topLevel} / 20',
+                  'TOP LEVEL: $topLevel / 20',
                   style: safeOrbitron(
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
@@ -316,7 +316,7 @@ class ProfileHeader extends StatelessWidget {
 class ProviderBadge extends StatelessWidget {
   final String provider;
 
-  const ProviderBadge({required this.provider});
+  const ProviderBadge({super.key, required this.provider});
 
   @override
   Widget build(BuildContext context) {
@@ -360,7 +360,7 @@ class StatChip extends StatelessWidget {
   final int value;
   final String label;
 
-  const StatChip({required this.value, required this.label});
+  const StatChip({super.key, required this.value, required this.label});
 
   @override
   Widget build(BuildContext context) {
@@ -387,7 +387,7 @@ class StatChip extends StatelessWidget {
 }
 
 class VerticalStatDivider extends StatelessWidget {
-  const VerticalStatDivider();
+  const VerticalStatDivider({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -405,7 +405,7 @@ class DangerZoneCard extends StatelessWidget {
   final VoidCallback onDelete;
 
   const DangerZoneCard(
-      {required this.expanded, required this.onToggle, required this.onDelete});
+      {super.key, required this.expanded, required this.onToggle, required this.onDelete});
 
   @override
   Widget build(BuildContext context) {
@@ -478,7 +478,7 @@ class DangerZoneCard extends StatelessWidget {
 class PremiumLogoutCard extends StatelessWidget {
   final VoidCallback onTap;
 
-  const PremiumLogoutCard({required this.onTap});
+  const PremiumLogoutCard({super.key, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -574,7 +574,7 @@ class TinyBadge extends StatelessWidget {
   final String text;
   final Color color;
 
-  const TinyBadge({required this.text, required this.color});
+  const TinyBadge({super.key, required this.text, required this.color});
 
   @override
   Widget build(BuildContext context) {
@@ -601,7 +601,7 @@ class Stat extends StatelessWidget {
   final String label;
   final int value;
 
-  const Stat({required this.label, required this.value});
+  const Stat({super.key, required this.label, required this.value});
 
   @override
   Widget build(BuildContext context) {
@@ -641,7 +641,7 @@ class SettingTile extends StatelessWidget {
   final VoidCallback? onTap;
 
   const SettingTile(
-      {required this.icon,
+      {super.key, required this.icon,
       required this.label,
       this.subtitle,
       this.trailing,

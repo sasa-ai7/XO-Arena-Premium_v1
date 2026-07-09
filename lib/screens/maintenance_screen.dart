@@ -5,7 +5,7 @@ import '../services/local_store.dart';
 
 /// Simple maintenance screen shown when app encounters an error.
 class MaintenanceScreen extends StatelessWidget {
-  const MaintenanceScreen();
+  const MaintenanceScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
