@@ -1803,7 +1803,7 @@ class _HomeHubState extends State<HomeHub>
         title: l10n.vsAiTitle,
         subtitle: l10n.vsAiSubtitle,
         badge: l10n.badgeAi,
-        assetPath: 'assets/game/ai.gif',
+        assetPath: 'assets/game/ai.webp',
         accent: AppPalette.homeCyan,
         accentSecondary: AppPalette.homeBlue,
         onTap: () async {
@@ -1816,7 +1816,7 @@ class _HomeHubState extends State<HomeHub>
         title: l10n.vsFriendTitle,
         subtitle: l10n.vsFriendSubtitle,
         badge: l10n.badgeHot,
-        assetPath: 'assets/game/friend.gif',
+        assetPath: 'assets/game/friend.webp',
         accent: AppPalette.homePurple,
         accentSecondary: AppPalette.homePink,
         onTap: () async {
@@ -1829,7 +1829,7 @@ class _HomeHubState extends State<HomeHub>
         title: l10n.onlineFriendsTitle,
         subtitle: l10n.onlineFriendsSubtitle,
         badge: l10n.badgeMultiplayer,
-        assetPath: 'assets/game/online-money.gif',
+        assetPath: 'assets/game/online-money.webp',
         accent: AppPalette.homeGold,
         accentSecondary: AppPalette.homePink,
         onTap: () async {
@@ -1847,7 +1847,7 @@ class _HomeHubState extends State<HomeHub>
         title: l10n.levelsTitle,
         subtitle: l10n.levelsSubtitle,
         badge: l10n.badgeReward,
-        assetPath: 'assets/game/levels.gif',
+        assetPath: 'assets/game/levels.webp',
         accent: AppPalette.homeSky,
         accentSecondary: AppPalette.homeBlue,
         onTap: () async {
