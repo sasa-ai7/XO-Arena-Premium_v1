@@ -1,10 +1,11 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 import '../core/app_theme.dart';
 import '../core/coin_format.dart';
-import '../services/local_store.dart';
+import '../services/wallet_history_service.dart';
 import '../utils/navigation_utils.dart';
 import '../widgets/app_ui.dart';
 import 'home/home_widgets.dart';
@@ -43,6 +44,7 @@ class _CoinsHistoryPageState extends State<CoinsHistoryPage> {
   List<Map<String, dynamic>> _history = [];
   bool _loading = true;
   String? _loadError;
+  bool _showingSavedHistory = false;
   _HistoryFilter _filter = _HistoryFilter.all;
 
   // Match user-facing strings on the rest of the shop: English, 24h time with
@@ -62,10 +64,13 @@ class _CoinsHistoryPageState extends State<CoinsHistoryPage> {
       _loadError = null;
     });
     try {
-      final history = await LocalStore.getTopupHistory();
+      final result = await WalletHistoryService.instance.readMergedHistory(
+        FirebaseAuth.instance.currentUser?.uid,
+      );
       if (mounted) {
         setState(() {
-          _history = history;
+          _history = result.entries;
+          _showingSavedHistory = result.remoteUnavailable;
           _loading = false;
         });
       }
@@ -76,7 +81,7 @@ class _CoinsHistoryPageState extends State<CoinsHistoryPage> {
       }
       if (mounted) {
         setState(() {
-          _loadError = e.toString().replaceAll('Exception: ', '');
+          _loadError = 'Connection issue. Please try again.';
           _loading = false;
         });
       }
@@ -90,6 +95,21 @@ class _CoinsHistoryPageState extends State<CoinsHistoryPage> {
     final source = (entry['source'] as String? ?? '').toLowerCase();
     final description = (entry['description'] as String? ?? '').toLowerCase();
 
+    if (type.contains('referral') ||
+        type.contains('mission') ||
+        type.contains('reward') ||
+        source.contains('referral') ||
+        source.contains('mission')) {
+      return _HistoryFilter.rewards;
+    }
+    if (type == 'friend_room_bet_entry' ||
+        type == 'friend_room_refund' ||
+        source.contains('bet')) {
+      return _HistoryFilter.bets;
+    }
+    if (type == 'friend_room_prize' || source.contains('match')) {
+      return _HistoryFilter.matches;
+    }
     if (type == 'avatar' ||
         source.contains('avatar') ||
         description.contains('avatar')) {
@@ -127,7 +147,27 @@ class _CoinsHistoryPageState extends State<CoinsHistoryPage> {
     return _HistoryFilter.purchases;
   }
 
+  /// Coin magnitude for an entry, tolerant of int/double/num or missing values
+  /// so a single malformed row can never throw during build.
+  int _coinsOf(Map<String, dynamic> entry) {
+    final coins = entry['coins'];
+    if (coins is num) return coins.toInt();
+    final delta = entry['delta'];
+    if (delta is num) return delta.toInt().abs();
+    return 0;
+  }
+
+  DateTime _dateOf(Map<String, dynamic> entry) {
+    final dt = entry['dateTime'];
+    if (dt is DateTime) return dt;
+    final ms = entry['localCreatedAtMs'];
+    if (ms is num) return DateTime.fromMillisecondsSinceEpoch(ms.toInt());
+    return DateTime.fromMillisecondsSinceEpoch(0);
+  }
+
   bool _isCredit(Map<String, dynamic> entry) {
+    final delta = entry['delta'];
+    if (delta is num) return delta > 0;
     final type = (entry['type'] as String? ?? 'loss').toLowerCase();
     final source = (entry['source'] as String? ?? '').toLowerCase();
     return type == 'win' ||
@@ -135,7 +175,10 @@ class _CoinsHistoryPageState extends State<CoinsHistoryPage> {
         type == 'credit' ||
         source.endsWith('_win') ||
         source.endsWith('_reward') ||
-        source == 'iap_purchase';
+        source == 'iap_purchase' ||
+        type.contains('reward') ||
+        type.contains('prize') ||
+        type.contains('refund');
   }
 
   String _formatDateTime(DateTime dt) =>
@@ -186,10 +229,10 @@ class _CoinsHistoryPageState extends State<CoinsHistoryPage> {
         : _history.where((e) => _categoryOf(e) == _filter).toList();
     final totalCredits = _history
         .where(_isCredit)
-        .fold<int>(0, (sum, entry) => sum + (entry['coins'] as int).abs());
+        .fold<int>(0, (sum, entry) => sum + _coinsOf(entry).abs());
     final totalDebits = _history
         .where((e) => !_isCredit(e))
-        .fold<int>(0, (sum, entry) => sum + (entry['coins'] as int).abs());
+        .fold<int>(0, (sum, entry) => sum + _coinsOf(entry).abs());
 
     return Scaffold(
       body: SafeArea(
@@ -199,6 +242,18 @@ class _CoinsHistoryPageState extends State<CoinsHistoryPage> {
               _buildHeader(),
               _buildHero(totalCredits, totalDebits),
               _buildFilterRow(),
+              if (_showingSavedHistory)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 8, 14, 4),
+                  child: Text(
+                    'Showing saved history. Sync will continue when connection returns.',
+                    textAlign: TextAlign.center,
+                    style: bodyFont(context).copyWith(
+                      fontSize: 11,
+                      color: AppPalette.goldHighlight,
+                    ),
+                  ),
+                ),
               Expanded(
                 child: _loading
                     ? _buildLoading()
@@ -211,8 +266,8 @@ class _CoinsHistoryPageState extends State<CoinsHistoryPage> {
                                 backgroundColor: AppPalette.panelElevated,
                                 onRefresh: _loadHistory,
                                 child: ListView.separated(
-                                  padding: const EdgeInsets.fromLTRB(
-                                      14, 4, 14, 18),
+                                  padding:
+                                      const EdgeInsets.fromLTRB(14, 4, 14, 18),
                                   itemBuilder: (ctx, i) =>
                                       _buildRow(filteredHistory[i]),
                                   separatorBuilder: (_, __) =>
@@ -309,8 +364,7 @@ class _CoinsHistoryPageState extends State<CoinsHistoryPage> {
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 180),
               curve: Curves.easeOut,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(999),
                 gradient: selected
@@ -430,16 +484,18 @@ class _CoinsHistoryPageState extends State<CoinsHistoryPage> {
   Widget _buildRow(Map<String, dynamic> entry) {
     final category = _categoryOf(entry);
     final isPositive = _isCredit(entry);
-    final coins = (entry['coins'] as int).abs();
-    final dateTime = entry['dateTime'] as DateTime;
+    final coins = _coinsOf(entry).abs();
+    final dateTime = _dateOf(entry);
     final balanceBefore = entry['balanceBefore'] as int?;
     final balanceAfter = entry['balanceAfter'] as int?;
     final source = entry['source'] as String?;
+    final pending = entry['status'] == 'pending';
     const greenColor = Color(0xFF4ADE80);
     const redColor = Color(0xFFF87171);
     final accentColor = isPositive ? greenColor : redColor;
     final label = _titleFor(entry, category);
     final icon = _iconFor(category, isPositive);
+    final assetPath = (entry['assetPath'] as String?)?.trim();
 
     return AppGlassCard(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -465,7 +521,24 @@ class _CoinsHistoryPageState extends State<CoinsHistoryPage> {
               ),
             ),
             alignment: Alignment.center,
-            child: Icon(icon, color: accentColor, size: 22),
+            // Show the real purchased-item image when the entry carries one;
+            // otherwise fall back to the category icon. Legacy entries have no
+            // assetPath and always use the icon.
+            child: (assetPath != null && assetPath.isNotEmpty)
+                ? ClipRRect(
+                    borderRadius: BorderRadius.circular(9),
+                    child: Padding(
+                      padding: const EdgeInsets.all(4),
+                      child: Image.asset(
+                        assetPath,
+                        fit: BoxFit.contain,
+                        filterQuality: FilterQuality.medium,
+                        errorBuilder: (_, __, ___) =>
+                            Icon(icon, color: accentColor, size: 22),
+                      ),
+                    ),
+                  )
+                : Icon(icon, color: accentColor, size: 22),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -531,6 +604,17 @@ class _CoinsHistoryPageState extends State<CoinsHistoryPage> {
                       fontSize: 10,
                       color: AppPalette.textSubtle,
                       fontWeight: FontWeight.w400,
+                    ),
+                  ),
+                ],
+                if (pending) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    'Syncing...',
+                    style: safeInter(
+                      fontSize: 10,
+                      color: AppPalette.goldHighlight,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
                 ],

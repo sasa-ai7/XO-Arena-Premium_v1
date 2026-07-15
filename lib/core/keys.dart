@@ -18,6 +18,9 @@ class Keys {
   static const ownedOColors = "ownedOColors";
   static const equippedAvatar = "equippedAvatar";
   static const ownedAvatars = "ownedAvatars";
+  // Emoji system — comma-joined catalog ids.
+  static const ownedEmojis = "owned_emojis"; // paid emojis (free are implicit)
+  static const equippedEmojis = "equipped_emojis"; // ordered, max 5
   static const profilePhotoPath = "profilePhotoPath";
   static const profilePhotoUrl = "profilePhotoUrl";
   static const customXColor = "customXColor";
@@ -26,13 +29,15 @@ class Keys {
   static const customOConfigs = "customOConfigsV2";
 
   // XO Image Skin system
-  static const selectedXSkin = "selectedXSkin";  // "default" | "x5" | etc.
+  static const selectedXSkin = "selectedXSkin"; // "default" | "x5" | etc.
   static const selectedOSkin = "selectedOSkin";
-  static const ownedXSkins = "ownedXSkins";       // comma-separated: "default,x5,x1"
+  static const ownedXSkins = "ownedXSkins"; // comma-separated: "default,x5,x1"
   static const ownedOSkins = "ownedOSkins";
-  static const xColorNames = "xColorNames";       // JSON map: {"0":"My Red"}
+  static const xColorNames = "xColorNames"; // JSON map: {"0":"My Red"}
   static const oColorNames = "oColorNames";
   static const topupHistory = "topupHistory";
+  static const offlineTopupHistory = "offline_topupHistory";
+  static const legacyHistoryOwnerUid = "legacyHistoryOwnerUid";
 
   static const levelGameCurrentLevel = "levelGameCurrentLevel";
   static const levelGameCompleted = "levelGameCompleted";
@@ -106,23 +111,50 @@ class Keys {
   static const offlineDraws = 'offline_draws';
 
   /// Offline cosmetics — local-only, never written to Firestore.
-  static const offlineOwnedAvatars   = 'offline_owned_avatars';
+  static const offlineOwnedAvatars = 'offline_owned_avatars';
   static const offlineSelectedAvatar = 'offline_selected_avatar';
-  static const offlineOwnedXSkins    = 'offline_owned_x_skins';
-  static const offlineSelectedXSkin  = 'offline_selected_x_skin';
-  static const offlineOwnedOSkins    = 'offline_owned_o_skins';
-  static const offlineSelectedOSkin  = 'offline_selected_o_skin';
+  static const offlineOwnedXSkins = 'offline_owned_x_skins';
+  static const offlineSelectedXSkin = 'offline_selected_x_skin';
+  static const offlineOwnedOSkins = 'offline_owned_o_skins';
+  static const offlineSelectedOSkin = 'offline_selected_o_skin';
+  static const offlineOwnedEmojis = 'offline_owned_emojis';
+  static const offlineEquippedEmojis = 'offline_equipped_emojis';
+  static const offlineXColor = 'offline_x_color';
+  static const offlineOColor = 'offline_o_color';
+  static const offlineOwnedXColors = 'offline_owned_x_colors';
+  static const offlineOwnedOColors = 'offline_owned_o_colors';
+
+  /// One-time flag: offline namespace has been seeded from the shared/online
+  /// cosmetics + wallet so upgrading offline players keep what they had.
+  static const offlineSeedDone = 'offline_seed_done_v1';
 
   /// Notifications: fired once on first Home entry, then never again.
   static const hasPromptedNotification = 'has_prompted_notification';
 
-  /// Daily reminder toggle state (Settings → Daily Reminders).
+  /// Notifications toggle state (Settings). Controls the daily 9 PM local
+  /// play reminder and FCM push registration.
   static const notificationsEnabled = 'notifications_enabled';
 
   /// Missions/Quests system — local-only progress + claim state.
-  static const missionsProgress = 'missions_progress';      // JSON map id->int
-  static const missionsClaimed = 'missions_claimed';        // JSON map (id | id#tier)->bool
-  static const missionsLastDaily = 'missions_last_daily';   // yyyy-MM-dd
-  static const missionsWeekId = 'missions_week_id';         // Monday-of-week yyyy-MM-dd
-  static const missionsDedupe = 'missions_dedupe';          // JSON list of eventKey|matchId (today)
+  static const missionsProgress = 'missions_progress'; // JSON map id->int
+  static const missionsClaimed =
+      'missions_claimed'; // JSON map (id | id#tier)->bool
+  static const missionsLastDaily = 'missions_last_daily'; // yyyy-MM-dd
+  static const missionsWeekId = 'missions_week_id'; // Monday-of-week yyyy-MM-dd
+  static const missionsDedupe =
+      'missions_dedupe'; // JSON list of eventKey|matchId (today)
+  // Consecutive-day login streak feeding the `milestone_login_7day` reward.
+  static const missionsLoginStreak = 'missions_login_streak'; // int
+  static const missionsLoginDay =
+      'missions_login_day'; // yyyy-MM-dd (last counted)
+
+  /// Offline mission state — kept separate from the online mission progress so
+  /// offline events never move online missions and vice-versa. Same schema.
+  static const offlineMissionsProgress = 'offline_missions_progress';
+  static const offlineMissionsClaimed = 'offline_missions_claimed';
+  static const offlineMissionsLastDaily = 'offline_missions_last_daily';
+  static const offlineMissionsWeekId = 'offline_missions_week_id';
+  static const offlineMissionsDedupe = 'offline_missions_dedupe';
+  static const offlineMissionsLoginStreak = 'offline_missions_login_streak';
+  static const offlineMissionsLoginDay = 'offline_missions_login_day';
 }

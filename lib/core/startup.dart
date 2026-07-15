@@ -8,11 +8,13 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/keys.dart';
+import '../core/firebase_bootstrap.dart';
 import '../screens/home/home_hub.dart';
 import '../screens/login_screen.dart';
 import '../screens/offline_player_setup_screen.dart';
 import '../screens/welcome_screen.dart';
 import '../services/local_store.dart';
+import '../services/app_mode_service.dart';
 import '../services/mission_service.dart';
 import '../widgets/full_avatar_display.dart';
 
@@ -23,16 +25,54 @@ Future<String> getStartupRouteFuture() {
 }
 
 Future<String> _prepareStartupRoute() async {
+  await FirebaseBootstrap.ready;
   final warmupFuture = _warmStartupServices();
   final routeName = await _resolveStartupRouteName();
   await warmupFuture;
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    Future<void>.delayed(
+      const Duration(milliseconds: 700),
+      () => unawaited(_runDeferredStartupJobs()),
+    );
+  });
   return routeName;
 }
 
+Future<void> _runDeferredStartupJobs() async {
+  Future<void> runSafely(String name, Future<void> Function() job) async {
+    try {
+      await job();
+    } catch (error, stackTrace) {
+      if (kDebugMode) {
+        debugPrint('[startup] deferred $name failed: $error');
+        debugPrintStack(stackTrace: stackTrace);
+      }
+    }
+  }
+
+  // These jobs are deliberately independent. A slow local migration or plugin
+  // call in one must never delay the first usable Home frame or the other job.
+  unawaited(runSafely('missions', MissionService.instance.init));
+  unawaited(runSafely(
+    'date formatting',
+    () => Future.wait<void>(<Future<void>>[
+      _initializeDateFormattingSafely('en_US'),
+      _initializeDateFormattingSafely('pt_BR'),
+    ]),
+  ));
+}
+
 Future<void> _warmStartupServices() async {
+  // Select the data namespace before any wallet/cosmetic notifier loads.
+  // A local-only player must never read or write the signed-in cache.
+  final signedIn =
+      Firebase.apps.isNotEmpty && FirebaseAuth.instance.currentUser != null;
+  AppModeService.setMode(signedIn ? AppMode.online : AppMode.offline);
+
   FullAvatarDisplay.bindNotifier(LocalStore.profilePhotoUrlNotifier);
   FullAvatarDisplay.bindLocalPathNotifier(LocalStore.profileImagePathNotifier);
-  FullAvatarDisplay.bindOfflineAvatarAssetNotifier(LocalStore.offlineAvatarAssetNotifier);
+  FullAvatarDisplay.bindOfflineAvatarAssetNotifier(
+      LocalStore.offlineAvatarAssetNotifier);
 
   try {
     await LocalStore.ensureDefaults();
@@ -50,13 +90,23 @@ Future<void> _warmStartupServices() async {
     LocalStore.localeNotifier.value = Locale(lang);
   } catch (_) {}
 
+  // One-time online→offline data split: seed the offline namespace from the
+  // shared keys so existing offline players keep their cosmetics/missions when
+  // offline. Must run BEFORE the notifiers/missions load so they read the
+  // seeded offline values. No-op for online-only or already-seeded installs.
+  try {
+    await LocalStore.seedOfflineNamespaceIfNeeded();
+  } catch (error, stackTrace) {
+    if (kDebugMode) {
+      debugPrint('[startup] offline seed failed: $error');
+      debugPrintStack(stackTrace: stackTrace);
+    }
+  }
+
   try {
     await Future.wait<void>([
       LocalStore.initCoinsNotifier(),
       LocalStore.initProfileNotifier(),
-      // Arms daily_login + runs daily/weekly resets so the Missions badge is
-      // correct on the first Home frame. Local-only; never credits coins.
-      MissionService.instance.init(),
     ]);
   } catch (error, stackTrace) {
     if (kDebugMode) {
@@ -85,10 +135,6 @@ Future<void> _warmStartupServices() async {
     }
   }
 
-  unawaited(Future.wait<void>([
-    _initializeDateFormattingSafely('en_US'),
-    _initializeDateFormattingSafely('pt_BR'),
-  ]));
   // SoundService init is intentionally NOT part of the startup warmup
   // anymore. Initializing MediaPlayer (and on iOS the audio session) during
   // route resolution caused 100+ skipped frames during the first home

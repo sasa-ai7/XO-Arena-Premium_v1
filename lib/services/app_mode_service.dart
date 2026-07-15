@@ -94,7 +94,8 @@ class AppModeService {
   /// If [body] throws, the token is cleared automatically and the caller is
   /// expected to set an appropriate failure mode (e.g.
   /// [AppMode.connectionProblem]).
-  static Future<T> withReconnectToken<T>(Future<T> Function(String token) body) async {
+  static Future<T> withReconnectToken<T>(
+      Future<T> Function(String token) body) async {
     final token = DateTime.now().microsecondsSinceEpoch.toString();
     _activeReconnectToken = token;
     if (kDebugMode) debugPrint('[RECONNECT] attemptId=$token started');
@@ -128,6 +129,9 @@ class AppModeService {
     Future<void> Function()? handler,
   ) {
     _onConfirmedGoOnline = handler;
+    if (handler != null && kDebugMode) {
+      debugPrint('[ONLINE_SWITCH] handler registered');
+    }
   }
 
   /// Invoke the registered "Go Online" reconnect flow. Returns immediately
@@ -164,6 +168,9 @@ class AppModeService {
     if (modeNotifier.value == mode) return; // No-op if already in this mode
     if (kDebugMode) debugPrint('[AppMode] → $mode');
     final previous = modeNotifier.value;
+    if (kDebugMode) {
+      debugPrint('[APP_MODE] ${previous.name} -> ${mode.name}');
+    }
     modeNotifier.value = mode;
     _applyFirestoreNetworkPolicy(previous, mode);
   }

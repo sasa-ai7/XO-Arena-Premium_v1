@@ -1,7 +1,7 @@
 import 'dart:math';
 
-import 'package:cached_network_image/cached_network_image.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -9,9 +9,10 @@ import '../../core/app_l10n.dart';
 import '../../core/app_theme.dart';
 import '../../services/referral/referral_service.dart';
 import '../../widgets/app_ui.dart';
+import '../../widgets/arena_neon_widgets.dart';
 import '../../widgets/arena_toast.dart';
 import '../arena/widgets/digit_keypad.dart';
-import 'invite_friends_page.dart';
+import '../store/store_page.dart';
 
 class EnterInviteCodePage extends StatefulWidget {
   const EnterInviteCodePage({super.key});
@@ -62,7 +63,8 @@ class _EnterInviteCodePageState extends State<EnterInviteCodePage> {
     final digits = raw.replaceAll(RegExp(r'\D'), '');
     if (digits.length < _length) {
       if (mounted) {
-        ArenaToast.error(context, AppL10n.of(context).clipboardNoValidInviteCode);
+        ArenaToast.error(
+            context, AppL10n.of(context).clipboardNoValidInviteCode);
       }
       return;
     }
@@ -72,6 +74,7 @@ class _EnterInviteCodePageState extends State<EnterInviteCodePage> {
   Future<void> _submit() async {
     if (_value.length != _length || _busy) return;
     final l10n = AppL10n.of(context);
+    final startedAt = DateTime.now();
 
     // Fast self-referral guard: avoid round-tripping Firestore if the entered
     // code matches the user's own.
@@ -82,7 +85,21 @@ class _EnterInviteCodePageState extends State<EnterInviteCodePage> {
 
     setState(() => _busy = true);
     try {
-      final res = await ReferralService.instance.redeem(code: _value);
+      var res = await ReferralService.instance.redeem(code: _value);
+      // Brand-new accounts may not be fully synced on the first attempt.
+      // Retry once automatically after a short delay before giving up.
+      if (!res.success && res.error == ReferralError.notReady) {
+        if (kDebugMode) {
+          debugPrint('[REFERRAL] notReady — auto-retrying once after sync delay');
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 1200));
+        if (!mounted) return;
+        res = await ReferralService.instance.redeem(code: _value);
+      }
+      if (kDebugMode) {
+        final ms = DateTime.now().difference(startedAt).inMilliseconds;
+        debugPrint('[PERF] invite_code_submit_ms=$ms');
+      }
       if (!mounted) return;
       if (res.success) {
         await _showSuccessDialog(res);
@@ -113,24 +130,33 @@ class _EnterInviteCodePageState extends State<EnterInviteCodePage> {
         return l10n.referralCompleted;
       case ReferralError.networkError:
         return l10n.referralNetworkError;
+      case ReferralError.notReady:
+        return l10n.somethingWentWrong;
       default:
         return l10n.referralRedeemError;
     }
   }
 
+  Future<void> _openCoinsStore() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const StorePage(initialTab: 2)),
+    );
+  }
+
   Future<void> _showSuccessDialog(ReferralRedeemResult res) async {
     final l10n = AppL10n.of(context);
     final hasReferrer = (res.referrerName ?? '').isNotEmpty;
-    final hasPhoto = (res.referrerPhotoURL ?? '').isNotEmpty;
-    final friendName = hasReferrer ? res.referrerName! : 'a friend';
+    final friendName = hasReferrer ? res.referrerName! : l10n.defaultFriendName;
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
+      barrierColor: Colors.black.withValues(alpha: 0.74),
       builder: (ctx) => Dialog(
         backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
         child: Container(
-          constraints: const BoxConstraints(maxWidth: 340),
-          padding: const EdgeInsets.fromLTRB(24, 28, 24, 20),
+          constraints: const BoxConstraints(maxWidth: 380),
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
           decoration: BoxDecoration(
             gradient: const LinearGradient(
               colors: [AppPalette.homePanelStrong, AppPalette.panelDeep],
@@ -157,43 +183,28 @@ class _EnterInviteCodePageState extends State<EnterInviteCodePage> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
-                width: 80,
-                height: 80,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: AppPalette.primary.withValues(alpha: 0.85),
-                    width: 2.4,
+              ClipRRect(
+                borderRadius: BorderRadius.circular(22),
+                child: SizedBox(
+                  height: 132,
+                  width: double.infinity,
+                  child: Image.asset(
+                    kArenaInviteAsset,
+                    fit: BoxFit.cover,
+                    alignment: Alignment.centerLeft,
+                    cacheWidth: 720,
                   ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppPalette.primary.withValues(alpha: 0.35),
-                      blurRadius: 22,
-                    ),
-                  ],
-                  color: AppPalette.panelDeep,
                 ),
-                clipBehavior: Clip.antiAlias,
-                child: hasPhoto
-                    ? CachedNetworkImage(
-                        imageUrl: res.referrerPhotoURL!,
-                        fit: BoxFit.cover,
-                        placeholder: (_, __) => const _ReferrerFallback(),
-                        errorWidget: (_, __, ___) =>
-                            const _ReferrerFallback(),
-                      )
-                    : const _ReferrerFallback(),
               ),
               const SizedBox(height: 16),
               Text(
                 l10n.giftClaimed,
                 textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: AppPalette.gold,
-                  fontSize: 22,
+                style: safeOrbitron(
+                  color: AppPalette.goldHighlight,
+                  fontSize: 21,
                   fontWeight: FontWeight.w900,
-                  letterSpacing: 0.6,
+                  letterSpacing: 0.8,
                   shadows: [
                     Shadow(color: AppPalette.gold, blurRadius: 12),
                   ],
@@ -203,24 +214,14 @@ class _EnterInviteCodePageState extends State<EnterInviteCodePage> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Image.asset(
-                    'assets/coin/COIN.png',
-                    width: 24,
-                    height: 24,
-                    errorBuilder: (_, __, ___) => const Icon(
-                      Icons.monetization_on_rounded,
-                      color: AppPalette.gold,
-                      size: 24,
-                    ),
-                  ),
+                  missionCoinSmall(28),
                   const SizedBox(width: 8),
                   Text(
                     '+${res.rewardCoins}',
-                    style: const TextStyle(
+                    style: safeOrbitron(
                       color: AppPalette.gold,
                       fontSize: 28,
                       fontWeight: FontWeight.w900,
-                      fontFamily: 'Orbitron',
                       shadows: [
                         Shadow(color: AppPalette.gold, blurRadius: 16),
                       ],
@@ -232,7 +233,7 @@ class _EnterInviteCodePageState extends State<EnterInviteCodePage> {
               Text(
                 l10n.referralReceivedCoins(res.rewardCoins, friendName),
                 textAlign: TextAlign.center,
-                style: const TextStyle(
+                style: safeInter(
                   color: AppPalette.text,
                   fontWeight: FontWeight.w600,
                   fontSize: 14,
@@ -240,44 +241,24 @@ class _EnterInviteCodePageState extends State<EnterInviteCodePage> {
               ),
               const SizedBox(height: 6),
               Text(
-                l10n.shareYourCode,
+                l10n.rewardOnValidCode,
                 textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: AppPalette.textMuted.withValues(alpha: 0.85),
+                style: safeInter(
+                  color: AppPalette.textMuted,
                   fontSize: 12,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
               const SizedBox(height: 20),
               SizedBox(
                 width: double.infinity,
-                height: 48,
-                child: ElevatedButton(
-                  onPressed: () {
-                    Navigator.of(ctx).pop();
-                    Navigator.of(context).pushReplacement(
-                      MaterialPageRoute(
-                        builder: (_) => const InviteFriendsPage(),
-                      ),
-                    );
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppPalette.primary.withValues(alpha: 0.18),
-                    foregroundColor: AppPalette.primary,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      side: BorderSide(
-                        color: AppPalette.primary.withValues(alpha: 0.7),
-                        width: 1.2,
-                      ),
-                    ),
-                    textStyle: const TextStyle(
-                      fontWeight: FontWeight.w800,
-                      fontSize: 14,
-                      letterSpacing: 0.4,
-                    ),
-                  ),
-                  child: Text(l10n.myInviteCode),
+                child: NeonActionButton(
+                  label: l10n.okBtn,
+                  onTap: () => Navigator.of(ctx).pop(),
+                  minWidth: 0,
+                  height: 48,
+                  accent: AppPalette.homeCyan,
+                  accentSecondary: AppPalette.homeBlue,
                 ),
               ),
               const SizedBox(height: 8),
@@ -285,9 +266,10 @@ class _EnterInviteCodePageState extends State<EnterInviteCodePage> {
                 onPressed: () => Navigator.of(ctx).pop(),
                 child: Text(
                   l10n.close,
-                  style: const TextStyle(
+                  style: safeInter(
                     color: AppPalette.textMuted,
                     fontWeight: FontWeight.w700,
+                    fontSize: 12,
                   ),
                 ),
               ),
@@ -310,56 +292,98 @@ class _EnterInviteCodePageState extends State<EnterInviteCodePage> {
       body: AppBackground(
         variant: AppBackgroundVariant.homeNeon,
         child: SafeArea(
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
-                child: Row(
-                  children: [
-                    AppIconButton(
-                      icon: Icons.arrow_back,
-                      onTap: () => Navigator.of(context).maybePop(),
-                    ),
-                    const SizedBox(width: 12),
-                    Text(
-                      l10n.enterInviteCodeTitle,
-                      style: const TextStyle(
-                        color: AppPalette.text,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ],
+          child: Directionality(
+            textDirection: l10n.isAr ? TextDirection.rtl : TextDirection.ltr,
+            child: Column(
+              children: [
+                XoArenaScreenHeader(
+                  onBack: () => Navigator.of(context).maybePop(),
+                  onCoinsTap: _openCoinsStore,
                 ),
-              ),
-              Expanded(
-                child: Padding(
-                  padding: EdgeInsets.symmetric(horizontal: padH),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
                   child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
                         l10n.enterInviteCodeTitle,
-                        style: const TextStyle(
-                          color: AppPalette.textMuted,
-                          fontSize: 13,
-                          letterSpacing: 0.5,
+                        style: homeTitleFont(context, fontSize: 24),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        l10n.enterInviteCodeSubtitle,
+                        style: homeBodyFont(
+                          context,
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w800,
+                          color: AppPalette.homeBody,
                         ),
                       ),
-                      const SizedBox(height: 14),
-                      Center(
-                        child: DigitSlotsDisplay(
-                          value: _value,
-                          length: _length,
-                          maxWidth: slotsMaxWidth,
-                          maxSlotHeight: 50,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Center(
-                        child: _PasteButton(
-                          onTap: _paste,
-                          label: l10n.pasteCode,
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: ListView(
+                    padding: EdgeInsets.fromLTRB(padH, 0, padH, 22),
+                    physics: const BouncingScrollPhysics(),
+                    children: [
+                      _InviteHeroCard(),
+                      const SizedBox(height: 16),
+                      AppGlassCard(
+                        padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
+                        radius: 24,
+                        borderColor:
+                            AppPalette.homeCyan.withValues(alpha: 0.38),
+                        child: Column(
+                          children: [
+                            Text(
+                              l10n.inviteCodeLabel,
+                              style: homeLabelFont(
+                                context,
+                                fontSize: 13,
+                                color: AppPalette.homeCyan,
+                              ),
+                            ),
+                            const SizedBox(height: 14),
+                            Center(
+                              child: DigitSlotsDisplay(
+                                value: _value,
+                                length: _length,
+                                maxWidth: slotsMaxWidth,
+                                maxSlotHeight: 52,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            Center(
+                              child: _PasteButton(
+                                onTap: _paste,
+                                label: l10n.pasteCode,
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            SizedBox(
+                              width: double.infinity,
+                              child: NeonActionButton(
+                                label: l10n.confirmCodeBtn,
+                                onTap: _value.length == _length && !_busy
+                                    ? _submit
+                                    : null,
+                                busy: _busy,
+                                minWidth: 0,
+                                height: 50,
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            Text(
+                              l10n.inviteOneTimeNote,
+                              textAlign: TextAlign.center,
+                              style: safeInter(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w700,
+                                color: AppPalette.textMuted,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                       const SizedBox(height: 16),
@@ -370,23 +394,15 @@ class _EnterInviteCodePageState extends State<EnterInviteCodePage> {
                             onDigit: _addDigit,
                             onDelete: _delete,
                             onEnter: _submit,
-                            enterEnabled:
-                                _value.length == _length && !_busy,
+                            enterEnabled: _value.length == _length && !_busy,
                           ),
                         ),
                       ),
-                      const SizedBox(height: 16),
-                      if (_busy)
-                        const SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(strokeWidth: 2.2),
-                        ),
                     ],
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -394,23 +410,102 @@ class _EnterInviteCodePageState extends State<EnterInviteCodePage> {
   }
 }
 
-/// Default referrer avatar used while the network image is loading or if
-/// the referrer has no photo. Asset is shipped with the app.
-class _ReferrerFallback extends StatelessWidget {
-  const _ReferrerFallback();
-
+class _InviteHeroCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    return Image.asset(
-      'assets/account/man.png',
-      fit: BoxFit.cover,
-      errorBuilder: (_, __, ___) => Container(
-        color: AppPalette.panelDeep,
-        alignment: Alignment.center,
-        child: const Icon(
-          Icons.person_rounded,
-          color: AppPalette.textMuted,
-          size: 40,
+    final l10n = AppL10n.of(context);
+    return AppGlassCard(
+      padding: EdgeInsets.zero,
+      radius: 26,
+      borderColor: AppPalette.homePurple.withValues(alpha: 0.42),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(25),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final imageWidth = constraints.maxWidth * 0.42;
+            return Directionality(
+              textDirection: TextDirection.ltr,
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: imageWidth,
+                    height: 194,
+                    child: RepaintBoundary(
+                      child: Image.asset(
+                        kArenaInviteAsset,
+                        fit: BoxFit.cover,
+                        alignment: Alignment.centerLeft,
+                        cacheWidth: 760,
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: Directionality(
+                      textDirection:
+                          l10n.isAr ? TextDirection.rtl : TextDirection.ltr,
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 16, 16, 16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              l10n.enterInviteCodeTitle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: homeTitleFont(context, fontSize: 21),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              l10n.enterInviteCodeHeroBody,
+                              maxLines: 4,
+                              overflow: TextOverflow.ellipsis,
+                              style: homeBodyFont(
+                                context,
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w800,
+                                color: AppPalette.homeBody,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 8,
+                              ),
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(999),
+                                color: AppPalette.gold.withValues(alpha: 0.14),
+                                border: Border.all(
+                                  color: AppPalette.goldHighlight
+                                      .withValues(alpha: 0.58),
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  missionCoinSmall(18),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    l10n.plus100Coins,
+                                    style: safeInter(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w900,
+                                      color: AppPalette.goldHighlight,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
         ),
       ),
     );

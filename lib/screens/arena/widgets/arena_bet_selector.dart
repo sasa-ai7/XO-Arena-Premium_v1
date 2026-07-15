@@ -211,12 +211,19 @@ class _ArenaBetSelectorState extends State<ArenaBetSelector> {
           if (balanceTooLow) ...[
             const SizedBox(height: 6),
             Text(
-              l10n.isAr ? 'لا توجد عملات كافية' : 'Not enough coins',
+              l10n.notEnoughCoinsShort,
               style: const TextStyle(
                 color: AppPalette.danger,
                 fontSize: 11,
                 fontWeight: FontWeight.w700,
               ),
+            ),
+          ],
+          if (!widget.enabled) ...[
+            const SizedBox(height: 10),
+            _FriendlyModePanel(
+              title: l10n.noEntryFee,
+              subtitle: l10n.friendlyMatchMode,
             ),
           ],
           if (widget.enabled) ...[
@@ -230,7 +237,7 @@ class _ArenaBetSelectorState extends State<ArenaBetSelector> {
               onSubmit: (_) => _commitEdit(),
               onMinus: _decrement,
               onPlus: _increment,
-              coinsLabel: l10n.isAr ? 'عملة' : 'coins',
+              coinsLabel: l10n.coinsWord,
             ),
             const SizedBox(height: 12),
             _PresetGrid(
@@ -270,7 +277,7 @@ class _Header extends StatelessWidget {
     return Row(
       children: [
         Image.asset(
-          'assets/coin/COIN.png',
+          'assets/coin/COIN.webp',
           width: 22,
           height: 22,
           errorBuilder: (_, __, ___) => const Icon(
@@ -301,6 +308,73 @@ class _Header extends StatelessWidget {
           inactiveTrackColor: AppPalette.panelDeep,
         ),
       ],
+    );
+  }
+}
+
+class _FriendlyModePanel extends StatelessWidget {
+  final String title;
+  final String subtitle;
+
+  const _FriendlyModePanel({required this.title, required this.subtitle});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
+      decoration: BoxDecoration(
+        color: AppPalette.success.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: AppPalette.success.withValues(alpha: 0.34),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: AppPalette.success.withValues(alpha: 0.14),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.handshake_rounded,
+              color: AppPalette.success,
+              size: 19,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppPalette.success,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  subtitle,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppPalette.textMuted,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -567,8 +641,7 @@ class _PrizePoolRow extends StatelessWidget {
     return Row(
       children: [
         Container(
-          padding:
-              const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           decoration: BoxDecoration(
             color: AppPalette.gold.withValues(alpha: 0.12),
             borderRadius: BorderRadius.circular(999),
@@ -587,9 +660,7 @@ class _PrizePoolRow extends StatelessWidget {
               ),
               const SizedBox(width: 6),
               Text(
-                l10n.isAr
-                    ? 'الجائزة: $prizePool'
-                    : 'Prize Pool: $prizePool',
+                '${l10n.prizePoolLabel}: $prizePool',
                 style: const TextStyle(
                   color: AppPalette.gold,
                   fontWeight: FontWeight.w900,
@@ -600,21 +671,33 @@ class _PrizePoolRow extends StatelessWidget {
             ],
           ),
         ),
-        const Spacer(),
-        Text(
-          '${l10n.yourCoins}: ',
-          style: const TextStyle(
-            color: AppPalette.textMuted,
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        Text(
-          '$balance',
-          style: TextStyle(
-            color: insufficient ? AppPalette.danger : AppPalette.primary,
-            fontSize: 13,
-            fontWeight: FontWeight.w900,
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(
+                  text: '${l10n.yourCoins}: ',
+                  style: const TextStyle(
+                    color: AppPalette.textMuted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                TextSpan(
+                  text: '$balance',
+                  style: TextStyle(
+                    color:
+                        insufficient ? AppPalette.danger : AppPalette.primary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.end,
           ),
         ),
       ],

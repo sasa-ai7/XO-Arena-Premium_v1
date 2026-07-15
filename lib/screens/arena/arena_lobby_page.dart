@@ -7,13 +7,19 @@ import 'package:flutter/services.dart';
 
 import '../../core/app_l10n.dart';
 import '../../core/app_theme.dart';
+import '../../models/arena/arena_chat_signal.dart';
 import '../../models/arena/arena_room.dart';
+import '../../models/game_avatar.dart';
+import '../../services/arena/arena_chat_service.dart';
 import '../../services/arena/arena_presence_service.dart';
 import '../../services/arena/arena_repo.dart';
+import '../../services/local_store.dart';
 import '../../widgets/app_ui.dart';
 import '../../widgets/arena_toast.dart';
+import '../../widgets/full_avatar_display.dart';
 import 'arena_game_page.dart';
 import 'arena_share_helper.dart';
+import 'widgets/arena_chat_widgets.dart';
 import 'widgets/arena_leave_dialog.dart';
 import 'widgets/arena_profile_circle.dart';
 import 'widgets/arena_skin_preview.dart';
@@ -28,6 +34,72 @@ class ArenaLobbyPage extends StatefulWidget {
   State<ArenaLobbyPage> createState() => _ArenaLobbyPageState();
 }
 
+class _LobbyDisconnectOverlay extends StatelessWidget {
+  final int? deadlineAtMs;
+  const _LobbyDisconnectOverlay({required this.deadlineAtMs});
+
+  @override
+  Widget build(BuildContext context) {
+    final remaining =
+        ((deadlineAtMs ?? 0) - DateTime.now().millisecondsSinceEpoch)
+            .clamp(0, 120000);
+    final totalSeconds = (remaining / 1000).ceil();
+    final clock = '${(totalSeconds ~/ 60).toString().padLeft(2, '0')}:'
+        '${(totalSeconds % 60).toString().padLeft(2, '0')}';
+    return AbsorbPointer(
+      absorbing: true,
+      child: ColoredBox(
+        color: Colors.black.withValues(alpha: 0.42),
+        child: Center(
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 32),
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 22),
+            decoration: BoxDecoration(
+              color: AppPalette.panel.withValues(alpha: 0.96),
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(color: AppPalette.gold),
+              boxShadow: <BoxShadow>[
+                BoxShadow(
+                  color: AppPalette.gold.withValues(alpha: 0.25),
+                  blurRadius: 28,
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                const CircularProgressIndicator(color: AppPalette.gold),
+                const SizedBox(height: 14),
+                const Text(
+                  'Waiting for opponent',
+                  style: TextStyle(
+                    color: AppPalette.text,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 17,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                const Text('Reconnecting…',
+                    style: TextStyle(color: AppPalette.textMuted)),
+                const SizedBox(height: 12),
+                Text(
+                  clock,
+                  style: const TextStyle(
+                    color: AppPalette.gold,
+                    fontFamily: 'Orbitron',
+                    fontWeight: FontWeight.w900,
+                    fontSize: 24,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ArenaLobbyPageState extends State<ArenaLobbyPage>
     with WidgetsBindingObserver {
   late ArenaRoom _room;
@@ -40,6 +112,12 @@ class _ArenaLobbyPageState extends State<ArenaLobbyPage>
   bool _hasExitedRoom = false;
   bool _kickedHandled = false;
   ArenaPresenceService? _presence;
+  ArenaChatService? _chatService;
+  StreamSubscription<Map<String, ArenaChatSignal>>? _chatSub;
+  Map<String, ArenaChatSignal> _chatSignals = const <String, ArenaChatSignal>{};
+  bool _showQuickEmojis = true;
+  List<String> _equippedEmojis = const <String>[];
+  bool _disconnectMutationPending = false;
 
   String? get _uid => FirebaseAuth.instance.currentUser?.uid;
   bool get _isHost => _uid != null && _uid == _room.hostUid;
@@ -48,16 +126,44 @@ class _ArenaLobbyPageState extends State<ArenaLobbyPage>
   void initState() {
     super.initState();
     _room = widget.initialRoom;
+    _loadEquippedEmojis();
     _sub = ArenaRepo.instance.watchRoom(_room.roomCode).listen(_onRoomChange);
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() {});
+      if (mounted) {
+        setState(() {});
+        _syncDisconnectState();
+      }
     });
     WidgetsBinding.instance.addObserver(this);
     final uid = _uid;
     if (uid != null && uid.isNotEmpty) {
-      _presence =
-          ArenaPresenceService(code: _room.roomCode, selfUid: uid);
+      _presence = ArenaPresenceService(code: _room.roomCode, selfUid: uid);
       _presence!.start();
+      _startChat(uid);
+    }
+  }
+
+  void _startChat(String uid) {
+    final selfName = uid == _room.hostUid
+        ? _room.hostName
+        : (_room.guestName?.trim().isNotEmpty == true
+            ? _room.guestName!
+            : 'PLAYER');
+    try {
+      final service = ArenaChatService(
+        roomCode: _room.roomCode,
+        selfUid: uid,
+        selfName: selfName,
+      );
+      _chatService = service;
+      _chatSub = service.watchSignals().listen(
+        (signals) {
+          if (mounted) setState(() => _chatSignals = signals);
+        },
+        onError: (_) {},
+      );
+    } catch (_) {
+      _chatService = null;
     }
   }
 
@@ -65,6 +171,7 @@ class _ArenaLobbyPageState extends State<ArenaLobbyPage>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // Part 1: presence-only on background — no auto-leave/cancel.
     // The presence service handles online→offline state automatically.
+    if (state == AppLifecycleState.resumed) _presence?.markOnlineNow();
   }
 
   void _onRoomChange(ArenaRoom? room) {
@@ -80,7 +187,7 @@ class _ArenaLobbyPageState extends State<ArenaLobbyPage>
       final iAmHost = _uid != null && _uid == _room.hostUid;
       if (!_cancelledHandled && room != null && !iAmHost) {
         _cancelledHandled = true;
-        ArenaToast.warning(context, 'Room was cancelled by the host.');
+        ArenaToast.warning(context, AppL10n.of(context).roomCancelledToast);
       }
       _exitRoomOnce();
       return;
@@ -108,17 +215,19 @@ class _ArenaLobbyPageState extends State<ArenaLobbyPage>
         debugPrint('[ARENA_KICK] guest_exit_after_kick uid=$selfUid '
             'room=${room.roomCode}');
       }
-      ArenaToast.error(
-          context, 'You were removed from this room by the host.');
+      ArenaToast.error(context, AppL10n.of(context).removedFromRoomToast);
       _exitRoomOnce();
       return;
     }
     setState(() => _room = room);
+    _syncDisconnectState();
     // Hand off to gameplay when status flips.
     if (!_navigated &&
         (room.status == 'countdown' ||
             room.status == 'playing' ||
-            room.status == 'ready')) {
+            room.status == 'ready' ||
+            (room.status == 'finished' &&
+                room.result == 'disconnect_forfeit'))) {
       _navigated = true;
       Future.microtask(() {
         if (!mounted) return;
@@ -129,13 +238,50 @@ class _ArenaLobbyPageState extends State<ArenaLobbyPage>
     }
   }
 
+  Future<void> _syncDisconnectState() async {
+    if (!mounted || _disconnectMutationPending) return;
+    final selfUid = _uid;
+    if (selfUid == null || _room.status == 'finished') return;
+    final opponentUid = _room.opponentOf(selfUid);
+    if (opponentUid.isEmpty) return;
+    final state = _presence?.derive(_room, opponentUid);
+    _disconnectMutationPending = true;
+    try {
+      if (state == PresenceState.offline) {
+        if (_room.disconnectUid == null || _room.disconnectUid!.isEmpty) {
+          await ArenaRepo.instance.startDisconnectGrace(
+            code: _room.roomCode,
+            disconnectedUid: opponentUid,
+          );
+        } else if (_room.disconnectUid == opponentUid &&
+            DateTime.now().millisecondsSinceEpoch >=
+                (_room.disconnectDeadlineAt ?? 1 << 62)) {
+          await ArenaRepo.instance.finishRoomByDisconnectForfeit(
+            code: _room.roomCode,
+            disconnectedUid: opponentUid,
+            winnerUid: selfUid,
+          );
+        }
+      } else if (state == PresenceState.online &&
+          _room.disconnectUid == opponentUid) {
+        await ArenaRepo.instance.clearDisconnectGrace(
+          code: _room.roomCode,
+          reconnectedUid: opponentUid,
+        );
+      }
+    } finally {
+      _disconnectMutationPending = false;
+    }
+  }
+
   /// Single exit funnel. Cancels the room subscription before navigating so
   /// no stale listener tick can re-enter this screen mid-pop. Idempotent —
   /// repeated calls are no-ops.
   Future<void> _exitRoomOnce() async {
     if (_hasExitedRoom) {
       if (kDebugMode) {
-        debugPrint('[ARENA] exit ignored — already exited room=${_room.roomCode}');
+        debugPrint(
+            '[ARENA] exit ignored — already exited room=${_room.roomCode}');
       }
       return;
     }
@@ -153,8 +299,12 @@ class _ArenaLobbyPageState extends State<ArenaLobbyPage>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _sub?.cancel();
+    _chatSub?.cancel();
+    _chatService?.dispose();
     _ticker?.cancel();
-    _presence?.stop();
+    // A lobby -> game replacement is not a disconnect. Avoid stamping an
+    // offline presence after the game page has already marked this uid online.
+    _presence?.stop(markOffline: !_navigated);
     super.dispose();
   }
 
@@ -167,32 +317,37 @@ class _ArenaLobbyPageState extends State<ArenaLobbyPage>
     final result = await ArenaRepo.instance.kickGuest(code: _room.roomCode);
     if (!mounted) return;
     if (result.success) return;
+    final l10n = AppL10n.of(context);
     switch (result.failure) {
       case ArenaKickFailure.noGuest:
-        ArenaToast.warning(context, 'No player to remove.');
+        ArenaToast.warning(context, l10n.noPlayerToRemove);
         break;
       case ArenaKickFailure.badStatus:
-        ArenaToast.warning(
-            context, 'You can only remove a player from the lobby.');
+        ArenaToast.warning(context, l10n.removePlayerLobbyOnly);
         break;
       case ArenaKickFailure.permissionDenied:
-        ArenaToast.error(context, 'Permission denied. Try again.');
+        ArenaToast.error(context, l10n.permissionDeniedRetry);
         break;
       case ArenaKickFailure.network:
-        ArenaToast.error(context, 'Network issue. Try again.');
+        ArenaToast.error(context, l10n.networkIssueRetry);
         break;
       case ArenaKickFailure.notHost:
       case ArenaKickFailure.unknown:
       case null:
-        ArenaToast.error(context, 'Could not kick player. Try again.');
+        ArenaToast.error(context, l10n.couldNotKickPlayer);
         break;
     }
   }
 
   Future<bool?> _confirmKickDialog() async {
+    final l10n = AppL10n.of(context);
     final guestName =
         _room.guestName?.trim().isNotEmpty == true ? _room.guestName! : '—';
     final guestPhoto = _room.guestPhoto;
+    final guestEntry = _room.players[_room.guestUid];
+    final guestAvatar = guestEntry is Map
+        ? gameAvatarFromStoredValue(guestEntry['selectedAvatar'])
+        : null;
     return showDialog<bool>(
       context: context,
       barrierDismissible: true,
@@ -220,19 +375,23 @@ class _ArenaLobbyPageState extends State<ArenaLobbyPage>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              ArenaProfileCircle(
-                name: guestName,
-                photoUrl: guestPhoto,
+              ArenaProfileAvatar(
+                profileImageUrl: guestPhoto,
+                equippedAvatarFrameAsset: guestAvatar?.assetPath,
+                equippedAvatar: guestAvatar,
                 size: 60,
-                ringColors: const <Color>[
-                  AppPalette.danger,
-                  AppPalette.accentPurple,
+                fallbackInitials: guestName,
+                optionalGlow: [
+                  BoxShadow(
+                    color: AppPalette.danger.withValues(alpha: 0.30),
+                    blurRadius: 16,
+                  ),
                 ],
               ),
               const SizedBox(height: 12),
-              const Text(
-                'Kick player?',
-                style: TextStyle(
+              Text(
+                l10n.kickPlayerTitle,
+                style: const TextStyle(
                   color: AppPalette.danger,
                   fontSize: 20,
                   fontWeight: FontWeight.w900,
@@ -241,7 +400,7 @@ class _ArenaLobbyPageState extends State<ArenaLobbyPage>
               ),
               const SizedBox(height: 8),
               Text(
-                '$guestName will be removed and cannot rejoin for 1 minute.',
+                l10n.kickPlayerBody(guestName),
                 textAlign: TextAlign.center,
                 style: const TextStyle(
                   color: AppPalette.text,
@@ -255,9 +414,9 @@ class _ArenaLobbyPageState extends State<ArenaLobbyPage>
                   Expanded(
                     child: TextButton(
                       onPressed: () => Navigator.of(ctx).pop(false),
-                      child: const Text(
-                        'Cancel',
-                        style: TextStyle(
+                      child: Text(
+                        l10n.cancelBtn,
+                        style: const TextStyle(
                           color: AppPalette.textMuted,
                           fontWeight: FontWeight.w800,
                         ),
@@ -279,11 +438,11 @@ class _ArenaLobbyPageState extends State<ArenaLobbyPage>
                               color: AppPalette.danger, width: 1.2),
                         ),
                       ),
-                      child: const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 10),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 10),
                         child: Text(
-                          'Kick',
-                          style: TextStyle(fontWeight: FontWeight.w900),
+                          l10n.kickLabel,
+                          style: const TextStyle(fontWeight: FontWeight.w900),
                         ),
                       ),
                     ),
@@ -337,6 +496,43 @@ class _ArenaLobbyPageState extends State<ArenaLobbyPage>
     ArenaToast.success(context, AppL10n.of(context).codeCopied);
   }
 
+  Future<void> _sendMessage(String text) async {
+    final service = _chatService;
+    if (service == null) return;
+    final signal = await service.sendMessage(text);
+    if (!mounted) return;
+    setState(() {
+      _chatSignals = <String, ArenaChatSignal>{
+        ..._chatSignals,
+        signal.senderUid: signal,
+      };
+    });
+  }
+
+  Future<void> _sendEmoji(String emoji) async {
+    final service = _chatService;
+    if (service == null) return;
+    await service.sendEmoji(emoji);
+  }
+
+  Future<void> _loadEquippedEmojis() async {
+    try {
+      final emojis = await LocalStore.equippedEmojis();
+      if (mounted) setState(() => _equippedEmojis = emojis);
+    } catch (_) {}
+  }
+
+  void _onChatError(Object error) {
+    if (!mounted) return;
+    // Cooldown / unsupported reactions are expected — do not alarm the player.
+    if (error is ArenaChatException &&
+        (error.failure == ArenaChatFailure.cooldown ||
+            error.failure == ArenaChatFailure.unsupportedEmoji)) {
+      return;
+    }
+    ArenaToast.error(context, AppL10n.of(context).networkIssueRetry);
+  }
+
   Future<bool> _confirmLeave() async {
     final l10n = AppL10n.of(context);
     final isHost = _isHost;
@@ -369,7 +565,8 @@ class _ArenaLobbyPageState extends State<ArenaLobbyPage>
     final code = _room.roomCode;
     final iAmHost = _isHost;
     if (kDebugMode) {
-      debugPrint('[ARENA] cancel button pressed room=$code uid=$_uid isHost=$iAmHost');
+      debugPrint(
+          '[ARENA] cancel button pressed room=$code uid=$_uid isHost=$iAmHost');
     }
     try {
       // Single safe leave funnel. The lobby is pre-play with no committed bet,
@@ -392,7 +589,10 @@ class _ArenaLobbyPageState extends State<ArenaLobbyPage>
     if (!_cancelledHandled && mounted) {
       _cancelledHandled = true;
       ArenaToast.info(
-          context, iAmHost ? 'Room cancelled.' : 'You left the room.');
+          context,
+          iAmHost
+              ? AppL10n.of(context).roomCancelledToast
+              : AppL10n.of(context).leftRoomToast);
     }
     await _exitRoomOnce();
   }
@@ -419,235 +619,343 @@ class _ArenaLobbyPageState extends State<ArenaLobbyPage>
         await _onCancelPressed();
       },
       child: Scaffold(
-      backgroundColor: Colors.transparent,
-      body: AppBackground(
-        variant: AppBackgroundVariant.homeNeon,
-        child: SafeArea(
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
-                child: Row(
+        backgroundColor: Colors.transparent,
+        body: AppBackground(
+          variant: AppBackgroundVariant.homeNeon,
+          child: SafeArea(
+            child: Stack(
+              children: <Widget>[
+                Column(
                   children: [
-                    AppIconButton(
-                      icon: Icons.arrow_back,
-                      onTap: _leave,
-                    ),
-                    const SizedBox(width: 12),
-                    Text(
-                      l10n.roomCode,
-                      style: const TextStyle(
-                        color: AppPalette.text,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _CodeBanner(
-                        code: _room.roomCode,
-                        onCopy: _copyCode,
-                      ),
-                      const SizedBox(height: 14),
-                      _SettingsRow(
-                        rounds: _room.roundsCount,
-                        boardSize: _room.boardSize,
-                        timeLeft: _formatRemaining(),
-                        // Once a guest has joined the 10-minute creation TTL no
-                        // longer applies (occupied rooms use the 20-minute
-                        // inactivity rule), so show a neutral "Room Active"
-                        // status instead of a misleading countdown.
-                        occupied: _room.guestUid != null &&
-                            _room.guestUid!.isNotEmpty,
-                      ),
-                      const SizedBox(height: 10),
-                      _BetPanel(room: _room),
-                      if (_room.roundMaps.length > 1) ...[
-                        const SizedBox(height: 10),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 14, vertical: 10),
-                          decoration: BoxDecoration(
-                            color: AppPalette.panel,
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(
-                              color: AppPalette.primary.withValues(alpha: 0.4),
-                              width: 1,
-                            ),
-                            boxShadow: [
-                              BoxShadow(
-                                color: AppPalette.primary
-                                    .withValues(alpha: 0.1),
-                                blurRadius: 14,
-                              ),
-                            ],
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          AppIconButton(
+                            icon: Icons.arrow_back,
+                            onTap: _leave,
                           ),
-                          child: Row(
-                            children: [
-                              const Icon(Icons.map_outlined,
-                                  size: 16, color: AppPalette.primary),
-                              const SizedBox(width: 10),
-                              Text(
-                                l10n.mapsLabel.toUpperCase(),
-                                style: const TextStyle(
-                                  color: AppPalette.primary,
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 11,
-                                  letterSpacing: 1.4,
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  l10n.roomLobbyTitle,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: homeTitleFont(context, fontSize: 25),
                                 ),
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: SingleChildScrollView(
-                                  scrollDirection: Axis.horizontal,
-                                  child: Text(
-                                    _room.roundMaps.join(' · '),
-                                    style: const TextStyle(
-                                      color: AppPalette.text,
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: 13,
-                                      letterSpacing: 0.4,
-                                    ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  l10n.roomLobbySubtitle,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: safeInter(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppPalette.textMuted,
                                   ),
                                 ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            _CodeBanner(
+                              code: _room.roomCode,
+                              onCopy: _copyCode,
+                            ),
+                            const SizedBox(height: 14),
+                            _SettingsRow(
+                              rounds: _room.roundsCount,
+                              boardSize: _room.boardSize,
+                              timeLeft: _formatRemaining(),
+                              // Once a guest has joined the 10-minute creation TTL no
+                              // longer applies (occupied rooms use the 20-minute
+                              // inactivity rule), so show a neutral "Room Active"
+                              // status instead of a misleading countdown.
+                              occupied: _room.guestUid != null &&
+                                  _room.guestUid!.isNotEmpty,
+                            ),
+                            const SizedBox(height: 10),
+                            _BetPanel(room: _room),
+                            if (_room.roundMaps.length > 1) ...[
+                              const SizedBox(height: 10),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 14, vertical: 10),
+                                decoration: BoxDecoration(
+                                  color: AppPalette.panel,
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(
+                                    color: AppPalette.primary
+                                        .withValues(alpha: 0.4),
+                                    width: 1,
+                                  ),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: AppPalette.primary
+                                          .withValues(alpha: 0.1),
+                                      blurRadius: 14,
+                                    ),
+                                  ],
+                                ),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.map_outlined,
+                                        size: 16, color: AppPalette.primary),
+                                    const SizedBox(width: 10),
+                                    Text(
+                                      l10n.mapsLabel.toUpperCase(),
+                                      style: const TextStyle(
+                                        color: AppPalette.primary,
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 11,
+                                        letterSpacing: 1.4,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: SingleChildScrollView(
+                                        scrollDirection: Axis.horizontal,
+                                        physics: const BouncingScrollPhysics(),
+                                        child: Row(
+                                          children: [
+                                            for (var i = 0;
+                                                i < _room.roundMaps.length;
+                                                i++) ...[
+                                              _MapChip(
+                                                round: i + 1,
+                                                map: _room.roundMaps[i],
+                                              ),
+                                              if (i !=
+                                                  _room.roundMaps.length - 1)
+                                                const SizedBox(width: 7),
+                                            ],
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ],
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 16),
-                      _PlayersRow(
-                        room: _room,
-                        selfUid: _uid,
-                        hostPresence: _presence?.derive(_room, _room.hostUid),
-                        guestPresence: _room.guestUid == null
-                            ? null
-                            : _presence?.derive(_room, _room.guestUid!),
-                        onKickGuest: _isHost &&
-                                _room.guestUid != null &&
-                                (_room.status == 'waiting' ||
-                                    _room.status == 'ready' ||
-                                    _room.status == 'countdown')
-                            ? _onKickGuestPressed
-                            : null,
-                      ),
-                      const SizedBox(height: 14),
-                      // Host: only Share Room (full width). No Ready button.
-                      // Guest: Share + Ready side-by-side.
-                      _isHost
-                          ? _ActionButton(
-                              icon: Icons.share_rounded,
-                              label: l10n.shareRoom,
-                              onTap: _share,
-                              background: AppPalette.panel,
-                              foreground: AppPalette.text,
-                              outline: AppPalette.strokeStrong,
-                            )
-                          : Row(
-                              children: [
-                                Expanded(
-                                  child: _ActionButton(
+                            const SizedBox(height: 16),
+                            _PlayersRow(
+                              room: _room,
+                              selfUid: _uid,
+                              hostPresence:
+                                  _presence?.derive(_room, _room.hostUid),
+                              guestPresence: _room.guestUid == null
+                                  ? null
+                                  : _presence?.derive(_room, _room.guestUid!),
+                              onKickGuest: _isHost &&
+                                      _room.guestUid != null &&
+                                      (_room.status == 'waiting' ||
+                                          _room.status == 'ready' ||
+                                          _room.status == 'countdown')
+                                  ? _onKickGuestPressed
+                                  : null,
+                            ),
+                            _LobbyReactionRow(
+                              hostSignal: _chatSignals[_room.hostUid],
+                              guestSignal: _room.guestUid == null
+                                  ? null
+                                  : _chatSignals[_room.guestUid!],
+                            ),
+                            const SizedBox(height: 14),
+                            OnlineChatBar(
+                              enabled: _chatService != null,
+                              onSend: _sendMessage,
+                              onEmojiPressed: () => setState(
+                                () => _showQuickEmojis = !_showQuickEmojis,
+                              ),
+                              onError: _onChatError,
+                            ),
+                            AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 180),
+                              child: _showQuickEmojis
+                                  ? Padding(
+                                      key: const ValueKey<String>(
+                                          'quick-emojis'),
+                                      padding: const EdgeInsets.only(top: 8),
+                                      child: QuickEmojiBar(
+                                        emojis: _equippedEmojis,
+                                        enabled: _chatService != null,
+                                        showLabel: false,
+                                        onSelected: _sendEmoji,
+                                        onError: _onChatError,
+                                      ),
+                                    )
+                                  : const SizedBox.shrink(
+                                      key: ValueKey<String>(
+                                          'quick-emojis-hidden'),
+                                    ),
+                            ),
+                            const SizedBox(height: 14),
+                            // Host: only Share Room (full width). No Ready button.
+                            // Guest: Share + Ready side-by-side.
+                            _isHost
+                                ? _ActionButton(
                                     icon: Icons.share_rounded,
                                     label: l10n.shareRoom,
                                     onTap: _share,
                                     background: AppPalette.panel,
                                     foreground: AppPalette.text,
                                     outline: AppPalette.strokeStrong,
+                                  )
+                                : Row(
+                                    children: [
+                                      Expanded(
+                                        child: _ActionButton(
+                                          icon: Icons.share_rounded,
+                                          label: l10n.shareRoom,
+                                          onTap: _share,
+                                          background: AppPalette.panel,
+                                          foreground: AppPalette.text,
+                                          outline: AppPalette.strokeStrong,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: _ActionButton(
+                                          icon: selfReady
+                                              ? Icons.check_circle_rounded
+                                              : Icons.radio_button_unchecked,
+                                          label: l10n.readyLabel,
+                                          onTap: _toggleReady,
+                                          background: selfReady
+                                              ? AppPalette.success
+                                                  .withValues(alpha: 0.22)
+                                              : AppPalette.panel,
+                                          foreground: selfReady
+                                              ? AppPalette.success
+                                              : AppPalette.text,
+                                          outline: selfReady
+                                              ? AppPalette.success
+                                              : AppPalette.strokeStrong,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                            if (_isHost) ...[
+                              const SizedBox(height: 10),
+                              SizedBox(
+                                height: 54,
+                                child: ElevatedButton.icon(
+                                  onPressed:
+                                      _canStart && !_busy ? _start : null,
+                                  icon: const Icon(Icons.play_arrow_rounded),
+                                  label: Text(l10n.startRoom),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: AppPalette.primary,
+                                    foregroundColor: AppPalette.bgTop,
+                                    disabledBackgroundColor:
+                                        AppPalette.panelDeep,
+                                    disabledForegroundColor:
+                                        AppPalette.textSubtle,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(14),
+                                    ),
+                                    textStyle: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 0.6,
+                                    ),
                                   ),
                                 ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: _ActionButton(
-                                    icon: selfReady
-                                        ? Icons.check_circle_rounded
-                                        : Icons.radio_button_unchecked,
-                                    label: l10n.readyLabel,
-                                    onTap: _toggleReady,
-                                    background: selfReady
-                                        ? AppPalette.success
-                                            .withValues(alpha: 0.22)
-                                        : AppPalette.panel,
-                                    foreground: selfReady
-                                        ? AppPalette.success
-                                        : AppPalette.text,
-                                    outline: selfReady
-                                        ? AppPalette.success
-                                        : AppPalette.strokeStrong,
-                                  ),
-                                ),
-                              ],
-                            ),
-                      if (_isHost) ...[
-                        const SizedBox(height: 10),
-                        SizedBox(
-                          height: 54,
-                          child: ElevatedButton.icon(
-                            onPressed: _canStart && !_busy ? _start : null,
-                            icon: const Icon(Icons.play_arrow_rounded),
-                            label: Text(l10n.startRoom),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppPalette.primary,
-                              foregroundColor: AppPalette.bgTop,
-                              disabledBackgroundColor:
-                                  AppPalette.panelDeep,
-                              disabledForegroundColor:
-                                  AppPalette.textSubtle,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14),
                               ),
-                              textStyle: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: 0.6,
+                            ],
+                            const SizedBox(height: 10),
+                            TextButton.icon(
+                              onPressed: _isCancelling ? null : _leave,
+                              icon: _isCancelling
+                                  ? const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        valueColor:
+                                            AlwaysStoppedAnimation<Color>(
+                                                AppPalette.danger),
+                                      ),
+                                    )
+                                  : const Icon(Icons.exit_to_app,
+                                      color: AppPalette.danger),
+                              label: Text(
+                                _isHost ? l10n.cancelRoom : l10n.leaveRoom,
+                                style: const TextStyle(
+                                  color: AppPalette.danger,
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
                             ),
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 10),
-                      TextButton.icon(
-                        onPressed: _isCancelling ? null : _leave,
-                        icon: _isCancelling
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  valueColor: AlwaysStoppedAnimation<Color>(
-                                      AppPalette.danger),
-                                ),
-                              )
-                            : const Icon(Icons.exit_to_app,
-                                color: AppPalette.danger),
-                        label: Text(
-                          _isHost ? l10n.cancelRoom : l10n.leaveRoom,
-                          style: const TextStyle(
-                            color: AppPalette.danger,
-                            fontWeight: FontWeight.w700,
-                          ),
+                          ],
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-              ),
-            ],
+                if (_room.disconnectUid != null &&
+                    _room.disconnectUid!.isNotEmpty &&
+                    _room.disconnectUid != _uid)
+                  Positioned.fill(
+                    child: _LobbyDisconnectOverlay(
+                      deadlineAtMs: _room.disconnectDeadlineAt,
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ),
-    ),
     );
   }
 }
 
 // ── Private widgets ─────────────────────────────────────────────────────────
+
+class _LobbyReactionRow extends StatelessWidget {
+  final ArenaChatSignal? hostSignal;
+  final ArenaChatSignal? guestSignal;
+
+  const _LobbyReactionRow({
+    required this.hostSignal,
+    required this.guestSignal,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: PlayerReactionBubble(
+            signal: hostSignal,
+            maxWidth: 150,
+            accent: AppPalette.primary,
+          ),
+        ),
+        const SizedBox(width: 46),
+        Expanded(
+          child: PlayerReactionBubble(
+            signal: guestSignal,
+            maxWidth: 150,
+            accent: AppPalette.accentPurple,
+          ),
+        ),
+      ],
+    );
+  }
+}
 
 /// Lobby bet/prize panel. Shows the coin stake + prize pool for betting rooms,
 /// or a "Friendly Match · No Bet" line otherwise.
@@ -663,6 +971,7 @@ class _BetPanel extends StatelessWidget {
           'bet=${room.betAmount} prize=${room.prizePool}');
     }
     if (!betEnabled) {
+      final l10n = AppL10n.of(context);
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
@@ -670,19 +979,24 @@ class _BetPanel extends StatelessWidget {
           borderRadius: BorderRadius.circular(16),
           border: Border.all(color: AppPalette.strokeSoft, width: 1),
         ),
-        child: const Row(
+        child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.handshake_rounded,
+            const Icon(Icons.handshake_rounded,
                 color: AppPalette.textMuted, size: 18),
-            SizedBox(width: 8),
-            Text(
-              'Friendly Match · No Bet',
-              style: TextStyle(
-                color: AppPalette.textMuted,
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0.3,
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                l10n.friendlyMatchNoBet,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: AppPalette.textMuted,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.3,
+                ),
               ),
             ),
           ],
@@ -715,10 +1029,14 @@ class _BetPanel extends StatelessWidget {
       ),
       child: Row(
         children: [
-          _BetStat(label: 'BET', value: room.betAmount, color: AppPalette.gold),
+          _BetStat(
+            label: AppL10n.of(context).betLabel.toUpperCase(),
+            value: room.betAmount,
+            color: AppPalette.gold,
+          ),
           Container(width: 1, height: 34, color: AppPalette.strokeSoft),
           _BetStat(
-            label: 'PRIZE POOL',
+            label: AppL10n.of(context).prizePoolLabel.toUpperCase(),
             value: room.prizePool,
             color: AppPalette.goldHighlight,
             highlight: true,
@@ -761,7 +1079,7 @@ class _BetStat extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Image.asset(
-                'assets/coin/COIN.png',
+                'assets/coin/COIN.webp',
                 width: iconSize,
                 height: iconSize,
                 cacheWidth: (iconSize * 3).round(),
@@ -883,7 +1201,8 @@ class _CopyCodePill extends StatelessWidget {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.copy_rounded, size: 16, color: AppPalette.primary),
+              const Icon(Icons.copy_rounded,
+                  size: 16, color: AppPalette.primary),
               const SizedBox(width: 6),
               Text(
                 label,
@@ -897,6 +1216,50 @@ class _CopyCodePill extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _MapChip extends StatelessWidget {
+  final int round;
+  final String map;
+
+  const _MapChip({required this.round, required this.map});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppPalette.primary.withValues(alpha: 0.09),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: AppPalette.primary.withValues(alpha: 0.36),
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '$round',
+            style: const TextStyle(
+              color: AppPalette.textMuted,
+              fontSize: 10,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            map,
+            textDirection: TextDirection.ltr,
+            style: const TextStyle(
+              color: AppPalette.primary,
+              fontSize: 12,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -994,8 +1357,8 @@ class _SettingsRow extends StatelessWidget {
         occupied
             ? _pill(
                 icon: Icons.bolt_rounded,
-                label: l10n.isAr ? 'الحالة' : 'STATUS',
-                value: l10n.isAr ? 'نشطة' : 'Active',
+                label: l10n.statusLabel,
+                value: l10n.activeLabel,
                 tint: AppPalette.success,
               )
             : _pill(
@@ -1023,10 +1386,9 @@ class _PlayersRow extends StatelessWidget {
     required this.onKickGuest,
   });
 
-  /// Pull a player's cosmetics entry from `room.players[uid]` defensively.
-  /// Only the X/O skin keys are read — the equipped `selectedAvatar` is
-  /// intentionally ignored in the lobby because the lobby always identifies
-  /// the *person* (profile photo only), not the cosmetic frame.
+  /// Pull a player's cosmetics entry from `room.players[uid]` defensively —
+  /// X/O skins plus the equipped `selectedAvatar` (so the lobby shows the
+  /// same selected avatar as Home/Settings instead of initials only).
   static _PlayerCosmetics _cosmeticsFor(ArenaRoom room, String? uid) {
     if (uid == null || uid.isEmpty) return const _PlayerCosmetics();
     final entry = room.players[uid];
@@ -1036,6 +1398,7 @@ class _PlayersRow extends StatelessWidget {
     return _PlayerCosmetics(
       xSkin: xSkin is String && xSkin.isNotEmpty ? xSkin : null,
       oSkin: oSkin is String && oSkin.isNotEmpty ? oSkin : null,
+      avatar: gameAvatarFromStoredValue(entry['selectedAvatar']),
     );
   }
 
@@ -1057,9 +1420,10 @@ class _PlayersRow extends StatelessWidget {
               ready: true,
               isYou: room.hostUid == selfUid,
               emptyLabel: null,
-              roleLabel: l10n.isAr ? 'المضيف' : 'HOST',
+              roleLabel: l10n.hostLabel.toUpperCase(),
               xSkin: hostCos.xSkin,
               oSkin: hostCos.oSkin,
+              avatar: hostCos.avatar,
               presence: hostPresence,
               onKick: null,
             ),
@@ -1075,11 +1439,11 @@ class _PlayersRow extends StatelessWidget {
               ready: room.guestReady,
               isYou: room.guestUid != null && room.guestUid == selfUid,
               emptyLabel: room.guestUid == null ? l10n.waitingForFriend : null,
-              roleLabel: room.guestUid == null
-                  ? null
-                  : (l10n.isAr ? 'الضيف' : 'GUEST'),
+              roleLabel:
+                  room.guestUid == null ? null : l10n.guestLabel.toUpperCase(),
               xSkin: guestCos.xSkin,
               oSkin: guestCos.oSkin,
+              avatar: guestCos.avatar,
               presence: room.guestUid == null ? null : guestPresence,
               // Only show the kick button when the guest seat is filled and
               // the host invoked this row with a callback (host-only).
@@ -1096,7 +1460,8 @@ class _PlayersRow extends StatelessWidget {
 class _PlayerCosmetics {
   final String? xSkin;
   final String? oSkin;
-  const _PlayerCosmetics({this.xSkin, this.oSkin});
+  final GameAvatar? avatar;
+  const _PlayerCosmetics({this.xSkin, this.oSkin, this.avatar});
 }
 
 class _PlayerCard extends StatelessWidget {
@@ -1109,6 +1474,7 @@ class _PlayerCard extends StatelessWidget {
   final String? roleLabel;
   final String? xSkin;
   final String? oSkin;
+  final GameAvatar? avatar;
   final PresenceState? presence;
   final VoidCallback? onKick;
 
@@ -1122,6 +1488,7 @@ class _PlayerCard extends StatelessWidget {
     this.roleLabel,
     this.xSkin,
     this.oSkin,
+    this.avatar,
     this.presence,
     this.onKick,
   });
@@ -1162,28 +1529,7 @@ class _PlayerCard extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  ArenaProfileCircle(
-                    name: empty ? '' : (name ?? ''),
-                    photoUrl: empty ? null : photoUrl,
-                    size: avatarSize,
-                    ringColors: isYou
-                        ? const <Color>[AppPalette.success, AppPalette.primary]
-                        : const <Color>[
-                            AppPalette.primary,
-                            AppPalette.accentPurple
-                          ],
-                  ),
-                  if (!empty && presence != null)
-                    Positioned(
-                      right: -2,
-                      bottom: 0,
-                      child: _LobbyPresenceDot(state: presence!),
-                    ),
-                ],
-              ),
+              _buildAvatarCircle(size: avatarSize, empty: empty),
               const SizedBox(height: 6),
               Text(
                 empty
@@ -1264,6 +1610,45 @@ class _PlayerCard extends StatelessWidget {
       ),
     );
   }
+
+  /// Selected in-game avatar first, then profile photo / initials — same
+  /// priority and shared avatar widgets used on Home/Settings/match cards.
+  Widget _buildAvatarCircle({required double size, required bool empty}) {
+    final ringColors = isYou
+        ? const <Color>[AppPalette.success, AppPalette.primary]
+        : const <Color>[AppPalette.primary, AppPalette.accentPurple];
+    if (empty) {
+      return ArenaProfileCircle(
+        name: '',
+        photoUrl: null,
+        size: size,
+        ringColors: ringColors,
+      );
+    }
+    final presenceColor = switch (presence) {
+      PresenceState.online => AppPalette.success,
+      PresenceState.weak => AppPalette.warning,
+      PresenceState.offline => AppPalette.danger,
+      null => AppPalette.success,
+    };
+    if (isYou) {
+      return ArenaProfileAvatar.current(
+        size: size,
+        fallbackInitials: name ?? '',
+        showOnlineStatus: presence != null,
+        statusColor: presenceColor,
+      );
+    }
+    return ArenaProfileAvatar(
+      profileImageUrl: photoUrl,
+      equippedAvatarFrameAsset: avatar?.assetPath,
+      equippedAvatar: avatar,
+      size: size,
+      fallbackInitials: name ?? '',
+      showOnlineStatus: presence != null,
+      statusColor: presenceColor,
+    );
+  }
 }
 
 /// Compact HOST/GUEST role chip shown under the player name.
@@ -1296,35 +1681,6 @@ class _RoleTag extends StatelessWidget {
   }
 }
 
-class _LobbyPresenceDot extends StatelessWidget {
-  final PresenceState state;
-  const _LobbyPresenceDot({required this.state});
-
-  @override
-  Widget build(BuildContext context) {
-    final color = switch (state) {
-      PresenceState.online => AppPalette.success,
-      PresenceState.weak => AppPalette.warning,
-      PresenceState.offline => AppPalette.danger,
-    };
-    return Container(
-      width: 16,
-      height: 16,
-      decoration: BoxDecoration(
-        color: color,
-        shape: BoxShape.circle,
-        border: Border.all(color: AppPalette.panel, width: 2.4),
-        boxShadow: [
-          BoxShadow(
-            color: color.withValues(alpha: 0.55),
-            blurRadius: 8,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _LobbyPresenceLabel extends StatelessWidget {
   final PresenceState state;
   const _LobbyPresenceLabel({required this.state});
@@ -1338,9 +1694,9 @@ class _LobbyPresenceLabel extends StatelessWidget {
       PresenceState.offline => AppPalette.danger,
     };
     final label = switch (state) {
-      PresenceState.online => l10n.isAr ? 'متصل' : 'Online',
-      PresenceState.weak => l10n.isAr ? 'اتصال ضعيف' : 'Weak connection',
-      PresenceState.offline => l10n.isAr ? 'انقطع الاتصال' : 'Connection lost',
+      PresenceState.online => l10n.onlineLabel,
+      PresenceState.weak => l10n.weakConnectionLabel,
+      PresenceState.offline => l10n.connectionLostLabel,
     };
     return Text(
       label,
@@ -1438,4 +1794,3 @@ class _ActionButton extends StatelessWidget {
     );
   }
 }
-

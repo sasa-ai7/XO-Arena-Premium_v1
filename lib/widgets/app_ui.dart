@@ -6,7 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../core/coin_format.dart';
 import '../core/app_theme.dart';
-import '../services/perf_mode_service.dart';
+import '../services/local_store.dart';
 
 /// ==========================
 ///   REUSABLE UI
@@ -34,42 +34,23 @@ class ArenaLogo extends StatelessWidget {
   Widget build(BuildContext context) {
     final dpr = MediaQuery.of(context).devicePixelRatio;
     final cache = (height * dpr).clamp(160.0, 1400.0).round();
-    return ValueListenableBuilder<bool>(
-      valueListenable: PerfMode.enabled,
-      builder: (context, perf, __) {
-        // Performance Mode: show the static PNG logo instead of decoding and
-        // looping the animated WebP — much cheaper on low-end devices.
-        if (perf) {
-          return Image.asset(
-            'assets/xo.png',
-            height: height,
-            fit: BoxFit.contain,
-            errorBuilder: (_, __, ___) => Icon(
-              Icons.grid_3x3_rounded,
-              size: height * 0.6,
-              color: AppPalette.primary,
-            ),
-          );
-        }
-        return Image.asset(
-          'assets/xo.webp',
-          height: height,
-          fit: BoxFit.contain,
-          gaplessPlayback: true,
-          filterQuality: FilterQuality.medium,
-          cacheHeight: cache,
-          errorBuilder: (_, __, ___) => Image.asset(
-            'assets/xo.png',
-            height: height,
-            fit: BoxFit.contain,
-            errorBuilder: (_, __, ___) => Icon(
-              Icons.grid_3x3_rounded,
-              size: height * 0.6,
-              color: AppPalette.primary,
-            ),
-          ),
-        );
-      },
+    return Image.asset(
+      'assets/xo.webp',
+      height: height,
+      fit: BoxFit.contain,
+      gaplessPlayback: true,
+      filterQuality: FilterQuality.medium,
+      cacheHeight: cache,
+      errorBuilder: (_, __, ___) => Image.asset(
+        'assets/xo.png',
+        height: height,
+        fit: BoxFit.contain,
+        errorBuilder: (_, __, ___) => Icon(
+          Icons.grid_3x3_rounded,
+          size: height * 0.6,
+          color: AppPalette.primary,
+        ),
+      ),
     );
   }
 }
@@ -153,7 +134,11 @@ class AppBackground extends StatelessWidget {
                 ],
               ),
             ),
-            // Dynamic glow layers rendered on top
+            const Positioned.fill(
+              child: IgnorePointer(
+                child: XOAnimatedBackground(),
+              ),
+            ),
             Positioned(
               top: -170,
               left: -120,
@@ -291,17 +276,10 @@ class AppBackground extends StatelessWidget {
   }
 }
 
-/// Full-screen auth background built around the `XO-BACK.png` artwork.
+/// Full-screen auth background with animated XO shapes.
 ///
-/// Used by the Login and Create Account screens. The `XO-BACK.png` scene (which
-/// already contains the XO Arena hero logo at the top and an empty neon stage at
-/// the bottom) IS the whole page background — there is no separate Flutter
-/// decoration, glow panel, or blur layer behind the form. The image fills the
-/// entire screen with `BoxFit.cover`, anchored to the top so the hero logo stays
-/// visible on any aspect ratio. A single, continuous dark gradient (transparent
-/// across the hero, easing to a strong dark tint at the very bottom) is the only
-/// overlay — just enough to keep a bottom-anchored form readable over the stage,
-/// with no hard band so the top and bottom read as one cohesive screen.
+/// Used by the Login and Create Account screens. Dark neon gradient with subtle
+/// floating X and O shapes that match the Home screen's premium XO Arena feel.
 class AuthImageBackground extends StatelessWidget {
   final Widget child;
 
@@ -310,39 +288,55 @@ class AuthImageBackground extends StatelessWidget {
     required this.child,
   });
 
-  static const String backgroundAsset = 'assets/XO-BACK.png';
-
   @override
   Widget build(BuildContext context) {
-    final mq = MediaQuery.of(context);
-    // Down-sample the 941×1672 source to the device pixel width so decode and
-    // memory stay light — it is only ever shown full-bleed.
-    final cacheW = (mq.size.width * mq.devicePixelRatio).round();
     return Stack(
       fit: StackFit.expand,
       children: [
-        // 1) The XO-BACK.png scene — the single, unified visual base for the
-        //    whole page. Anchored to the top so the baked-in hero logo is
-        //    preserved when `cover` crops on very tall/short screens.
-        Image.asset(
-          backgroundAsset,
-          fit: BoxFit.cover,
-          alignment: Alignment.topCenter,
-          cacheWidth: cacheW,
-          errorBuilder: (context, error, stackTrace) => const DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [AppPalette.homeBgBase, AppPalette.bgDepth],
-              ),
+        const DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                AppPalette.homeBgBase,
+                AppPalette.homeBgSecondary,
+                AppPalette.bgDepth,
+              ],
             ),
           ),
         ),
-        // 2) One continuous readability gradient — NO blur, NO frosted fog band.
-        //    Fully transparent across the hero area, then eases into a darker
-        //    tint toward the bottom where the form sits. A single smooth ramp
-        //    means there is no hard edge / "two screens" break.
+        const Positioned.fill(
+          child: IgnorePointer(
+            child: XOAnimatedBackground(
+              color: AppPalette.homeCyan,
+            ),
+          ),
+        ),
+        Positioned(
+          top: -140,
+          left: -80,
+          child: _BackgroundGlow(
+            size: 350,
+            colors: [
+              AppPalette.homeCyan.withOpacity(0.12),
+              AppPalette.homeSky.withOpacity(0.05),
+              Colors.transparent,
+            ],
+          ),
+        ),
+        Positioned(
+          top: -80,
+          right: -100,
+          child: _BackgroundGlow(
+            size: 280,
+            colors: [
+              AppPalette.homePurple.withOpacity(0.10),
+              AppPalette.homePink.withOpacity(0.04),
+              Colors.transparent,
+            ],
+          ),
+        ),
         Positioned.fill(
           child: IgnorePointer(
             child: DecoratedBox(
@@ -353,17 +347,16 @@ class AuthImageBackground extends StatelessWidget {
                   colors: [
                     Colors.transparent,
                     Colors.transparent,
-                    AppPalette.bgDepth.withOpacity(0.30),
-                    AppPalette.bgDepth.withOpacity(0.68),
-                    AppPalette.bgDepth.withOpacity(0.90),
+                    AppPalette.bgDepth.withOpacity(0.40),
+                    AppPalette.bgDepth.withOpacity(0.75),
+                    AppPalette.bgDepth.withOpacity(0.92),
                   ],
-                  stops: const [0.0, 0.40, 0.62, 0.82, 1.0],
+                  stops: const [0.0, 0.35, 0.58, 0.78, 1.0],
                 ),
               ),
             ),
           ),
         ),
-        // 3) Foreground content (forms, buttons, etc.).
         child,
       ],
     );
@@ -683,7 +676,7 @@ class PremiumBalanceBar extends StatelessWidget {
     this.guest = false,
     this.compact = false,
     this.label,
-    this.assetPath = 'assets/coin/COIN-SHOP.png',
+    this.assetPath = 'assets/coin/COIN-SHOP.webp',
     this.width,
   });
 
@@ -821,6 +814,144 @@ class PremiumBalanceBar extends StatelessWidget {
   }
 }
 
+/// Single shared coin-balance pill used across Home, Settings, Online
+/// Arena, Missions and the Invite page so the coin display always looks
+/// the same: coin icon, amount, optional "+" add button, gold neon border.
+///
+/// Self-contained — reads [LocalStore.coinsNotifier] directly so callers
+/// never need to thread the coin count through.
+class ArenaCoinBalance extends StatelessWidget {
+  final VoidCallback? onTap;
+  final bool compact;
+  final bool showPlusButton;
+  final double? minWidth;
+
+  const ArenaCoinBalance({
+    super.key,
+    this.onTap,
+    this.compact = false,
+    this.showPlusButton = true,
+    this.minWidth,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final iconSize = compact ? 30.0 : 40.0;
+    final plusSize = compact ? 25.0 : 31.0;
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(999),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: Container(
+          constraints: BoxConstraints(
+            minWidth: minWidth ?? (compact ? 100 : 122),
+            minHeight: compact ? 42 : 50,
+          ),
+          padding: EdgeInsets.symmetric(
+            horizontal: compact ? 7 : 9,
+            vertical: compact ? 5 : 6,
+          ),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(999),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                AppPalette.homePanelStrong.withValues(alpha: 0.42),
+                AppPalette.bgDepth.withValues(alpha: 0.10),
+              ],
+            ),
+            border: Border.all(
+              color: AppPalette.homeGold.withValues(alpha: 0.34),
+              width: 1,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: AppPalette.homeGold.withValues(alpha: 0.16),
+                blurRadius: 20,
+                spreadRadius: -8,
+              ),
+              BoxShadow(
+                color: AppPalette.homeCyan.withValues(alpha: 0.08),
+                blurRadius: 14,
+                spreadRadius: -10,
+              ),
+            ],
+          ),
+          child: ValueListenableBuilder<int>(
+            valueListenable: LocalStore.coinsNotifier,
+            builder: (_, coins, __) {
+              return FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Image.asset(
+                      'assets/coin/COIN.webp',
+                      width: iconSize,
+                      height: iconSize,
+                      fit: BoxFit.contain,
+                      cacheWidth: 128,
+                      errorBuilder: (_, __, ___) => Icon(
+                        Icons.monetization_on_rounded,
+                        size: iconSize,
+                        color: AppPalette.gold,
+                      ),
+                    ),
+                    SizedBox(width: compact ? 6 : 8),
+                    Text(
+                      formatCoins(coins, compact: true),
+                      style: homeOrbitron(
+                        fontSize: compact ? 16 : 20,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.6,
+                        color: AppPalette.homeTitle,
+                      ),
+                    ),
+                    if (showPlusButton) ...[
+                      SizedBox(width: compact ? 6 : 8),
+                      Container(
+                        width: plusSize,
+                        height: plusSize,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(10),
+                          gradient: const LinearGradient(
+                            colors: [
+                              AppPalette.homeCyan,
+                              AppPalette.homeBlue
+                            ],
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color:
+                                  AppPalette.homeCyan.withValues(alpha: 0.42),
+                              blurRadius: 12,
+                              spreadRadius: -2,
+                            ),
+                          ],
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.45),
+                            width: 1,
+                          ),
+                        ),
+                        child: Icon(Icons.add_rounded,
+                            size: plusSize * 0.66, color: Colors.white),
+                      ),
+                    ],
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class CoinPill extends StatelessWidget {
   final int coins;
   final CoinPillVariant variant;
@@ -854,7 +985,7 @@ class CoinPill extends StatelessWidget {
       label: label,
       width: width,
       assetPath:
-          isHomeVariant ? 'assets/coin/COIN-SHOP.png' : 'assets/coin/COIN.png',
+          isHomeVariant ? 'assets/coin/COIN-SHOP.webp' : 'assets/coin/COIN.webp',
     );
   }
 }
@@ -915,6 +1046,128 @@ class _AmbientGridPainter extends CustomPainter {
   bool shouldRepaint(covariant _AmbientGridPainter oldDelegate) {
     return oldDelegate.lineColor != lineColor ||
         oldDelegate.dotColor != dotColor;
+  }
+}
+
+class _XOSymbol {
+  final Offset position;
+  final double size;
+  final bool isX;
+  final double rotation;
+  final double phase;
+
+  const _XOSymbol({
+    required this.position,
+    required this.size,
+    required this.isX,
+    required this.rotation,
+    required this.phase,
+  });
+}
+
+class _XOBackgroundPainter extends CustomPainter {
+  final double animValue;
+  final Color color;
+  static List<_XOSymbol>? _cachedSymbols;
+
+  _XOBackgroundPainter({required this.animValue, required this.color});
+
+  static List<_XOSymbol> _generateSymbols() {
+    if (_cachedSymbols != null) return _cachedSymbols!;
+    final rng = Random(42);
+    _cachedSymbols = List.generate(14, (i) {
+      return _XOSymbol(
+        position: Offset(rng.nextDouble(), rng.nextDouble()),
+        size: 18 + rng.nextDouble() * 28,
+        isX: i.isEven,
+        rotation: rng.nextDouble() * 3.14159,
+        phase: rng.nextDouble(),
+      );
+    });
+    return _cachedSymbols!;
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final symbols = _generateSymbols();
+    for (final s in symbols) {
+      final drift = sin((animValue + s.phase) * 2 * 3.14159) * 6;
+      final cx = s.position.dx * size.width;
+      final cy = s.position.dy * size.height + drift;
+      final alpha = (0.04 + sin((animValue + s.phase) * 3.14159).abs() * 0.04);
+
+      final paint = Paint()
+        ..color = color.withOpacity(alpha)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.8
+        ..strokeCap = StrokeCap.round;
+
+      canvas.save();
+      canvas.translate(cx, cy);
+      canvas.rotate(s.rotation);
+
+      if (s.isX) {
+        final half = s.size / 2;
+        canvas.drawLine(Offset(-half, -half), Offset(half, half), paint);
+        canvas.drawLine(Offset(half, -half), Offset(-half, half), paint);
+      } else {
+        canvas.drawCircle(Offset.zero, s.size / 2, paint);
+      }
+      canvas.restore();
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _XOBackgroundPainter old) =>
+      old.animValue != animValue;
+}
+
+class XOAnimatedBackground extends StatefulWidget {
+  final Color color;
+
+  const XOAnimatedBackground({
+    super.key,
+    this.color = AppPalette.homeCyan,
+  });
+
+  @override
+  State<XOAnimatedBackground> createState() => _XOAnimatedBackgroundState();
+}
+
+class _XOAnimatedBackgroundState extends State<XOAnimatedBackground>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 20),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RepaintBoundary(
+      child: AnimatedBuilder(
+        animation: _ctrl,
+        builder: (context, _) {
+          return CustomPaint(
+            painter: _XOBackgroundPainter(
+              animValue: _ctrl.value,
+              color: widget.color,
+            ),
+          );
+        },
+      ),
+    );
   }
 }
 

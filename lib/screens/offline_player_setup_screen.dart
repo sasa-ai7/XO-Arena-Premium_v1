@@ -283,7 +283,7 @@ class _OfflinePlayerSetupScreenState extends State<OfflinePlayerSetupScreen> {
                                   Expanded(
                                     child: _SetupCharacterCard(
                                       label: l10n.boy,
-                                      imagePath: 'assets/account/man.png',
+                                      imagePath: 'assets/account/man.webp',
                                       isSelected: _selectedType == 'male',
                                       onTap: () => _selectCharacter('male'),
                                     ),
@@ -292,7 +292,7 @@ class _OfflinePlayerSetupScreenState extends State<OfflinePlayerSetupScreen> {
                                   Expanded(
                                     child: _SetupCharacterCard(
                                       label: l10n.girl,
-                                      imagePath: 'assets/account/feminine.png',
+                                      imagePath: 'assets/account/feminine.webp',
                                       isSelected: _selectedType == 'female',
                                       onTap: () => _selectCharacter('female'),
                                     ),

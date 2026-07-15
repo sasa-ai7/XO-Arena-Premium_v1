@@ -20,11 +20,13 @@ class AppL10n {
 
   // ── Game title — ALWAYS English ────────────────────────────────────────
   String get gameTitle => 'XO ARENA';
-  String get gameSubtitle => isAr ? 'معارك إلكترونية متطورة' : 'PREMIUM CYBER BATTLES';
+  String get gameSubtitle =>
+      isAr ? 'معارك إلكترونية متطورة' : 'PREMIUM CYBER BATTLES';
 
   // ── Character selection ────────────────────────────────────────────────
   String get selectCharacter => isAr ? 'اختر الشخصية' : 'SELECT CHARACTER';
-  String get chooseYourCharacter => isAr ? 'اختر شخصيتك' : 'Choose Your Character';
+  String get chooseYourCharacter =>
+      isAr ? 'اختر شخصيتك' : 'Choose Your Character';
   String get selectCharacterSubtitle => isAr
       ? 'اختر الشخصية التي تناسبك لتجربة XO ARENA.'
       : 'Select your character to personalize your XO Arena experience.';
@@ -51,11 +53,15 @@ class AppL10n {
   // ── Create Account / Complete Profile ─────────────────────────────────
   String get createAccount => isAr ? 'إنشاء الحساب' : 'CREATE ACCOUNT';
   String get completeProfile => isAr ? 'COMPLETE PROFILE' : 'COMPLETE PROFILE';
-  String get forgeYourArenaId => isAr ? 'أنشئ هويتك في الساحة' : 'Forge Your Arena ID';
-  String get activateArenaProfile => isAr ? 'فعّل ملفك في الساحة' : 'Activate Your Arena Profile';
+  String get forgeYourArenaId =>
+      isAr ? 'أنشئ هويتك في الساحة' : 'Forge Your Arena ID';
+  String get activateArenaProfile =>
+      isAr ? 'فعّل ملفك في الساحة' : 'Activate Your Arena Profile';
   String get accountDetails => isAr ? 'تفاصيل الحساب' : 'ACCOUNT DETAILS';
-  String get completeYourProfile => isAr ? 'أكمل ملفك الشخصي' : 'COMPLETE YOUR PROFILE';
-  String get verifiedGoogleEmail => isAr ? 'بريد جوجل موثق' : 'VERIFIED GOOGLE EMAIL';
+  String get completeYourProfile =>
+      isAr ? 'أكمل ملفك الشخصي' : 'COMPLETE YOUR PROFILE';
+  String get verifiedGoogleEmail =>
+      isAr ? 'بريد جوجل موثق' : 'VERIFIED GOOGLE EMAIL';
   String get setPassword => isAr ? 'تعيين كلمة المرور' : 'SET PASSWORD';
   String get setPasswordHint => isAr
       ? 'عيّن كلمة مرور لتسجيل الدخول باستخدام البريد الإلكتروني وكلمة المرور.'
@@ -68,11 +74,11 @@ class AppL10n {
   String get nameHint => isAr ? 'الاسم' : 'Name';
   String get emailHint => isAr ? 'البريد الإلكتروني' : 'Email';
   String get passwordHint => isAr ? 'كلمة المرور' : 'PASSWORD';
-  String get confirmPasswordHint => isAr ? 'تأكيد كلمة المرور' : 'CONFIRM PASSWORD';
+  String get confirmPasswordHint =>
+      isAr ? 'تأكيد كلمة المرور' : 'CONFIRM PASSWORD';
 
-  String get agreeToTerms => isAr
-      ? 'أوافق على الشروط والسياسات'
-      : 'I agree to the terms and policies';
+  String get agreeToTerms =>
+      isAr ? 'أوافق على الشروط والسياسات' : 'I agree to the terms and policies';
   String get agreeToTermsAlt => isAr
       ? 'أوافق على شروط الخدمة وسياسة الخصوصية'
       : 'I accept the Terms of Service and Privacy Policy';
@@ -84,21 +90,28 @@ class AppL10n {
   // ── Validation errors ──────────────────────────────────────────────────
   String get nameRequired => isAr ? 'الاسم مطلوب' : 'Name is required';
   String get nameTooShort => isAr ? 'الاسم قصير جداً' : 'Name is too short';
-  String get nameTooLong =>
-      isAr ? 'الاسم طويل جداً (الحد الأقصى 20 حرفاً)' : 'Name is too long (max 20 characters)';
-  String get emailRequired => isAr ? 'البريد الإلكتروني مطلوب' : 'Email is required';
-  String get emailInvalid => isAr ? 'أدخل بريداً إلكترونياً صحيحاً' : 'Enter a valid email';
-  String get passwordRequired => isAr ? 'كلمة المرور مطلوبة' : 'Password is required';
-  String get passwordTooShort =>
-      isAr ? 'يجب أن تتكون كلمة المرور من 6 أحرف على الأقل' : 'Password must be at least 6 characters';
+  String get nameTooLong => isAr
+      ? 'الاسم طويل جداً (الحد الأقصى 20 حرفاً)'
+      : 'Name is too long (max 20 characters)';
+  String get emailRequired =>
+      isAr ? 'البريد الإلكتروني مطلوب' : 'Email is required';
+  String get emailInvalid =>
+      isAr ? 'أدخل بريداً إلكترونياً صحيحاً' : 'Enter a valid email';
+  String get passwordRequired =>
+      isAr ? 'كلمة المرور مطلوبة' : 'Password is required';
+  String get passwordTooShort => isAr
+      ? 'يجب أن تتكون كلمة المرور من 6 أحرف على الأقل'
+      : 'Password must be at least 6 characters';
   String get confirmPasswordRequired =>
       isAr ? 'الرجاء تأكيد كلمة المرور' : 'Confirm your password';
   String get passwordsDoNotMatch =>
       isAr ? 'كلمتا المرور غير متطابقتين' : 'Passwords do not match';
-  String get acceptTermsRequired =>
-      isAr ? 'الرجاء قبول الشروط والسياسات للمتابعة.' : 'Please accept the Terms & Privacy Policy to continue.';
-  String get acceptPrivacyRequired =>
-      isAr ? 'الرجاء قبول سياسة الخصوصية للمتابعة.' : 'Please accept the Privacy Policy to continue.';
+  String get acceptTermsRequired => isAr
+      ? 'الرجاء قبول الشروط والسياسات للمتابعة.'
+      : 'Please accept the Terms & Privacy Policy to continue.';
+  String get acceptPrivacyRequired => isAr
+      ? 'الرجاء قبول سياسة الخصوصية للمتابعة.'
+      : 'Please accept the Privacy Policy to continue.';
 
   // ── Age restriction ────────────────────────────────────────────────────
   String get ageRestrictionTitle => isAr ? 'قيد عمري' : 'Age Restriction';
@@ -132,33 +145,40 @@ class AppL10n {
       isAr ? 'إشعارات اللعبة' : 'Game Notifications';
   String get dailyRemindersSubtitle =>
       isAr ? 'المكافآت والدعوات والمزيد' : 'Rewards, invites and more';
-  String get notificationPermissionDenied => isAr
-      ? 'تم رفض إذن الإشعارات.'
-      : 'Notification permission denied.';
+  String get notificationPermissionDenied =>
+      isAr ? 'تم رفض إذن الإشعارات.' : 'Notification permission denied.';
 
   // ── Login screen ───────────────────────────────────────────────────────
   String get signIn => isAr ? 'تسجيل الدخول' : 'SIGN IN';
   String get enterArena => isAr ? 'دخول الساحة' : 'ENTER ARENA';
-  String get continueWithGoogle => isAr ? 'المتابعة عبر Google' : 'CONTINUE WITH GOOGLE';
+  String get continueWithGoogle =>
+      isAr ? 'المتابعة عبر Google' : 'CONTINUE WITH GOOGLE';
   String get continueAsGuest => isAr ? 'المتابعة كضيف' : 'CONTINUE AS GUEST';
-  String get alreadyHaveAccount => isAr ? 'لديك حساب بالفعل؟ ' : 'Already have an account? ';
+  String get alreadyHaveAccount =>
+      isAr ? 'لديك حساب بالفعل؟ ' : 'Already have an account? ';
   String get signInLink => isAr ? 'تسجيل الدخول' : 'Sign In';
   String get language => isAr ? 'اللغة' : 'Language';
   // ── Welcome screen ─────────────────────────────────────────────────────
   String get theArenaAwaits => isAr ? 'الساحة في انتظارك' : 'THE ARENA AWAITS';
   String get enterTheArena => isAr ? 'دخول الساحة' : 'ENTER THE ARENA';
   String get quickStart => isAr ? 'بداية سريعة' : 'QUICK START';
-  String get quickStartDesc => isAr ? 'لا حاجة للتسجيل. العب في ثوانٍ.' : 'No signup needed. Play in seconds.';
+  String get quickStartDesc => isAr
+      ? 'لا حاجة للتسجيل. العب في ثوانٍ.'
+      : 'No signup needed. Play in seconds.';
   String get fairRewards => isAr ? 'مكافآت عادلة' : 'FAIR REWARDS';
-  String get fairRewardsDesc => isAr ? 'اكسب عملات وافتح إضافات.' : 'Earn coins, unlock cosmetics.';
+  String get fairRewardsDesc =>
+      isAr ? 'اكسب عملات وافتح إضافات.' : 'Earn coins, unlock cosmetics.';
   String get competitiveFlow => isAr ? 'تدفق تنافسي' : 'COMPETITIVE FLOW';
-  String get competitiveFlowDesc =>
-      isAr ? 'منفرد، 1v1، معارك عملات والمزيد.' : 'Solo, 1v1, coin battles & more.';
+  String get competitiveFlowDesc => isAr
+      ? 'منفرد، 1v1، معارك عملات والمزيد.'
+      : 'Solo, 1v1, coin battles & more.';
 
   // ── Settings ───────────────────────────────────────────────────────────
   String get settings => isAr ? 'الإعدادات' : 'Settings';
-  String get languageToggleLabel => isAr ? 'اللغة: العربية' : 'Language: English';
-  String get switchToArabic => isAr ? 'التبديل إلى الإنجليزية' : 'Switch to Arabic';
+  String get languageToggleLabel =>
+      isAr ? 'اللغة: العربية' : 'Language: English';
+  String get switchToArabic =>
+      isAr ? 'التبديل إلى الإنجليزية' : 'Switch to Arabic';
 
   // ── Common ─────────────────────────────────────────────────────────────
   String get back => isAr ? 'رجوع' : 'Back';
@@ -181,7 +201,8 @@ class AppL10n {
       : 'Finish setup so your progress, cosmetics, and balance stay linked everywhere.';
 
   // ── Verification dialog ────────────────────────────────────────────────
-  String get verifyEmail => isAr ? 'تحقق من بريدك الإلكتروني' : 'Verify your email';
+  String get verifyEmail =>
+      isAr ? 'تحقق من بريدك الإلكتروني' : 'Verify your email';
   String get emailVerified => isAr ? 'تم التحقق من البريد!' : 'Email Verified!';
   String get verifyEmailMsg => isAr
       ? 'تم إرسال رسالة إلى بريدك الإلكتروني.\nالرجاء التحقق من صندوق الوارد (بما فيه البريد العشوائي).'
@@ -201,16 +222,18 @@ class AppL10n {
   // ── Offline / Online transitions ───────────────────────────────────────
   String get offlineMode => isAr ? 'غير متصل' : 'OFFLINE';
   String get connectionLost => isAr ? 'تم فقدان الاتصال' : 'Connection Lost';
-  String get switchingToOfflineMode =>
-      isAr ? 'جارٍ التحويل إلى وضع عدم الاتصال...' : 'Switching to Offline Mode...';
+  String get switchingToOfflineMode => isAr
+      ? 'جارٍ التحويل إلى وضع عدم الاتصال...'
+      : 'Switching to Offline Mode...';
   String get offlineProgressNote =>
       isAr ? 'تقدمك محفوظ محلياً.' : 'Offline progress is saved locally.';
   String get connectionRestored =>
       isAr ? 'تم استعادة الاتصال' : 'CONNECTION RESTORED';
   String get syncingOnlineAccount =>
       isAr ? 'جارٍ مزامنة حسابك...' : 'SYNCING YOUR ACCOUNT...';
-  String get returningToOnlineAccount =>
-      isAr ? 'جارٍ العودة إلى حسابك المتصل...' : 'Returning to your online account...';
+  String get returningToOnlineAccount => isAr
+      ? 'جارٍ العودة إلى حسابك المتصل...'
+      : 'Returning to your online account...';
 
   // ── A1 — Home navigation & game mode section ───────────────────────────
   String get home => isAr ? 'الرئيسية' : 'Home';
@@ -218,15 +241,19 @@ class AppL10n {
   String get settingsTab => isAr ? 'الإعدادات' : 'Settings';
   String get selectMode => isAr ? 'اختر النمط' : 'SELECT MODE';
   String get chooseYourArena => isAr ? 'اختر ساحتك' : 'Choose your arena';
-  String get arenaModesDesc =>
-      isAr ? 'منفرد، 1v1، معارك عملات، أو تحديات مستويات.' : 'Solo, 1v1, coin battles, or level challenges.';
+  String get arenaModesDesc => isAr
+      ? 'منفرد، 1v1، معارك عملات، أو تحديات مستويات.'
+      : 'Solo, 1v1, coin battles, or level challenges.';
   String get modesCount => isAr ? '4 أنماط' : '4 MODES';
   String get vsAiTitle => isAr ? 'ضد الذكاء الاصطناعي' : 'VS AI';
-  String get vsAiSubtitle => isAr ? 'تدرب، تحدى، تسيطر' : 'Train, challenge, dominate';
+  String get vsAiSubtitle =>
+      isAr ? 'تدرب، تحدى، تسيطر' : 'Train, challenge, dominate';
   String get vsFriendTitle => isAr ? 'ضد صديق' : 'VS FRIEND';
-  String get vsFriendSubtitle => isAr ? '1v1 على نفس الجهاز' : '1v1 on one device';
+  String get vsFriendSubtitle =>
+      isAr ? '1v1 على نفس الجهاز' : '1v1 on one device';
   String get levelsTitle => isAr ? 'المستويات' : 'LEVELS';
-  String get levelsSubtitle => isAr ? 'تخطَّ المراحل، افتح المكافآت' : 'Beat stages, unlock rewards';
+  String get levelsSubtitle =>
+      isAr ? 'تخطَّ المراحل، افتح المكافآت' : 'Beat stages, unlock rewards';
   String get badgeAi => isAr ? 'ذكاء' : 'AI';
   String get badgeHot => isAr ? 'رائج' : 'HOT';
   String get badgeReward => isAr ? 'مكافأة' : 'REWARD';
@@ -235,7 +262,8 @@ class AppL10n {
       ? 'أنشئ حساباً مجانياً لمزامنة عملاتك وإضافاتك وإحصائياتك عبر الأجهزة.'
       : 'Create a free account to sync your coins, cosmetics, and stats across devices.';
   String get maybeLater => isAr ? 'ربما لاحقاً' : 'MAYBE LATER';
-  String get signInRequiredTitle => isAr ? 'تسجيل الدخول مطلوب' : 'Sign in required';
+  String get signInRequiredTitle =>
+      isAr ? 'تسجيل الدخول مطلوب' : 'Sign in required';
   String get signInRequiredDesc => isAr
       ? 'سجّل دخولك لكسب العملات وشراء الإضافات. ستحصل أيضاً على 200 عملة كهدية ترحيبية.'
       : 'Sign in to earn coins and buy themes. You\'ll also get a 200 coins welcome gift.';
@@ -248,72 +276,94 @@ class AppL10n {
 
   // ── A2 — Language switch dialog & UX ──────────────────────────────────
   String get changeLanguageTitle => isAr ? 'تغيير اللغة؟' : 'Change Language?';
-  String get changeLanguageToArabicMsg =>
-      isAr ? 'هل تريد تحويل لغة التطبيق إلى العربية؟' : 'Switch the app language to Arabic?';
-  String get changeLanguageToEnglishMsg =>
-      isAr ? 'هل تريد تحويل لغة التطبيق إلى الإنجليزية؟' : 'Switch the app language to English?';
+  String get changeLanguageToArabicMsg => isAr
+      ? 'هل تريد تحويل لغة التطبيق إلى العربية؟'
+      : 'Switch the app language to Arabic?';
+  String get changeLanguageToEnglishMsg => isAr
+      ? 'هل تريد تحويل لغة التطبيق إلى الإنجليزية؟'
+      : 'Switch the app language to English?';
   String get switchLanguageBtn => isAr ? 'تغيير' : 'Switch';
   String get cancelBtn => isAr ? 'إلغاء' : 'CANCEL';
-  String get switchingLanguage => isAr ? 'جارٍ تغيير اللغة...' : 'Switching language...';
+  String get switchingLanguage =>
+      isAr ? 'جارٍ تغيير اللغة...' : 'Switching language...';
   String get languageChangedSuccessfully =>
       isAr ? 'تم تغيير اللغة بنجاح.' : 'Language changed successfully.';
-  String get currentLanguageLabel => isAr ? 'اللغة: العربية' : 'Language: English';
+  String get currentLanguageLabel =>
+      isAr ? 'اللغة: العربية' : 'Language: English';
   String get switchToLabel =>
       isAr ? 'اضغط للتبديل إلى الإنجليزية' : 'Tap to switch to Arabic';
 
   // ── A3 — Login screen auth errors ─────────────────────────────────────
-  String get networkError =>
-      isAr ? 'خطأ في الشبكة. تحقق من الاتصال.' : 'NETWORK ERROR. CHECK YOUR CONNECTION.';
-  String get incorrectPassword =>
-      isAr ? 'كلمة المرور غير صحيحة. حاول مرة أخرى.' : 'INCORRECT PASSWORD. TRY AGAIN.';
-  String get accountNotFound =>
-      isAr ? 'الحساب غير موجود. تحقق من البريد الإلكتروني.' : 'ACCOUNT NOT FOUND. CHECK EMAIL.';
+  String get networkError => isAr
+      ? 'خطأ في الشبكة. تحقق من الاتصال.'
+      : 'NETWORK ERROR. CHECK YOUR CONNECTION.';
+  String get incorrectPassword => isAr
+      ? 'كلمة المرور غير صحيحة. حاول مرة أخرى.'
+      : 'INCORRECT PASSWORD. TRY AGAIN.';
+  String get accountNotFound => isAr
+      ? 'الحساب غير موجود. تحقق من البريد الإلكتروني.'
+      : 'ACCOUNT NOT FOUND. CHECK EMAIL.';
   String get invalidEmailError =>
       isAr ? 'البريد الإلكتروني غير صحيح.' : 'INVALID EMAIL ADDRESS.';
-  String get emailUsesGoogle =>
-      isAr ? 'هذا البريد مرتبط بـ Google. استخدم تسجيل الدخول عبر Google.' : 'THIS EMAIL USES GOOGLE SIGN-IN. CONTINUE WITH GOOGLE.';
+  String get emailUsesGoogle => isAr
+      ? 'هذا البريد مرتبط بـ Google. استخدم تسجيل الدخول عبر Google.'
+      : 'THIS EMAIL USES GOOGLE SIGN-IN. CONTINUE WITH GOOGLE.';
   String get loginFailed =>
       isAr ? 'فشل تسجيل الدخول. حاول مرة أخرى.' : 'LOGIN FAILED. TRY AGAIN.';
-  String get invalidEmailOrPassword =>
-      isAr ? 'بريد إلكتروني أو كلمة مرور غير صحيحة.' : 'INVALID EMAIL OR PASSWORD.';
-  String get connectingArenaProfile =>
-      isAr ? 'جارٍ تحميل ملفك في الساحة...' : 'CONNECTING YOUR ARENA PROFILE...';
-  String get displayNameLengthError =>
-      isAr ? 'يجب أن يكون الاسم بين 3 و16 حرفاً.' : 'DISPLAY NAME MUST BE 3-16 CHARACTERS.';
+  String get invalidEmailOrPassword => isAr
+      ? 'بريد إلكتروني أو كلمة مرور غير صحيحة.'
+      : 'INVALID EMAIL OR PASSWORD.';
+  String get connectingArenaProfile => isAr
+      ? 'جارٍ تحميل ملفك في الساحة...'
+      : 'CONNECTING YOUR ARENA PROFILE...';
+  String get displayNameLengthError => isAr
+      ? 'يجب أن يكون الاسم بين 3 و16 حرفاً.'
+      : 'DISPLAY NAME MUST BE 3-16 CHARACTERS.';
 
   // ── A4 — Create account / Complete profile errors ──────────────────────
-  String get failedToSyncProfile =>
-      isAr ? 'تم تسجيل الدخول لكن فشل مزامنة الملف الشخصي' : 'Logged in but failed to sync profile';
+  String get failedToSyncProfile => isAr
+      ? 'تم تسجيل الدخول لكن فشل مزامنة الملف الشخصي'
+      : 'Logged in but failed to sync profile';
   String get signUpFailed =>
       isAr ? 'فشل إنشاء الحساب. حاول مرة أخرى.' : 'Sign-up failed. Try again.';
   String get couldNotOpenPrivacyPolicy =>
       isAr ? 'تعذّر فتح سياسة الخصوصية.' : 'Could not open Privacy Policy.';
   String get couldNotOpenGooglePolicies =>
       isAr ? 'تعذّر فتح سياسات Google.' : 'Could not open Google Policies.';
-  String get emailAlreadyInUse =>
-      isAr ? 'هذا البريد الإلكتروني مستخدم بالفعل.' : 'An account already exists with this email.';
-  String get passwordTooWeak =>
-      isAr ? 'كلمة المرور ضعيفة. استخدم 6 أحرف على الأقل.' : 'Password is too weak. Use at least 6 characters.';
-  String get internetProblem =>
-      isAr ? 'خطأ في الشبكة. تحقق من اتصالك.' : 'Network error. Check your connection.';
+  String get emailAlreadyInUse => isAr
+      ? 'هذا البريد الإلكتروني مستخدم بالفعل.'
+      : 'An account already exists with this email.';
+  String get passwordTooWeak => isAr
+      ? 'كلمة المرور ضعيفة. استخدم 6 أحرف على الأقل.'
+      : 'Password is too weak. Use at least 6 characters.';
+  String get internetProblem => isAr
+      ? 'خطأ في الشبكة. تحقق من اتصالك.'
+      : 'Network error. Check your connection.';
   String get verificationEmailSent =>
       isAr ? 'تم إرسال بريد التحقق!' : 'Verification email sent!';
   String get failedToSendVerification =>
       isAr ? 'فشل إرسال بريد التحقق.' : 'Failed to send verification email.';
-  String get emailVerifiedSuccess =>
-      isAr ? 'تم التحقق من بريدك! يمكنك الآن تسجيل الدخول.' : 'Email verified! You can now log in.';
-  String get emailNotVerifiedYet =>
-      isAr ? 'لم يتم التحقق من بريدك بعد. تحقق من صندوق الوارد.' : 'Email not verified yet. Please check your email.';
-  String get failedToRefreshStatus =>
-      isAr ? 'فشل تحديث الحالة. حاول مرة أخرى.' : 'Failed to refresh status. Please try again.';
-  String get profileCompletedFailedSync =>
-      isAr ? 'اكتمل الملف الشخصي لكن فشلت المزامنة' : 'Profile completed but failed to sync';
-  String get profileCompletedSuccess =>
-      isAr ? 'اكتمل إعداد ملفك الشخصي بنجاح!' : 'Profile completed successfully!';
-  String get emailMustMatchGoogle =>
-      isAr ? 'يجب أن يطابق البريد بريدك في Google.' : 'Email must match your Google account email.';
-  String get passwordAlreadyLinked =>
-      isAr ? 'كلمة المرور هذه مرتبطة بحساب آخر.' : 'This password is already linked to another account.';
+  String get emailVerifiedSuccess => isAr
+      ? 'تم التحقق من بريدك! يمكنك الآن تسجيل الدخول.'
+      : 'Email verified! You can now log in.';
+  String get emailNotVerifiedYet => isAr
+      ? 'لم يتم التحقق من بريدك بعد. تحقق من صندوق الوارد.'
+      : 'Email not verified yet. Please check your email.';
+  String get failedToRefreshStatus => isAr
+      ? 'فشل تحديث الحالة. حاول مرة أخرى.'
+      : 'Failed to refresh status. Please try again.';
+  String get profileCompletedFailedSync => isAr
+      ? 'اكتمل الملف الشخصي لكن فشلت المزامنة'
+      : 'Profile completed but failed to sync';
+  String get profileCompletedSuccess => isAr
+      ? 'اكتمل إعداد ملفك الشخصي بنجاح!'
+      : 'Profile completed successfully!';
+  String get emailMustMatchGoogle => isAr
+      ? 'يجب أن يطابق البريد بريدك في Google.'
+      : 'Email must match your Google account email.';
+  String get passwordAlreadyLinked => isAr
+      ? 'كلمة المرور هذه مرتبطة بحساب آخر.'
+      : 'This password is already linked to another account.';
   String tryAgainIn(String formatted) =>
       isAr ? 'أعد المحاولة خلال $formatted' : 'Try again in $formatted';
   String resendInSeconds(int s) =>
@@ -328,7 +378,8 @@ class AppL10n {
   String get uidLabel => isAr ? 'المعرّف' : 'UID';
   String get emailLabel => isAr ? 'البريد الإلكتروني' : 'Email';
   String get displayNameLabel => isAr ? 'اسم العرض' : 'Display Name';
-  String get loginProviderLabel => isAr ? 'طريقة تسجيل الدخول' : 'Login Provider';
+  String get loginProviderLabel =>
+      isAr ? 'طريقة تسجيل الدخول' : 'Login Provider';
   String get emailVerifiedLabel => isAr ? 'البريد موثق' : 'Email Verified';
   String get yesVerified => isAr ? 'نعم ✓' : 'Yes ✓';
   String get notVerifiedLabel => isAr ? 'لا' : 'No';
@@ -336,8 +387,9 @@ class AppL10n {
   String get createdAtLabel => isAr ? 'تاريخ الإنشاء' : 'Created At';
   String get lastLoginLabel => isAr ? 'آخر تسجيل دخول' : 'Last Login';
   String get passwordLabel => isAr ? 'كلمة المرور' : 'Password';
-  String get protectedByFirebase =>
-      isAr ? 'محمية بـ Firebase Auth — لا تُخزَّن أبداً' : 'Protected by Firebase Auth — never stored';
+  String get protectedByFirebase => isAr
+      ? 'محمية بـ Firebase Auth — لا تُخزَّن أبداً'
+      : 'Protected by Firebase Auth — never stored';
   String get coinsLabel => isAr ? 'العملات' : 'Coins';
   String get lifetimeEarned => isAr ? 'مكتسب إجمالاً' : 'Lifetime Earned';
   String get lifetimeSpent => isAr ? 'منفق إجمالاً' : 'Lifetime Spent';
@@ -346,20 +398,25 @@ class AppL10n {
   String get lossesLabel => isAr ? 'الهزائم' : 'Losses';
   String get drawsLabel => isAr ? 'التعادلات' : 'Draws';
   String get winRateLabel => isAr ? 'نسبة الفوز' : 'Win Rate';
-  String get equippedAvatarLabel => isAr ? 'الصورة الرمزية المجهزة' : 'Equipped Avatar';
+  String get equippedAvatarLabel =>
+      isAr ? 'الصورة الرمزية المجهزة' : 'Equipped Avatar';
   String get equippedXSkinLabel => isAr ? 'مظهر X المجهز' : 'Equipped X Skin';
   String get equippedOSkinLabel => isAr ? 'مظهر O المجهز' : 'Equipped O Skin';
-  String get ownedAvatarsLabel => isAr ? 'الصور الرمزية المملوكة' : 'Owned Avatars';
+  String get ownedAvatarsLabel =>
+      isAr ? 'الصور الرمزية المملوكة' : 'Owned Avatars';
   String get ownedXSkinsLabel => isAr ? 'مظاهر X المملوكة' : 'Owned X Skins';
   String get ownedOSkinsLabel => isAr ? 'مظاهر O المملوكة' : 'Owned O Skins';
   String get noneLabel => isAr ? 'لا شيء' : 'None';
-  String get recentTransactionsLabel => isAr ? 'المعاملات الأخيرة' : 'RECENT TRANSACTIONS';
+  String get recentTransactionsLabel =>
+      isAr ? 'المعاملات الأخيرة' : 'RECENT TRANSACTIONS';
   String get unableToLoadTransactions =>
       isAr ? 'تعذّر تحميل المعاملات.' : 'Unable to load transactions.';
-  String get noTransactionsYet => isAr ? 'لا توجد معاملات حتى الآن.' : 'No transactions yet.';
+  String get noTransactionsYet =>
+      isAr ? 'لا توجد معاملات حتى الآن.' : 'No transactions yet.';
   String get matchRewardLabel => isAr ? 'مكافأة مباراة' : 'Match Reward';
   String get coinPurchaseIap => isAr ? 'شراء عملات' : 'Coin Purchase (IAP)';
-  String get avatarPurchaseLabel => isAr ? 'شراء صورة رمزية' : 'Avatar Purchase';
+  String get avatarPurchaseLabel =>
+      isAr ? 'شراء صورة رمزية' : 'Avatar Purchase';
   String get xSkinPurchaseLabel => isAr ? 'شراء مظهر X' : 'X Skin Purchase';
   String get oSkinPurchaseLabel => isAr ? 'شراء مظهر O' : 'O Skin Purchase';
   String get adminAdjustmentLabel => isAr ? 'تعديل إداري' : 'Admin Adjustment';
@@ -371,11 +428,6 @@ class AppL10n {
 
   // ── A6 — Settings screen ──────────────────────────────────────────────
   String get musicLabel => isAr ? 'الموسيقى' : 'MUSIC';
-  String get performanceModeLabel =>
-      isAr ? 'وضع الأداء' : 'PERFORMANCE MODE';
-  String get performanceModeHint => isAr
-      ? 'تقليل المؤثرات والحركات لأداء أنعم'
-      : 'Reduce effects and animations for smoother play';
 
   // ── Missions ──────────────────────────────────────────────────────────
   String get missionsTitle => isAr ? 'المهام' : 'MISSIONS';
@@ -387,7 +439,59 @@ class AppL10n {
   String get missionClaimedDone => isAr ? 'تم' : 'DONE';
   String get missionCompleted => isAr ? 'مكتملة' : 'DONE';
   String get missionViewAll => isAr ? 'عرض الكل' : 'VIEW ALL';
-  String get missionsDayDone => isAr ? 'تم إنهاء مهام اليوم' : 'All daily missions done';
+  String get missionsSubtitle => isAr
+      ? 'أنجز المهام اليومية والأسبوعية واربح كوينز'
+      : 'Complete daily and weekly missions and earn coins';
+
+  // ── Invite / referral panel (missions + online) ───────────────────────────
+  String get inviteFriendsSubtitle => isAr
+      ? 'ادعُ أصدقاءك واربح كوينز مع كل صديق جديد!'
+      : 'Invite friends and earn coins with every new friend!';
+  String get inviteFriendsSubtitleShort =>
+      isAr ? 'ادعُ أصدقاءك واربح كوينز' : 'Invite friends and earn coins';
+  String inviteUsedByPlayers(int count) =>
+      isAr ? 'استخدم الكود $count لاعب' : 'Used by $count players';
+  String get inviteRewardPerFriend =>
+      isAr ? '+1000 كوين لكل صديق جديد' : '+1000 coins per new friend';
+  String get enterCodeShort => isAr ? 'إدخال كود' : 'Enter Code';
+  String get inviteLoadFailedShort =>
+      isAr ? 'تعذر تحميل كود الدعوة' : 'Could not load invite code';
+  String get retryBtn => isAr ? 'إعادة المحاولة' : 'Retry';
+
+  // ── Enter-invite-code page ────────────────────────────────────────────────
+  String get enterInviteCodeSubtitle => isAr
+      ? 'أدخل كود صديقك واحصل على مكافأة'
+      : "Enter your friend's code and get a reward";
+  String get inviteCodeLabel => isAr ? 'كود الدعوة' : 'Invite Code';
+  String get confirmCodeBtn => isAr ? 'تأكيد الكود' : 'Confirm Code';
+  String get inviteOneTimeNote => isAr
+      ? 'يمكنك استخدام كود دعوة مرة واحدة فقط'
+      : 'You can use an invite code only once';
+  String get enterInviteCodeHeroBody => isAr
+      ? 'عند إدخال كود دعوة صحيح، ستحصل على مكافأة فورية وتدعم صديقك في رحلته.'
+      : 'Enter a valid invite code to get an instant reward and support your friend on their journey.';
+  String get plus100Coins => isAr ? '+1000 كوين' : '+1000 Coins';
+  String get rewardOnValidCode => isAr
+      ? '+1000 كوين عند إدخال كود صحيح'
+      : '+1000 coins for entering a valid code';
+  String get okBtn => isAr ? 'تمام' : 'OK';
+  String get defaultFriendName => isAr ? 'صديقك' : 'your friend';
+
+  // ── Online arena screen ───────────────────────────────────────────────────
+  String get arenaScreenSubtitle => isAr
+      ? 'العب أونلاين في غرف خاصة مع أصدقائك'
+      : 'Play online in private rooms with friends';
+  String get createRoomSubtitle1 =>
+      isAr ? 'أنشئ غرفة خاصة' : 'Create a private room';
+  String get createRoomSubtitle2 =>
+      isAr ? 'والعب مع أصدقائك' : 'and play with friends';
+  String get joinRoomSubtitle1 =>
+      isAr ? 'ادخل كود الغرفة' : 'Enter the room code';
+  String get joinRoomSubtitle2 => isAr ? 'وانضم فورًا' : 'and join instantly';
+  String get startBtn => isAr ? 'ابدأ' : 'Start';
+  String get joinBtn => isAr ? 'دخول' : 'Join';
+  String get missionsDayDone =>
+      isAr ? 'تم إنهاء مهام اليوم' : 'All daily missions done';
   String get missionsWeekDone =>
       isAr ? 'تم إنهاء مهام الأسبوع' : 'All weekly missions done';
   String get missionAlreadyClaimed =>
@@ -396,6 +500,19 @@ class AppL10n {
       isAr ? 'غير متاح الآن، حاول لاحقًا' : 'Not available now, try later';
   String get missionRewardClaimed =>
       isAr ? 'تم استلام المكافأة!' : 'Reward claimed!';
+  String get missionCompletedTitle => isAr
+      ? '\u0627\u0643\u062a\u0645\u0644\u062a \u0627\u0644\u0645\u0647\u0645\u0629'
+      : 'MISSION COMPLETED';
+  String missionRewardEarned(int coins) => isAr
+      ? '\u0631\u0628\u062d\u062a $coins \u0639\u0645\u0644\u0629'
+      : 'You earned $coins Coins';
+  String missionAvatarRewardEarned(String name) =>
+      isAr ? '\u0641\u062a\u062d\u062a \u0623\u0641\u0627\u062a\u0627\u0631 $name \u0627\u0644\u0645\u062c\u0627\u0646\u064a!' : 'You unlocked the free $name avatar!';
+  String get missionFreeAvatar => isAr ? '\u0623\u0641\u0627\u062a\u0627\u0631 \u0645\u062c\u0627\u0646\u064a' : 'FREE AVATAR';
+  String get milestonesTitle => isAr ? '\u0627\u0644\u0625\u0646\u062c\u0627\u0632\u0627\u062a' : 'ACHIEVEMENTS';
+  String get milestonesSubtitle => isAr
+      ? '\u0645\u0643\u0627\u0641\u0622\u062a \u0644\u0645\u0631\u0629 \u0648\u0627\u062d\u062f\u0629 \u062a\u064f\u0641\u062a\u062d \u0644\u0644\u0623\u0628\u062f'
+      : 'One-time rewards unlocked forever';
   String missionRenewsIn(int days, int hours) => isAr
       ? 'تتجدد خلال $days أيام و $hours ساعات'
       : 'Renews in ${days}d ${hours}h';
@@ -407,8 +524,9 @@ class AppL10n {
   String get accountSection => isAr ? 'الحساب' : 'ACCOUNT';
   String get supportAndLegal => isAr ? 'الدعم والقانونية' : 'SUPPORT & LEGAL';
   String get accountDetailsRow => isAr ? 'تفاصيل الحساب' : 'Account Details';
-  String get accountDetailsSubtitle =>
-      isAr ? 'عرض المعرّف والإحصائيات والمحفظة والمخزون' : 'View UID, stats, wallet, inventory';
+  String get accountDetailsSubtitle => isAr
+      ? 'عرض المعرّف والإحصائيات والمحفظة والمخزون'
+      : 'View UID, stats, wallet, inventory';
   String get changePassword => isAr ? 'تغيير كلمة المرور' : 'Change Password';
   String get changePasswordSubtitle =>
       isAr ? 'تحديث كلمة مرور تسجيل الدخول' : 'Update your login password';
@@ -416,25 +534,34 @@ class AppL10n {
   String get contactSupportSubtitle =>
       isAr ? 'تواصل مع فريق دعم XO ARENA' : 'Reach the XO ARENA support team';
   String get privacyPolicyRow => isAr ? 'سياسة الخصوصية' : 'Privacy Policy';
-  String get privacyPolicySubtitle =>
-      isAr ? 'اقرأ كيف يتم التعامل مع بياناتك' : 'Read how your data is handled';
+  String get privacyPolicySubtitle => isAr
+      ? 'اقرأ كيف يتم التعامل مع بياناتك'
+      : 'Read how your data is handled';
   String get termsOfService => isAr ? 'شروط الخدمة' : 'Terms of Service';
   String get termsOfServiceSubtitle =>
       isAr ? 'قواعد اللعبة والشروط القانونية' : 'Game rules and legal terms';
-  String get accountDeletionInfo => isAr ? 'معلومات حذف الحساب' : 'Account Deletion Info';
-  String get accountDeletionInfoSubtitle =>
-      isAr ? 'تعرّف على ما سيتم حذفه نهائياً' : 'Learn what gets removed permanently';
-  String get currentPasswordHint => isAr ? 'كلمة المرور الحالية' : 'CURRENT PASSWORD';
-  String get newPasswordHint =>
-      isAr ? 'كلمة المرور الجديدة (6 أحرف على الأقل)' : 'NEW PASSWORD (MIN 6 CHARS)';
+  String get accountDeletionInfo =>
+      isAr ? 'معلومات حذف الحساب' : 'Account Deletion Info';
+  String get accountDeletionInfoSubtitle => isAr
+      ? 'تعرّف على ما سيتم حذفه نهائياً'
+      : 'Learn what gets removed permanently';
+  String get currentPasswordHint =>
+      isAr ? 'كلمة المرور الحالية' : 'CURRENT PASSWORD';
+  String get newPasswordHint => isAr
+      ? 'كلمة المرور الجديدة (6 أحرف على الأقل)'
+      : 'NEW PASSWORD (MIN 6 CHARS)';
   String get confirmNewPasswordHint =>
       isAr ? 'تأكيد كلمة المرور الجديدة' : 'CONFIRM NEW PASSWORD';
-  String get googlePasswordNote =>
-      isAr ? 'يتم إدارة كلمات مرور حسابات Google عبر Google.' : 'Google accounts manage passwords through Google.';
-  String get changePasswordTitle => isAr ? 'تغيير كلمة المرور' : 'CHANGE PASSWORD';
-  String get nameCannotBeEmpty => isAr ? 'الاسم لا يمكن أن يكون فارغاً.' : 'Name cannot be empty.';
-  String get nameTooLong20 =>
-      isAr ? 'الاسم طويل جداً (الحد الأقصى 20 حرفاً).' : 'Name is too long (max 20 characters).';
+  String get googlePasswordNote => isAr
+      ? 'يتم إدارة كلمات مرور حسابات Google عبر Google.'
+      : 'Google accounts manage passwords through Google.';
+  String get changePasswordTitle =>
+      isAr ? 'تغيير كلمة المرور' : 'CHANGE PASSWORD';
+  String get nameCannotBeEmpty =>
+      isAr ? 'الاسم لا يمكن أن يكون فارغاً.' : 'Name cannot be empty.';
+  String get nameTooLong20 => isAr
+      ? 'الاسم طويل جداً (الحد الأقصى 20 حرفاً).'
+      : 'Name is too long (max 20 characters).';
   String get nameUpdated => isAr ? 'تم تحديث الاسم!' : 'Name updated!';
   // ── Profile photo (Google-only since 2026-05) ────────────────────────────
   // Custom photo upload was removed in favor of Google Sign-In photoURL only.
@@ -448,61 +575,80 @@ class AppL10n {
       : 'Profile photo is synced from your Google account.';
 
   @Deprecated('Custom photo upload removed — Google photoURL only.')
-  String get imageTooLarge =>
-      isAr ? 'الصورة كبيرة جداً (الحد الأقصى 5 ميجابايت)' : 'Image too large (max 5MB)';
+  String get imageTooLarge => isAr
+      ? 'الصورة كبيرة جداً (الحد الأقصى 5 ميجابايت)'
+      : 'Image too large (max 5MB)';
   @Deprecated('Custom photo upload removed — Google photoURL only.')
-  String get noInternetPhotoSaved =>
-      isAr ? 'لا يوجد اتصال. تم حفظ الصورة محلياً.' : 'No internet connection. Photo saved locally.';
+  String get noInternetPhotoSaved => isAr
+      ? 'لا يوجد اتصال. تم حفظ الصورة محلياً.'
+      : 'No internet connection. Photo saved locally.';
   @Deprecated('Custom photo upload removed — Google photoURL only.')
-  String get uploadingPhoto => isAr ? 'جارٍ رفع الصورة...' : 'Uploading photo...';
+  String get uploadingPhoto =>
+      isAr ? 'جارٍ رفع الصورة...' : 'Uploading photo...';
   @Deprecated('Custom photo upload removed — Google photoURL only.')
-  String get uploadNotAllowed =>
-      isAr ? 'الرفع غير مسموح. تحقق من قواعد التخزين.' : 'Upload not allowed. Please check Storage rules.';
+  String get uploadNotAllowed => isAr
+      ? 'الرفع غير مسموح. تحقق من قواعد التخزين.'
+      : 'Upload not allowed. Please check Storage rules.';
   @Deprecated('Custom photo upload removed — Google photoURL only.')
-  String get uploadFailed => isAr ? 'فشل الرفع. حاول مرة أخرى.' : 'Upload failed. Please try again.';
+  String get uploadFailed =>
+      isAr ? 'فشل الرفع. حاول مرة أخرى.' : 'Upload failed. Please try again.';
   @Deprecated('Custom photo upload removed — Google photoURL only.')
   String get photoUpdated => isAr ? 'تم تحديث الصورة!' : 'Photo updated!';
-  String get couldNotOpenLink => isAr ? 'تعذّر فتح الرابط.' : 'Could not open link.';
-  String get mailNotAvailable => isAr ? 'تطبيق البريد غير متاح.' : 'Mail app not available.';
+  String get couldNotOpenLink =>
+      isAr ? 'تعذّر فتح الرابط.' : 'Could not open link.';
+  String get mailNotAvailable =>
+      isAr ? 'تطبيق البريد غير متاح.' : 'Mail app not available.';
   String get deleteAccountTitle => isAr ? 'حذف الحساب' : 'Delete Account';
   String get deleteAccountReasonPrompt =>
       isAr ? 'يرجى اختيار سبب:' : 'Please select a reason:';
   String get confirmDelete => isAr ? 'تأكيد الحذف' : 'Confirm Delete';
-  String get deleteReasonHint => isAr ? 'يرجى وصف سببك...' : 'Please describe your reason...';
+  String get deleteReasonHint =>
+      isAr ? 'يرجى وصف سببك...' : 'Please describe your reason...';
   String get dontUseAnymore =>
       isAr ? 'لم أعد أستخدم التطبيق' : 'I don\'t use the app anymore';
   String get foundBetterAlternative =>
       isAr ? 'وجدت بديلاً أفضل' : 'I found a better alternative';
-  String get tooBuggy => isAr ? 'كثير من الأخطاء أو التعطلات' : 'Too many bugs or crashes';
-  String get privacyConcernsReason => isAr ? 'مخاوف تتعلق بالخصوصية' : 'Privacy concerns';
+  String get tooBuggy =>
+      isAr ? 'كثير من الأخطاء أو التعطلات' : 'Too many bugs or crashes';
+  String get privacyConcernsReason =>
+      isAr ? 'مخاوف تتعلق بالخصوصية' : 'Privacy concerns';
   String get wantFresh => isAr ? 'أريد البدء من جديد' : 'I want to start fresh';
-  String get otherReason => isAr ? 'أخرى (اكتب سببك)' : 'Other (write your reason)';
+  String get otherReason =>
+      isAr ? 'أخرى (اكتب سببك)' : 'Other (write your reason)';
   String get accountDeletedSuccessfully =>
       isAr ? 'تم حذف الحساب بنجاح.' : 'Account deleted successfully.';
   @Deprecated('Custom photo upload removed — Google photoURL only.')
-  String uploadFailedCode(String code) =>
-      isAr ? 'فشل الرفع ($code). حاول مرة أخرى.' : 'Upload failed ($code). Please try again.';
+  String uploadFailedCode(String code) => isAr
+      ? 'فشل الرفع ($code). حاول مرة أخرى.'
+      : 'Upload failed ($code). Please try again.';
 
   // ── A7 — Store / Coins screen ─────────────────────────────────────────
   String get buyCoins => isAr ? 'شراء العملات' : 'Buy Coins';
-  String get noInternetToPurchase =>
-      isAr ? 'تحتاج إلى اتصال بالإنترنت لشراء العملات' : 'You need an internet connection to purchase coins';
-  String get processingPurchase => isAr ? 'جارٍ معالجة الشراء...' : 'Processing purchase...';
+  String get noInternetToPurchase => isAr
+      ? 'تحتاج إلى اتصال بالإنترنت لشراء العملات'
+      : 'You need an internet connection to purchase coins';
+  String get processingPurchase =>
+      isAr ? 'جارٍ معالجة الشراء...' : 'Processing purchase...';
   String get pleaseWait => isAr ? 'يرجى الانتظار' : 'Please wait';
   String get purchaseAlreadyProcessed =>
       isAr ? 'تم معالجة هذا الشراء مسبقاً.' : 'Purchase was already processed.';
   String get purchaseFailedOrCanceled =>
       isAr ? 'فشل الشراء أو تم إلغاؤه.' : 'Purchase failed or canceled.';
-  String get coinsAddedToWallet =>
-      isAr ? 'نجاح! تمت إضافة العملات إلى محفظتك.' : 'Success! Coins added to your wallet.';
-  String get pendingPurchasesChecked =>
-      isAr ? 'تم فحص المشتريات المعلقة. تحقق من رصيدك.' : 'Pending purchases checked. Check your balance.';
-  String get purchaseTimedOut =>
-      isAr ? 'انتهت مهلة الشراء. تحقق من رصيدك أو حاول مرة أخرى.' : 'Purchase timed out. Check your balance or try again.';
-  String get createAccountToPurchase =>
-      isAr ? 'سجّل حساباً موثقاً في الساحة لشراء حزم العملات.' : 'Register a verified arena account to purchase coin packs.';
-  String get storeNotConfigured =>
-      isAr ? 'لم يتم تهيئة المتجر بعد. حاول لاحقاً.' : 'Coins store not configured yet. Please try again later.';
+  String get coinsAddedToWallet => isAr
+      ? 'نجاح! تمت إضافة العملات إلى محفظتك.'
+      : 'Success! Coins added to your wallet.';
+  String get pendingPurchasesChecked => isAr
+      ? 'تم فحص المشتريات المعلقة. تحقق من رصيدك.'
+      : 'Pending purchases checked. Check your balance.';
+  String get purchaseTimedOut => isAr
+      ? 'انتهت مهلة الشراء. تحقق من رصيدك أو حاول مرة أخرى.'
+      : 'Purchase timed out. Check your balance or try again.';
+  String get createAccountToPurchase => isAr
+      ? 'سجّل حساباً موثقاً في الساحة لشراء حزم العملات.'
+      : 'Register a verified arena account to purchase coin packs.';
+  String get storeNotConfigured => isAr
+      ? 'لم يتم تهيئة المتجر بعد. حاول لاحقاً.'
+      : 'Coins store not configured yet. Please try again later.';
   String get checkPendingPurchasesBtn =>
       isAr ? 'التحقق من المشتريات المعلقة' : 'Check pending purchases';
   String get processingLabel => isAr ? 'جارٍ المعالجة...' : 'PROCESSING';
@@ -512,14 +658,17 @@ class AppL10n {
   String get noInternetConnectionDesc => isAr
       ? 'لا يوجد اتصال بالإنترنت.\nاتصل بالإنترنت لشراء العملات.'
       : 'No internet connection.\nConnect to the internet to purchase coins.';
-  String coinsAddedDesc(int coins) =>
-      isAr ? 'تمت إضافة $coins عملة إلى حسابك' : '$coins coins have been added to your account';
+  String coinsAddedDesc(int coins) => isAr
+      ? 'تمت إضافة $coins عملة إلى حسابك'
+      : '$coins coins have been added to your account';
   String newBalanceLabel(int balance) =>
       isAr ? 'الرصيد الجديد: $balance عملة' : 'New balance: $balance coins';
-  String checkFailed(String err) => isAr ? 'فشل الفحص: $err' : 'Check failed: $err';
+  String checkFailed(String err) =>
+      isAr ? 'فشل الفحص: $err' : 'Check failed: $err';
 
   // ── A8 — Avatar store tab / Main store dialogs ────────────────────────
   String get legendaryAnimated => isAr ? 'أسطوري متحرك' : 'LEGENDARY ANIMATED';
+  String get premiumFramesLabel => isAr ? 'إطارات مميزة' : 'PREMIUM FRAMES';
   String get freeUnlockLabel => isAr ? 'فتح مجاني' : 'FREE UNLOCK';
   String get claimBtn => isAr ? 'استلام' : 'CLAIM';
   String get confirmBtn => isAr ? 'تأكيد' : 'CONFIRM';
@@ -528,7 +677,8 @@ class AppL10n {
   String get unlockFreeLabel => isAr ? 'افتح مجاناً' : 'UNLOCK FREE';
   String get alreadyOwned => isAr ? 'تم الامتلاك مسبقاً!' : 'Already owned!';
   String get avatarGalleryTab => isAr ? 'معرض الصور الرمزية' : 'Avatar Gallery';
-  String get notEnoughCoinsTitle => isAr ? 'عملات غير كافية' : 'Not Enough Coins';
+  String get notEnoughCoinsTitle =>
+      isAr ? 'عملات غير كافية' : 'Not Enough Coins';
   String get unlockXColorTitle => isAr ? 'فتح لون X؟' : 'Unlock X Color?';
   String get unlockOColorTitle => isAr ? 'فتح لون O؟' : 'Unlock O Color?';
   String get purchasedXColor => isAr ? 'تم شراء لون X!' : 'Purchased X color!';
@@ -537,14 +687,21 @@ class AppL10n {
   String get oColorApplied => isAr ? 'تم تطبيق لون O!' : 'O color applied!';
   String get xSkinEquipped => isAr ? 'تم تجهيز مظهر X!' : 'X Skin equipped!';
   String get oSkinEquipped => isAr ? 'تم تجهيز مظهر O!' : 'O Skin equipped!';
-  String get restoredDefaultX => isAr ? 'تمت استعادة X الافتراضي' : 'Restored default X';
-  String get xSkinSelectedLabel => isAr ? 'تم اختيار مظهر X!' : 'X Skin selected!';
-  String get restoredDefaultO => isAr ? 'تمت استعادة O الافتراضي' : 'Restored default O';
-  String get oSkinSelectedLabel => isAr ? 'تم اختيار مظهر O!' : 'O Skin selected!';
-  String xoCoinPrice(String price) => isAr ? '$price عملة XO' : '$price XO COINS';
+  String get restoredDefaultX =>
+      isAr ? 'تمت استعادة X الافتراضي' : 'Restored default X';
+  String get xSkinSelectedLabel =>
+      isAr ? 'تم اختيار مظهر X!' : 'X Skin selected!';
+  String get restoredDefaultO =>
+      isAr ? 'تمت استعادة O الافتراضي' : 'Restored default O';
+  String get oSkinSelectedLabel =>
+      isAr ? 'تم اختيار مظهر O!' : 'O Skin selected!';
+  String xoCoinPrice(String price) =>
+      isAr ? '$price عملة XO' : '$price XO COINS';
   String buyWithPrice(String price) => isAr ? 'شراء $price' : 'BUY $price';
-  String purchasedItemName(String name) => isAr ? 'تم شراء $name!' : 'Purchased $name!';
-  String itemEquippedName(String name) => isAr ? 'تم تجهيز $name!' : '$name equipped!';
+  String purchasedItemName(String name) =>
+      isAr ? 'تم شراء $name!' : 'Purchased $name!';
+  String itemEquippedName(String name) =>
+      isAr ? 'تم تجهيز $name!' : '$name equipped!';
   String notEnoughCoinsDesc(int required, int current) => isAr
       ? 'تحتاج إلى $required عملة لشراء هذا العنصر.\nرصيدك الحالي $current عملة.'
       : 'You need $required coins to purchase this item.\nYou currently have $current coins.';
@@ -552,19 +709,23 @@ class AppL10n {
       isAr ? 'تحتاج $needed عملة إضافية' : 'Need $needed more coins';
 
   // ── A9 — Intro screen ─────────────────────────────────────────────────
-  String get enteringArena => isAr ? 'جارٍ الدخول إلى XO ARENA' : 'ENTERING XO ARENA';
-  String get openingArenaHub => isAr ? 'جارٍ فتح مركز الساحة' : 'Opening your arena hub';
-  String get openingSignIn => isAr ? 'جارٍ فتح تسجيل الدخول' : 'Opening sign in';
-  String get destinationReady =>
-      isAr ? 'الوجهة جاهزة. بدء الانتقال' : 'Destination ready. Starting transition';
-  String get syncingSession =>
-      isAr ? 'مزامنة الجلسة وتحميل الوجهة' : 'Syncing session and loading destination';
+  String get enteringArena =>
+      isAr ? 'جارٍ الدخول إلى XO ARENA' : 'ENTERING XO ARENA';
+  String get openingArenaHub =>
+      isAr ? 'جارٍ فتح مركز الساحة' : 'Opening your arena hub';
+  String get openingSignIn =>
+      isAr ? 'جارٍ فتح تسجيل الدخول' : 'Opening sign in';
+  String get destinationReady => isAr
+      ? 'الوجهة جاهزة. بدء الانتقال'
+      : 'Destination ready. Starting transition';
+  String get syncingSession => isAr
+      ? 'مزامنة الجلسة وتحميل الوجهة'
+      : 'Syncing session and loading destination';
   String get preparingStartup =>
       isAr ? 'جارٍ تحضير أنظمة الإطلاق' : 'Preparing startup systems';
 
   // ── B1 — Exit match dialogs ───────────────────────────────────────────
-  String get exitMatchTitle =>
-      isAr ? 'الخروج من المباراة؟' : 'Exit Match?';
+  String get exitMatchTitle => isAr ? 'الخروج من المباراة؟' : 'Exit Match?';
   String get exitLevelRunTitle =>
       isAr ? 'الخروج من جولة المستوى؟' : 'Exit Level Run?';
   String get exitMatchBody => isAr
@@ -573,17 +734,16 @@ class AppL10n {
   String get exitLevelBody => isAr
       ? 'إذا غادرت الآن سيتم إعادة ضبط جولتك الحالية من البداية.'
       : 'Leave now and your current campaign run resets back to the start.';
-  String get stayBtn  => isAr ? 'البقاء'  : 'STAY';
+  String get stayBtn => isAr ? 'البقاء' : 'STAY';
   String get leaveBtn => isAr ? 'مغادرة' : 'LEAVE';
 
   // ── B2 — Match result dialog ──────────────────────────────────────────
-  String get matchResolved => isAr ? 'انتهت المباراة'  : 'MATCH RESOLVED';
-  String get replayBtn     => isAr ? 'إعادة اللعب'    : 'REPLAY';
-  String get restartBtn    => isAr ? 'إعادة البداية'  : 'RESTART';
-  String get nextBtn       => isAr ? 'التالي'          : 'NEXT';
-  String get homeBtn       => isAr ? 'الرئيسية'        : 'HOME';
-  String addedCoins(int n) =>
-      isAr ? 'تمت إضافة +$n عملات' : 'Added +$n coins';
+  String get matchResolved => isAr ? 'انتهت المباراة' : 'MATCH RESOLVED';
+  String get replayBtn => isAr ? 'إعادة اللعب' : 'REPLAY';
+  String get restartBtn => isAr ? 'إعادة البداية' : 'RESTART';
+  String get nextBtn => isAr ? 'التالي' : 'NEXT';
+  String get homeBtn => isAr ? 'الرئيسية' : 'HOME';
+  String addedCoins(int n) => isAr ? 'تمت إضافة +$n عملات' : 'Added +$n coins';
   String levelCompleteTitle(int n) =>
       isAr ? 'اكتمل المستوى $n!' : 'LEVEL $n COMPLETE!';
   String startingLevel(int n) =>
@@ -591,37 +751,36 @@ class AppL10n {
 
   // ── Setup screens shared labels ───────────────────────────────────────
   String get boardSizeLabel => isAr ? 'حجم اللوحة' : 'BOARD SIZE';
-  String get chooseSymbol    => isAr ? 'اختر الرمز'    : 'CHOOSE SYMBOL';
-  String get coinAmountDesc  => isAr
+  String get chooseSymbol => isAr ? 'اختر الرمز' : 'CHOOSE SYMBOL';
+  String get coinAmountDesc => isAr
       ? 'يتم خصم العملات عند بدء المباراة وإعادتها تلقائيًا في حالة التعادل.'
       : 'Funds are deducted when the match begins and refunded automatically on draws.';
-  String get orCustomAmount  => isAr ? 'أو أدخل قيمة مخصصة' : 'OR CUSTOM AMOUNT';
-  String get enterAmountHint => isAr ? 'أدخل القيمة'         : 'Enter amount';
-  String get enterMatch      => isAr ? 'ابدأ المباراة'       : 'ENTER MATCH';
-  String get readyLabel      => isAr ? 'جاهز'               : 'READY';
-  String get tapToPick       => isAr ? 'اضغط للاختيار'      : 'TAP TO PICK';
+  String get orCustomAmount => isAr ? 'أو أدخل قيمة مخصصة' : 'OR CUSTOM AMOUNT';
+  String get enterAmountHint => isAr ? 'أدخل القيمة' : 'Enter amount';
+  String get enterMatch => isAr ? 'ابدأ المباراة' : 'ENTER MATCH';
+  String get readyLabel => isAr ? 'جاهز' : 'READY';
+  String get tapToPick => isAr ? 'اضغط للاختيار' : 'TAP TO PICK';
   String symbolLabel(String sym) => isAr ? 'الرمز $sym' : 'SYMBOL $sym';
 
   // ── B4 — Store / Colors tab ───────────────────────────────────────────
   String get xAndOColorsTab => isAr ? 'ألوان X و O' : 'X & O COLORS';
-  String get xColorsSection => isAr ? 'ألوان X'     : 'X COLORS';
-  String get oColorsSection => isAr ? 'ألوان O'     : 'O COLORS';
+  String get xColorsSection => isAr ? 'ألوان X' : 'X COLORS';
+  String get oColorsSection => isAr ? 'ألوان O' : 'O COLORS';
   String xColorsSectionCount(int n, int total) =>
       isAr ? 'ألوان X ($n/$total)' : 'X COLORS ($n/$total)';
-  String oColorsSectionCount(int n) =>
-      isAr ? 'ألوان O ($n)' : 'O COLORS ($n)';
+  String oColorsSectionCount(int n) => isAr ? 'ألوان O ($n)' : 'O COLORS ($n)';
   String get eachColorCosts =>
       isAr ? 'كل لون يكلف 1,000 عملة' : 'Each color costs 1,000 coins';
   String notEnoughCoinsColor(int price) => isAr
       ? 'عملاتك غير كافية — تحتاج $price عملة.'
       : 'Not enough coins — need $price coins.';
-  String get selectedBadge => isAr ? 'محدد'   : 'SELECTED';
-  String get ownedBadge    => isAr ? 'مملوك'  : 'OWNED';
-  String get freeBadge     => isAr ? 'مجاني'  : 'FREE';
-  String get noneBadge     => isAr ? 'لا شيء' : 'NONE';
+  String get selectedBadge => isAr ? 'محدد' : 'SELECTED';
+  String get ownedBadge => isAr ? 'مملوك' : 'OWNED';
+  String get freeBadge => isAr ? 'مجاني' : 'FREE';
+  String get noneBadge => isAr ? 'لا شيء' : 'NONE';
   String xColorsChip(int n) => isAr ? '$n ألوان X' : '$n X COLORS';
   String oColorsChip(int n) => isAr ? '$n ألوان O' : '$n O COLORS';
-  String get storeSubtitle  => isAr
+  String get storeSubtitle => isAr
       ? 'تصفح الإضافات وجهّز ساحتك.'
       : 'Browse and equip your arena cosmetics.';
   String get avatarGallerySubtitle => isAr
@@ -632,10 +791,10 @@ class AppL10n {
       : 'Top up your arena wallet and get back into the match flow.';
 
   // ── B5 — Game HUD / in-match strings ─────────────────────────────────
-  String get aiThinking       => isAr ? 'يفكر الذكاء الاصطناعي...' : 'AI THINKING...';
-  String get nextTurnLabel    => isAr ? 'التالي:'           : 'NEXT:';
-  String get progressLabel    => isAr ? 'التقدم'            : 'PROGRESS';
-  String get currentLevelLabel => isAr ? 'المستوى الحالي'  : 'CURRENT LEVEL';
+  String get aiThinking => isAr ? 'يفكر الذكاء الاصطناعي...' : 'AI THINKING...';
+  String get nextTurnLabel => isAr ? 'التالي:' : 'NEXT:';
+  String get progressLabel => isAr ? 'التقدم' : 'PROGRESS';
+  String get currentLevelLabel => isAr ? 'المستوى الحالي' : 'CURRENT LEVEL';
 
   // ── B6 — Delete account warning ──────────────────────────────────────
   String get deleteAccountWarning => isAr
@@ -643,52 +802,54 @@ class AppL10n {
       : 'This will permanently delete your account and associated data. This action cannot be undone.';
 
   // ── B7 — Setup / Configuration screens ──────────────────────────────
-  String get setupLabel            => isAr ? 'الإعداد'                 : 'SETUP';
-  String get soloTraining          => isAr ? 'التدريب الفردي'           : 'SOLO TRAINING';
-  String get tacticalSetup         => isAr ? 'الإعداد التكتيكي'         : 'TACTICAL SETUP';
+  String get setupLabel => isAr ? 'الإعداد' : 'SETUP';
+  String get soloTraining => isAr ? 'التدريب الفردي' : 'SOLO TRAINING';
+  String get tacticalSetup => isAr ? 'الإعداد التكتيكي' : 'TACTICAL SETUP';
   String get tacticalSetupSubtitle => isAr
       ? 'اختر رمزك، واضبط مستوى الذكاء الاصطناعي، وحدد حجم اللوحة لبدء مباراة نظيفة.'
       : 'Choose your mark, tune the AI pressure, pick the arena size, and launch a clean match.';
-  String get difficultyLabel       => isAr ? 'الصعوبة'                 : 'DIFFICULTY';
-  String get boardSizeHint         => isAr
+  String get difficultyLabel => isAr ? 'الصعوبة' : 'DIFFICULTY';
+  String get boardSizeHint => isAr
       ? 'حجم اللوحة يحدد قاعدة الفوز: 3 أو 4 أو 5 على التوالي.'
       : 'Board size sets the win rule too: 3, 4, or 5 in a row.';
-  String get localSetup            => isAr ? 'الإعداد المحلي'           : 'LOCAL SETUP';
-  String get localDuel             => isAr ? 'المبارزة المحلية'          : 'LOCAL DUEL';
-  String get headToHeadSetup       => isAr ? 'مباراة وجهاً لوجه'        : 'HEAD-TO-HEAD SETUP';
-  String get headToHeadSubtitle    => isAr
+  String get localSetup => isAr ? 'الإعداد المحلي' : 'LOCAL SETUP';
+  String get localDuel => isAr ? 'المبارزة المحلية' : 'LOCAL DUEL';
+  String get headToHeadSetup =>
+      isAr ? 'مباراة وجهاً لوجه' : 'HEAD-TO-HEAD SETUP';
+  String get headToHeadSubtitle => isAr
       ? 'اختر رمز البداية، وحدد حجم اللوحة، وابدأ مباراة على الجهاز نفسه.'
       : 'Pick the opening symbol, scale the board, and launch a same-device match.';
-  String get whoStarts             => isAr ? 'من يبدأ؟'                : 'WHO STARTS?';
+  String get whoStarts => isAr ? 'من يبدأ؟' : 'WHO STARTS?';
 
   // ── B8 — Level game setup screen ─────────────────────────────────────
-  String get levelGame             => isAr ? 'لعبة المستويات'           : 'LEVEL GAME';
-  String get campaignMode          => isAr ? 'وضع الحملة'               : 'CAMPAIGN MODE';
-  String get levelRun              => isAr ? 'جولة المستويات'            : 'LEVEL RUN';
-  String get levelRunSubtitle      => isAr
+  String get levelGame => isAr ? 'لعبة المستويات' : 'LEVEL GAME';
+  String get campaignMode => isAr ? 'وضع الحملة' : 'CAMPAIGN MODE';
+  String get levelRun => isAr ? 'جولة المستويات' : 'LEVEL RUN';
+  String get levelRunSubtitle => isAr
       ? 'أكمل لوحات الساحة المتصاعدة، وحافظ على سلسلتك، واجمع مكافآت المراحل.'
       : 'Clear progressive arena boards, keep your streak alive, and collect milestone payouts.';
-  String get rewardsLabel          => isAr ? 'المكافآت'                 : 'REWARDS';
-  String get eachLevelCoins        => isAr ? 'كل مستوى: +10 عملات'     : 'Each level: +10 coins';
-  String get gridBoard3x3          => isAr ? 'لوحة 3×3'                : '3x3 GRID';
-  String get gridBoard4x4          => isAr ? 'لوحة 4×4'                : '4x4 GRID';
-  String get gridBoard5x5          => isAr ? 'لوحة 5×5'                : '5x5 GRID';
+  String get rewardsLabel => isAr ? 'المكافآت' : 'REWARDS';
+  String get eachLevelCoins =>
+      isAr ? 'كل مستوى: +10 عملات' : 'Each level: +10 coins';
+  String get gridBoard3x3 => isAr ? 'لوحة 3×3' : '3x3 GRID';
+  String get gridBoard4x4 => isAr ? 'لوحة 4×4' : '4x4 GRID';
+  String get gridBoard5x5 => isAr ? 'لوحة 5×5' : '5x5 GRID';
 
   // ── B9 — Result modal + setup screen labels ───────────────────────────
-  String get youWin            => isAr ? 'لقد فزت!'             : 'YOU WIN!';
-  String get youLost           => isAr ? 'لقد خسرت'             : 'YOU LOST';
-  String get drawResult        => isAr ? 'تعادل'                 : 'DRAW';
-  String xWins(String x)       => isAr ? '$x يفوز'              : '$x WINS';
-  String get launchMatch       => isAr ? 'ابدأ المباراة'          : 'LAUNCH MATCH';
-  String get lockedIn          => isAr ? 'محدد'                   : 'LOCKED IN';
-  String get tapToSelect       => isAr ? 'اضغط للاختيار'         : 'TAP TO SELECT';
-  String get easyDifficulty    => isAr ? 'سهل'                   : 'EASY';
-  String get mediumDifficulty  => isAr ? 'متوسط'                 : 'MEDIUM';
-  String get hardDifficulty    => isAr ? 'صعب'                   : 'HARD';
-  String get rarityLegendary   => isAr ? 'أسطوري'                : 'Legendary';
-  String get rarityEpic        => isAr ? 'ملحمي'                 : 'Epic';
-  String get rarityAnimated    => isAr ? 'متحرك'                 : 'Animated';
-  String get maxEntryExceeded  => isAr
+  String get youWin => isAr ? 'لقد فزت!' : 'YOU WIN!';
+  String get youLost => isAr ? 'لقد خسرت' : 'YOU LOST';
+  String get drawResult => isAr ? 'تعادل' : 'DRAW';
+  String xWins(String x) => isAr ? '$x يفوز' : '$x WINS';
+  String get launchMatch => isAr ? 'ابدأ المباراة' : 'LAUNCH MATCH';
+  String get lockedIn => isAr ? 'محدد' : 'LOCKED IN';
+  String get tapToSelect => isAr ? 'اضغط للاختيار' : 'TAP TO SELECT';
+  String get easyDifficulty => isAr ? 'سهل' : 'EASY';
+  String get mediumDifficulty => isAr ? 'متوسط' : 'MEDIUM';
+  String get hardDifficulty => isAr ? 'صعب' : 'HARD';
+  String get rarityLegendary => isAr ? 'أسطوري' : 'Legendary';
+  String get rarityEpic => isAr ? 'ملحمي' : 'Epic';
+  String get rarityAnimated => isAr ? 'متحرك' : 'Animated';
+  String get maxEntryExceeded => isAr
       ? 'الحد الأقصى للرهان هو 10,000 عملة.'
       : 'Maximum entry is 10,000 coins.';
 
@@ -706,37 +867,71 @@ class AppL10n {
   String get waitForConnection =>
       isAr ? 'انتظار عودة الاتصال' : 'Wait for Connection';
 
-  String get exitToHome =>
-      isAr ? 'الخروج للرئيسية' : 'Exit to Home';
+  String get exitToHome => isAr ? 'الخروج للرئيسية' : 'Exit to Home';
 
   // ── Status badges ─────────────────────────────────────────────────────────
   String get statusOffline => isAr ? 'غير متصل' : 'Offline';
-  String get statusOnline  => isAr ? 'متصل'      : 'Online';
+  String get statusOnline => isAr ? 'متصل' : 'Online';
 
   // ── Store item states ─────────────────────────────────────────────────────
-  String get storeBuy      => isAr ? 'شراء'    : 'Buy';
-  String get storeOwned    => isAr ? 'مملوك'   : 'Owned';
-  String get storeEquip    => isAr ? 'تفعيل'   : 'Equip';
-  String get storeEquipped => isAr ? 'مُفعّل'  : 'Equipped';
+  String get storeBuy => isAr ? 'شراء' : 'Buy';
+  String get storeOwned => isAr ? 'مملوك' : 'Owned';
+  String get storeEquip => isAr ? 'تفعيل' : 'Equip';
+  String get storeEquipped => isAr ? 'مُفعّل' : 'Equipped';
+
+  // ── Emoji store ───────────────────────────────────────────────────────────
+  String get emojiGalleryTab => isAr ? 'الإيموجي' : 'Emoji Gallery';
+  String get emojiTabShort => isAr ? 'إيموجي' : 'Emoji';
+  String get emojiGallerySubtitle => isAr
+      ? 'اشترِ وجهّز إيموجي المباريات'
+      : 'Buy and equip your match reactions';
+  String get emojiGalleryHeader => isAr ? 'كل الإيموجي' : 'All Emojis';
+  String get emojiEquippedTitle =>
+      isAr ? 'المجهّزة (5 كحد أقصى)' : 'Equipped (max 5)';
+  String get emojiEquippedHint => isAr
+      ? 'هذه الإيموجي تظهر أثناء اللعب. اضغط لتبديلها.'
+      : 'These show during matches. Tap a slot to change it.';
+  String get emojiPickTitle => isAr ? 'اختر إيموجي' : 'Choose an emoji';
+  String get emojiNoneToEquip => isAr
+      ? 'لا توجد إيموجي مملوكة أخرى لتجهيزها.'
+      : 'No other owned emojis to equip.';
+  String get emojiFreeTag => isAr ? 'مجاني' : 'Free';
+  String get emojiPurchased =>
+      isAr ? 'تم شراء الإيموجي!' : 'Emoji purchased!';
+  String get confirmPurchaseTitle => isAr ? 'تأكيد الشراء؟' : 'Confirm purchase?';
+  String get emojiPurchaseLabel => isAr ? 'شراء إيموجي' : 'EMOJI PURCHASE';
+  String get emojiEquipped => isAr ? 'تم تجهيز الإيموجي' : 'Emoji equipped';
+  String get emojiSlotsFull => isAr
+      ? 'الخانات ممتلئة. أزِل إيموجي أولاً.'
+      : 'All 5 slots are full. Remove one first.';
+
+  // ── Generic friendly errors ───────────────────────────────────────────────
+  String get somethingWentWrong => isAr
+      ? 'من فضلك حاول مرة أخرى بعد قليل.'
+      : 'Please try again in a moment.';
 
   // ── Coin match validation ─────────────────────────────────────────────────
-  String get enterValidAmount    => isAr ? 'أدخل قيمة صحيحة.'       : 'Enter a valid amount.';
-  String get entryAmountTooHigh  => isAr ? 'قيمة الدخول كبيرة جدًا.' : 'Entry amount is too high.';
-  String get notEnoughCoins      => isAr ? 'ليس لديك عملات كافية.'   : 'You do not have enough coins.';
+  String get enterValidAmount =>
+      isAr ? 'أدخل قيمة صحيحة.' : 'Enter a valid amount.';
+  String get entryAmountTooHigh =>
+      isAr ? 'قيمة الدخول كبيرة جدًا.' : 'Entry amount is too high.';
+  String get notEnoughCoins =>
+      isAr ? 'ليس لديك عملات كافية.' : 'You do not have enough coins.';
 
   // ── Match interruption ────────────────────────────────────────────────────
-  String get matchInterrupted    => isAr ? 'تم قطع المباراة'         : 'Match interrupted';
-  String get noResultCalculated  => isAr ? 'لم يتم احتساب نتيجة'    : 'No result was calculated';
+  String get matchInterrupted => isAr ? 'تم قطع المباراة' : 'Match interrupted';
+  String get noResultCalculated =>
+      isAr ? 'لم يتم احتساب نتيجة' : 'No result was calculated';
 
   // ── Avatar unequip ────────────────────────────────────────────────────────
-  String get avatarUnequipped    => isAr ? 'تم إلغاء تفعيل الصورة الرمزية' : 'Avatar unequipped';
+  String get avatarUnequipped =>
+      isAr ? 'تم إلغاء تفعيل الصورة الرمزية' : 'Avatar unequipped';
 
   // ── Connection problem overlay (general — not match-specific) ─────────────
 
   /// Title for the full-screen "no internet" overlay.
-  String get connectionProblemTitle => isAr
-      ? 'مشكلة في الاتصال'
-      : 'Connection Problem';
+  String get connectionProblemTitle =>
+      isAr ? 'مشكلة في الاتصال' : 'Connection Problem';
 
   /// Body text explaining that online play cannot continue safely.
   String get connectionProblemBody => isAr
@@ -744,9 +939,8 @@ class AppL10n {
       : 'Your internet connection is weak or disconnected.\nOnline gameplay cannot continue safely.\nTo play offline, restart the game in Offline Mode.';
 
   /// Shown while the app loads the offline profile after a restart.
-  String get loadingOfflineProfile => isAr
-      ? 'جارٍ تحميل ملف عدم الاتصال...'
-      : 'Loading offline profile...';
+  String get loadingOfflineProfile =>
+      isAr ? 'جارٍ تحميل ملف عدم الاتصال...' : 'Loading offline profile...';
 
   /// Badge label shown on the avatar / home screen when in offline guest mode.
   String get offlineGuestBadge => isAr ? 'ضيف • غير متصل' : 'GUEST • OFFLINE';
@@ -766,22 +960,19 @@ class AppL10n {
 
   // ── Weak Connection overlay (non-match, home / store / settings) ──────────
 
-  String get weakConnectionTitle =>
-      isAr ? 'الاتصال ضعيف' : 'Weak Connection';
+  String get weakConnectionTitle => isAr ? 'الاتصال ضعيف' : 'Weak Connection';
 
   String get weakConnectionBody => isAr
       ? 'أنت غير متصل الآن.\nلا يمكن متابعة اللعب المتصل بأمان.\nأعد التشغيل في وضع الأوفلاين للمتابعة باستخدام البيانات المحلية فقط.'
       : 'You are offline now.\nOnline gameplay cannot continue safely.\nRestart in Offline Mode to continue using local data only.';
 
-  String get tryReconnect =>
-      isAr ? 'محاولة إعادة الاتصال' : 'Try Reconnect';
+  String get tryReconnect => isAr ? 'محاولة إعادة الاتصال' : 'Try Reconnect';
 
   String get tryingToReconnect =>
       isAr ? 'جاري محاولة إعادة الاتصال...' : 'Trying to reconnect...';
 
-  String get connectionStillUnavailable => isAr
-      ? 'لا يزال الاتصال غير متاح.'
-      : 'Connection is still unavailable.';
+  String get connectionStillUnavailable =>
+      isAr ? 'لا يزال الاتصال غير متاح.' : 'Connection is still unavailable.';
 
   String get modeRequiresStableInternet => isAr
       ? 'يتطلب هذا النمط اتصالًا ثابتًا بالإنترنت.'
@@ -792,12 +983,10 @@ class AppL10n {
   String get imagePickerAlreadyOpen =>
       isAr ? 'منتقي الصور مفتوح بالفعل.' : 'Image picker is already open.';
 
-  String get permissionDenied =>
-      isAr ? 'تم رفض الإذن.' : 'Permission denied.';
+  String get permissionDenied => isAr ? 'تم رفض الإذن.' : 'Permission denied.';
 
-  String get profileImageUpdated => isAr
-      ? 'تم تحديث صورة الملف الشخصي.'
-      : 'Profile image updated.';
+  String get profileImageUpdated =>
+      isAr ? 'تم تحديث صورة الملف الشخصي.' : 'Profile image updated.';
 
   // ── Auth / store extra messages ───────────────────────────────────────────
 
@@ -807,9 +996,8 @@ class AppL10n {
   String get pleaseSignInAgain =>
       isAr ? 'يرجى تسجيل الدخول مرة أخرى' : 'Please sign in again';
 
-  String get avatarMustBePurchasedFirst => isAr
-      ? 'يجب شراء الصورة الرمزية أولًا'
-      : 'Avatar must be purchased first';
+  String get avatarMustBePurchasedFirst =>
+      isAr ? 'يجب شراء الصورة الرمزية أولًا' : 'Avatar must be purchased first';
 
   String get noAvatarSelected =>
       isAr ? 'لا توجد صورة رمزية محددة' : 'No avatar selected';
@@ -821,25 +1009,96 @@ class AppL10n {
 
   // ── Online switch confirmation overlay ────────────────────────────────────
 
-  String get goOnlineTitle =>
-      isAr ? 'الدخول إلى وضع الاتصال؟' : 'Go Online?';
+  String get goOnlineTitle => isAr ? 'الدخول إلى وضع الاتصال؟' : 'Go Online?';
 
   String get goOnlineBody => isAr
       ? 'عاد الاتصال بالإنترنت.\nهل تريد الانتقال إلى وضع الاتصال؟\nستبقى عملات وتقدم الأوفلاين محفوظة محليًا ولن يتم دمجها مع حسابك المتصل.'
       : 'Your connection is back.\nDo you want to switch to Online Mode?\nYour offline coins and progress will stay saved locally and will not be merged with your online account.';
 
-  String get goOnlinePrimary =>
-      isAr ? 'الدخول أونلاين' : 'Go Online';
+  String get goOnlinePrimary => isAr ? 'الدخول أونلاين' : 'Go Online';
 
-  String get stayOffline =>
-      isAr ? 'البقاء أوفلاين' : 'Stay Offline';
+  String get stayOffline => isAr ? 'البقاء أوفلاين' : 'Stay Offline';
 
   // ── Arena (private friend rooms) ───────────────────────────────────────
   String get arenaTab => isAr ? 'الساحة' : 'Arena';
+  String get createRoomPageSubtitle => isAr
+      ? 'جهّز معركتك وادعُ خصومك'
+      : 'Set up your battle and invite opponents';
+  String get roomLobbyTitle => isAr ? 'ردهة الغرفة' : 'Room Lobby';
+  String get roomLobbySubtitle => isAr
+      ? 'ادعُ أصدقاءك وابدأ المعركة!'
+      : 'Invite friends and start the battle!';
+  String get noEntryFee => isAr ? 'بدون رسوم دخول' : 'No entry fee';
+  String get friendlyMatchMode =>
+      isAr ? 'وضع المباراة الودية' : 'Friendly match mode';
+  String get quickChatAndEmojis => isAr
+      ? 'تم تفعيل الدردشة السريعة والرموز التعبيرية'
+      : 'Quick Chat & Emojis Enabled';
+  String get prizePoolLabel => isAr ? 'إجمالي الجائزة' : 'Prize Pool';
+  String get betLabel => isAr ? 'الرهان' : 'Bet';
+  String get statusLabel => isAr ? 'الحالة' : 'Status';
+  String get activeLabel => isAr ? 'نشطة' : 'Active';
+  String get typeMessageHint => isAr ? 'اكتب رسالة...' : 'Type a message...';
+  String get sendLabel => isAr ? 'إرسال' : 'Send';
+  String get quickReactionsLabel => isAr ? 'ردود سريعة' : 'Quick reactions';
+  String get inviteFriendLabel => isAr ? 'دعوة صديق' : 'Invite Friend';
+  String get waitingForOpponent =>
+      isAr ? 'في انتظار الخصم' : 'Waiting for opponent';
+  String get onlineLabel => isAr ? 'متصل' : 'Online';
+  String get weakConnectionLabel => isAr ? 'اتصال ضعيف' : 'Weak connection';
+  String get connectionLostLabel => isAr ? 'انقطع الاتصال' : 'Connection lost';
+  String get minimumBetMessage =>
+      isAr ? 'الحد الأدنى للرهان هو 50 كوين.' : 'Minimum bet is 50 coins.';
+  String get maximumBetMessage => isAr
+      ? 'الحد الأقصى للرهان هو 10,000 كوين.'
+      : 'Maximum bet is 10,000 coins.';
+  String get notEnoughCoinsShort =>
+      isAr ? 'كوينز غير كافية' : 'Not enough coins';
+  String get roomCancelledToast =>
+      isAr ? 'تم إلغاء الغرفة.' : 'Room cancelled.';
+  String get leftRoomToast => isAr ? 'لقد غادرت الغرفة.' : 'You left the room.';
+  String get removedFromRoomToast => isAr
+      ? 'تمت إزالتك من الغرفة بواسطة المضيف.'
+      : 'You were removed from this room by the host.';
+  String get kickPlayerTitle => isAr ? 'طرد اللاعب؟' : 'Kick player?';
+  String kickPlayerBody(String name) => isAr
+      ? 'ستتم إزالة $name، ولن يتمكن من إعادة الانضمام لمدة دقيقة واحدة.'
+      : '$name will be removed and cannot rejoin for 1 minute.';
+  String get kickLabel => isAr ? 'طرد' : 'Kick';
+  String get noPlayerToRemove =>
+      isAr ? 'لا يوجد لاعب لإزالته.' : 'No player to remove.';
+  String get removePlayerLobbyOnly => isAr
+      ? 'يمكنك إزالة لاعب من ردهة الغرفة فقط.'
+      : 'You can only remove a player from the lobby.';
+  String get permissionDeniedRetry =>
+      isAr ? 'تم رفض الإذن. حاول مرة أخرى.' : 'Permission denied. Try again.';
+  String get networkIssueRetry =>
+      isAr ? 'مشكلة في الشبكة. حاول مرة أخرى.' : 'Network issue. Try again.';
+  String get couldNotKickPlayer => isAr
+      ? 'تعذر طرد اللاعب. حاول مرة أخرى.'
+      : 'Could not kick player. Try again.';
+  String get friendlyMatchNoBet =>
+      isAr ? 'مباراة ودية · بدون رهان' : 'Friendly Match · No Bet';
+  String get roomActive => isAr ? 'الغرفة نشطة' : 'Room Active';
+  String get readyState => isAr ? 'جاهز' : 'Ready';
+  String get waitingState => isAr ? 'في الانتظار' : 'Waiting';
+  String get roundDrawTitle => isAr ? 'تعادل الجولة' : 'ROUND DRAW';
+  String get replayRoundMessage =>
+      isAr ? 'ستتم إعادة هذه الجولة' : 'Replay this round';
+
+  String roundsWinnerDescription(int rounds) {
+    if (!isAr) {
+      return 'Winner takes all after $rounds ${rounds == 1 ? 'round' : 'rounds'}';
+    }
+    if (rounds == 1) return 'الفائز يحصد كل شيء بعد جولة واحدة';
+    if (rounds == 2) return 'الفائز يحصد كل شيء بعد جولتين';
+    return 'الفائز يحصد كل شيء بعد $rounds جولات';
+  }
+
   String get inviteFriendsTitle => isAr ? 'دعوة الأصدقاء' : 'Invite Friends';
   String get inviteFriendsBody => isAr
-      ? 'ادعو 10 من أصدقائك واكسب 1000 كوين.\nتكسب 100 كوين عن كل صديق جديد يدخل كود الدعوة الخاص بك.'
-      : 'Invite 10 friends and earn 1000 coins.\nYou earn 100 coins for each new friend who enters your invite code.';
+      ? 'ادعو 10 من أصدقائك واكسب 10000 كوين.\nتكسب 1000 كوين عن كل صديق جديد يدخل كود الدعوة الخاص بك.'
+      : 'Invite 10 friends and earn 10000 coins.\nYou earn 1000 coins for each new friend who enters your invite code.';
   String get shareInvite => isAr ? 'مشاركة الدعوة' : 'Share Invite';
   String get enterInviteCode => isAr ? 'إدخال كود الدعوة' : 'Enter Invite Code';
   String get playWithFriend => isAr ? 'العب مع صديق' : 'Play With Friend';
@@ -851,7 +1110,8 @@ class AppL10n {
   String get notReadyLabel => isAr ? 'غير جاهز' : 'Not Ready';
   String get startRoom => isAr ? 'بدء الروم' : 'Start Room';
   String get shareRoom => isAr ? 'مشاركة الروم' : 'Share Room';
-  String get waitingForFriend => isAr ? 'في انتظار صديقك' : 'Waiting for friend';
+  String get waitingForFriend =>
+      isAr ? 'في انتظار صديقك' : 'Waiting for friend';
   String get leaveRoom => isAr ? 'مغادرة الروم' : 'Leave Room';
   String get cancelRoom => isAr ? 'إلغاء الروم' : 'Cancel Room';
   String get roomNotFound => isAr ? 'الروم غير موجود.' : 'Room not found.';
@@ -860,15 +1120,12 @@ class AppL10n {
   String get cantJoinOwnRoom => isAr
       ? 'لا يمكنك دخول الروم الخاص بك كلاعب ثاني.'
       : 'You cannot join your own room.';
-  String get alreadyInActiveRoom => isAr
-      ? 'أنت بالفعل داخل روم نشط.'
-      : 'You are already in an active room.';
-  String get drawReplayRound => isAr
-      ? 'تعادل! سيتم إعادة نفس الجولة.'
-      : 'Draw! Replay this round.';
-  String get opponentLeftYouWin => isAr
-      ? 'غادر الخصم الروم. لقد فزت.'
-      : 'Opponent left the room. You win.';
+  String get alreadyInActiveRoom =>
+      isAr ? 'أنت بالفعل داخل روم نشط.' : 'You are already in an active room.';
+  String get drawReplayRound =>
+      isAr ? 'تعادل! سيتم إعادة نفس الجولة.' : 'Draw! Replay this round.';
+  String get opponentLeftYouWin =>
+      isAr ? 'غادر الخصم الروم. لقد فزت.' : 'Opponent left the room. You win.';
   String get leaveCountsAsLoss => isAr
       ? 'إذا خرجت الآن سيتم احتسابها خسارة. هل تريد المتابعة؟'
       : 'Leaving now will count as a loss. Continue?';
@@ -911,17 +1168,18 @@ class AppL10n {
   String get perRoundMaps => isAr ? 'خرائط الجولات' : 'Per-round maps';
   String get mapsLabel => isAr ? 'الخرائط' : 'Maps';
   String get roomSummary => isAr ? 'ملخص الروم' : 'Room Summary';
-  String get copiedToClipboard => isAr
-      ? 'تم نسخ النص.'
-      : 'Copied to clipboard.';
+  String get copiedToClipboard =>
+      isAr ? 'تم نسخ النص.' : 'Copied to clipboard.';
   String get referralCompletedShort => isAr ? 'مكتمل' : 'Completed';
-  String get yourInviteCode => isAr ? 'كود الدعوة الخاص بك' : 'Your invite code';
+  String get yourInviteCode =>
+      isAr ? 'كود الدعوة الخاص بك' : 'Your invite code';
   String get referralProgress => isAr ? 'تقدم الدعوات' : 'Referral progress';
   String get referralCompleted => isAr
       ? 'لقد أكملت كل المكافآت! شكراً لك.'
       : 'You have unlocked all rewards. Thank you!';
   String get referralEarned => isAr ? 'الكوينات المكتسبة' : 'Coins earned';
-  String get enterInviteCodeTitle => isAr ? 'أدخل كود الدعوة' : 'Enter Invite Code';
+  String get enterInviteCodeTitle =>
+      isAr ? 'أدخل كود الدعوة' : 'Enter Invite Code';
   String get referralCodeMustBe9 => isAr
       ? 'كود الدعوة يجب أن يكون 9 أرقام.'
       : 'Invite code must be 9 digits.';
@@ -931,12 +1189,10 @@ class AppL10n {
   String get referralAlreadyUsed => isAr
       ? 'لقد استخدمت كود دعوة من قبل.'
       : 'You have already used an invite code.';
-  String get referralCodeInvalid => isAr
-      ? 'كود الدعوة غير صحيح.'
-      : 'Invalid invite code.';
-  String get referralCodeNotFound => isAr
-      ? 'كود الدعوة غير موجود.'
-      : 'Invite code not found.';
+  String get referralCodeInvalid =>
+      isAr ? 'كود الدعوة غير صحيح.' : 'Invalid invite code.';
+  String get referralCodeNotFound =>
+      isAr ? 'كود الدعوة غير موجود.' : 'Invite code not found.';
   String get referralRedeemError => isAr
       ? 'لم يتم استخدام كود الدعوة. حاول مرة أخرى.'
       : 'Could not redeem invite code. Please try again.';
@@ -958,15 +1214,13 @@ class AppL10n {
   String get referralNotEligible => isAr
       ? 'كود الدعوة متاح فقط للمستخدمين الجدد.'
       : 'Invite code is only available for new users.';
-  String get referralSuccess => isAr
-      ? 'تم تطبيق كود الدعوة بنجاح!'
-      : 'Invite code applied successfully!';
+  String get referralSuccess =>
+      isAr ? 'تم تطبيق كود الدعوة بنجاح!' : 'Invite code applied successfully!';
   String get arenaOnlineOnly => isAr
       ? 'الساحة متاحة فقط في وضع الاتصال.'
       : 'Arena is available in Online Mode only.';
-  String get pendingRewardCredited => isAr
-      ? 'تم استلام مكافأة الدعوة!'
-      : 'Invite reward received!';
+  String get pendingRewardCredited =>
+      isAr ? 'تم استلام مكافأة الدعوة!' : 'Invite reward received!';
 
   // ── Arena match screen (in-game UI) ───────────────────────────────────
   /// Small banner that appears in the arena match when the RTDB connection
@@ -1000,8 +1254,7 @@ class AppL10n {
   String get drawShort => isAr ? 'تعادل' : 'DRAW';
 
   /// Gold "+N coins" badge shown when a bet payout was credited.
-  String coinsWonBadge(int coins) =>
-      isAr ? '+$coins كوينز' : '+$coins coins';
+  String coinsWonBadge(int coins) => isAr ? '+$coins كوينز' : '+$coins coins';
 
   // ── Settings — additional localized labels ────────────────────────────
   /// Title of the legacy Privacy & Terms dialog.
@@ -1038,15 +1291,14 @@ class AppL10n {
       ? 'خطأ في الشبكة. تحقق من الاتصال وحاول مرة أخرى.'
       : 'Network error. Please check your connection and try again.';
 
-  /// Bilingual invite-share message (Arabic + English in a single blob).
-  String inviteShareMessage(String referralCode) =>
-      'انضم إلى XO Arena واستخدم كود الدعوة الخاص بي: $referralCode\n'
-      'كل لاعب جديد يساعدني أكسب مكافآت داخل اللعبة!\n\n'
-      '--------------------\n\n'
-      'Join XO Arena and use my invite code: $referralCode\n'
-      'Help me earn rewards and start playing XO Arena!';
+  /// Invite-share message in the currently selected app language.
+  String inviteShareMessage(String referralCode) => isAr
+      ? 'انضم إلى XO Arena واستخدم كود الدعوة الخاص بي: $referralCode\n'
+          'كل لاعب جديد يساعدني على كسب مكافآت داخل اللعبة!'
+      : 'Join XO Arena and use my invite code: $referralCode\n'
+          'Help me earn rewards and start playing XO Arena!';
 
-  /// Bilingual room-share message (Arabic + English in a single blob).
+  /// Room-share message in the currently selected app language.
   String roomShareMessage({
     required String roomCode,
     required int roundCount,
@@ -1055,23 +1307,23 @@ class AppL10n {
     required int betAmount,
     required int prizePool,
   }) {
-    final betAr = betEnabled
-        ? '$betAmount كوين لكل لاعب — الجائزة $prizePool كوين'
-        : 'بدون رهان';
-    final betEn = betEnabled
-        ? '$betAmount coins each — Prize $prizePool coins'
-        : 'Off';
-    return 'تعالى العب معي في XO Arena\n'
-        'كود الروم: $roomCode\n'
-        'الجولات: $roundCount\n'
-        'الخرائط: $maps\n'
-        'الرهان: $betAr\n\n'
-        '--------------------\n\n'
-        'Play XO Arena with me!\n'
+    if (isAr) {
+      final bet = betEnabled
+          ? '$betAmount كوين لكل لاعب — الجائزة $prizePool كوين'
+          : 'بدون رهان';
+      return 'تعالَ والعب معي في XO Arena!\n'
+          'كود الغرفة: $roomCode\n'
+          'الجولات: $roundCount\n'
+          'الخرائط: $maps\n'
+          'الرهان: $bet';
+    }
+    final bet =
+        betEnabled ? '$betAmount coins each — Prize $prizePool coins' : 'Off';
+    return 'Play XO Arena with me!\n'
         'Room code: $roomCode\n'
         'Rounds: $roundCount\n'
         'Maps: $maps\n'
-        'Bet: $betEn';
+        'Bet: $bet';
   }
 }
 
@@ -1081,8 +1333,7 @@ class AppL10nDelegate extends LocalizationsDelegate<AppL10n> {
   const AppL10nDelegate();
 
   @override
-  bool isSupported(Locale locale) =>
-      ['en', 'ar'].contains(locale.languageCode);
+  bool isSupported(Locale locale) => ['en', 'ar'].contains(locale.languageCode);
 
   @override
   Future<AppL10n> load(Locale locale) =>

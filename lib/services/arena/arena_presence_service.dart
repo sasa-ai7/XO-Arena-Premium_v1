@@ -57,7 +57,9 @@ class ArenaPresenceService {
         'updatedAt': ServerValue.timestamp,
       });
     } catch (e) {
-      if (kDebugMode) debugPrint('[ARENA_PRESENCE] onDisconnect register failed: $e');
+      if (kDebugMode) {
+        debugPrint('[ARENA_PRESENCE] onDisconnect register failed: $e');
+      }
     }
     await _writeOnline();
     _heartbeat = Timer.periodic(_kHeartbeatPeriod, (_) => _writeOnline());
@@ -75,8 +77,10 @@ class ArenaPresenceService {
     }
   }
 
+  Future<void> markOnlineNow() => _writeOnline();
+
   /// Stops the heartbeat and (best-effort) marks the owner offline.
-  Future<void> stop() async {
+  Future<void> stop({bool markOffline = true}) async {
     if (!_started) return;
     _started = false;
     _heartbeat?.cancel();
@@ -84,13 +88,15 @@ class ArenaPresenceService {
     try {
       await _ref.child(selfUid).onDisconnect().cancel();
     } catch (_) {}
-    try {
-      await _ref.child(selfUid).set(<String, Object?>{
-        'state': 'offline',
-        'lastSeenMs': DateTime.now().millisecondsSinceEpoch,
-        'updatedAt': ServerValue.timestamp,
-      });
-    } catch (_) {}
+    if (markOffline) {
+      try {
+        await _ref.child(selfUid).set(<String, Object?>{
+          'state': 'offline',
+          'lastSeenMs': DateTime.now().millisecondsSinceEpoch,
+          'updatedAt': ServerValue.timestamp,
+        });
+      } catch (_) {}
+    }
   }
 
   /// Derives a three-state presence for the given uid from a snapshot of

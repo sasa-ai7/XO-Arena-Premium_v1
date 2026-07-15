@@ -31,10 +31,22 @@ class LedgerType {
 
   /// IAP coin pack credit.
   static const String purchase = 'purchase';
+  static const String iapPurchase = 'iap_purchase';
 
   /// Per-game reward (local games).
   static const String gameReward = 'game_reward';
 
   /// Daily/weekly mission reward — credited only on manual claim.
   static const String missionReward = 'mission_reward';
+  static const String dailyReward = 'daily_reward';
+  static const String weeklyReward = 'weekly_reward';
+  static const String levelReward = 'level_reward';
+  static const String aiReward = 'ai_reward';
+  static const String storeXSkinPurchase = 'store_x_skin_purchase';
+  static const String storeOSkinPurchase = 'store_o_skin_purchase';
+  static const String avatarPurchase = 'avatar_purchase';
+  static const String emojiPurchase = 'emoji_purchase';
+  static const String xColorPurchase = 'x_color_purchase';
+  static const String oColorPurchase = 'o_color_purchase';
+  static const String disconnectForfeitPrize = 'disconnect_forfeit_prize';
 }

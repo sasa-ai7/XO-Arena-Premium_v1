@@ -7,8 +7,8 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/keys.dart';
-import '../services/local_store.dart';
 import '../services/auth_service.dart';
+import '../services/wallet_transaction_service.dart';
 
 /// Repository for granting coins from purchases with idempotency protection.
 class CoinsRepo {
@@ -26,16 +26,16 @@ class CoinsRepo {
 
   /// Mark a purchase as processed locally (for sync with server's ALREADY_PROCESSED).
   /// Does NOT grant coins — just records the hash so future local checks skip it.
-  static Future<void> markPurchaseProcessed(String productId, String purchaseToken) async {
+  static Future<void> markPurchaseProcessed(
+      String productId, String purchaseToken) async {
     try {
       final p = await SharedPreferences.getInstance();
       final processedKey = _computeProcessedKey(productId, purchaseToken);
       final processed = p.getString(Keys.processedPurchases) ?? '';
       final processedList = processed.split(',');
       if (processedList.contains(processedKey)) return; // Already marked
-      final updatedList = processed.isEmpty
-          ? processedKey
-          : '$processed,$processedKey';
+      final updatedList =
+          processed.isEmpty ? processedKey : '$processed,$processedKey';
       await p.setString(Keys.processedPurchases, updatedList);
       if (kDebugMode) {
         debugPrint('[CoinsRepo] Marked purchase as processed: $productId');
@@ -59,7 +59,8 @@ class CoinsRepo {
     // Block coin grants for guests
     if (AuthService().currentUser == null) {
       if (kDebugMode) {
-        debugPrint('[CoinsRepo] Guest mode: Cannot grant coins. User must sign in.');
+        debugPrint(
+            '[CoinsRepo] Guest mode: Cannot grant coins. User must sign in.');
       }
       return false; // Guests cannot receive coins
     }
@@ -75,7 +76,8 @@ class CoinsRepo {
       final processedList = processed.split(',');
       if (processedList.contains(processedKey)) {
         if (kDebugMode) {
-          debugPrint('[CoinsRepo] Purchase $productId (key: $processedKey) already processed, skipping');
+          debugPrint(
+              '[CoinsRepo] Purchase $productId (key: $processedKey) already processed, skipping');
         }
         return false; // Already processed
       }
@@ -83,29 +85,28 @@ class CoinsRepo {
       // Unique transaction id for idempotent history (prevents duplicate entries).
       final transactionId = orderId ?? processedKey;
 
-      // Grant coins locally
-      await LocalStore.addCoins(amount);
-
-      // Record transaction history (idempotent via transactionId)
+      // Grant coins + ledger row as one canonical, idempotent transaction so
+      // the wallet can never move without a history entry.
       final usd = usdAmount ?? 0.0;
-      await LocalStore.addTopupHistory(
-        usd: usd,
+      await WalletTransactionService.instance.applyCredit(
         coins: amount,
-        type: 'recharge',
-        description: 'Coin Purchase',
         transactionId: transactionId,
-        balanceBefore: previousBalance,
-        balanceAfter: previousBalance != null ? previousBalance + amount : null,
+        source: 'iap_purchase',
+        title: 'Coin Purchase',
+        message: 'Coin Purchase',
+        itemType: 'coins',
+        itemId: productId,
+        usd: usd,
       );
 
       // Mark purchase as processed using hash key
-      final updatedList = processed.isEmpty
-          ? processedKey
-          : '$processed,$processedKey';
+      final updatedList =
+          processed.isEmpty ? processedKey : '$processed,$processedKey';
       await p.setString(Keys.processedPurchases, updatedList);
 
       if (kDebugMode) {
-        debugPrint('[CoinsRepo] Granted $amount coins for purchase $productId (transactionId: $transactionId)');
+        debugPrint(
+            '[CoinsRepo] Granted $amount coins for purchase $productId (transactionId: $transactionId)');
       }
 
       return true;
@@ -134,7 +135,8 @@ class CoinsRepo {
     }
 
     if (kDebugMode && !serverVerified) {
-      debugPrint('[CoinsRepo] WARNING: Debug mode - granting coins without server verification. '
+      debugPrint(
+          '[CoinsRepo] WARNING: Debug mode - granting coins without server verification. '
           'This should not happen in production!');
     }
 
@@ -148,7 +150,8 @@ class CoinsRepo {
   }
 
   /// Check if a purchase has already been processed using hash key.
-  static Future<bool> isPurchaseProcessed(String productId, String purchaseToken) async {
+  static Future<bool> isPurchaseProcessed(
+      String productId, String purchaseToken) async {
     try {
       final p = await SharedPreferences.getInstance();
       final processedKey = _computeProcessedKey(productId, purchaseToken);

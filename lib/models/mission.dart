@@ -5,7 +5,11 @@
 /// claim state lives in `MissionService` (local SharedPreferences).
 library;
 
-enum MissionType { daily, weekly }
+/// [milestone] missions are one-time achievements that never reset (daily and
+/// weekly missions reset on their period). They use a single [target] /
+/// [rewardCoins] like a daily, and may additionally grant an avatar via
+/// [MissionDef.rewardAvatarId].
+enum MissionType { daily, weekly, milestone }
 
 /// Where a mission's "اذهب" (go) button routes the player.
 enum MissionRoute {
@@ -17,6 +21,7 @@ enum MissionRoute {
   onlineCreate,
   onlineJoin,
   online,
+  store, // milestone shopping goals (spend coins, buy theme/avatar, equip)
 }
 
 /// A single weekly tier: reach [target] to claim [rewardCoins].
@@ -35,12 +40,17 @@ class MissionDef {
   final String titleAr;
   final String titleEn;
 
-  /// Daily only.
+  /// Daily / milestone only.
   final int target;
   final int rewardCoins;
 
   /// Weekly only (exactly 3 tiers).
   final List<MissionTier> tiers;
+
+  /// Optional avatar granted on claim (milestone rewards). When set, claiming
+  /// adds this catalog id to the owned avatars in addition to [rewardCoins]
+  /// (which may be 0 for an avatar-only reward).
+  final int? rewardAvatarId;
 
   const MissionDef({
     required this.id,
@@ -52,11 +62,13 @@ class MissionDef {
     this.target = 0,
     this.rewardCoins = 0,
     this.tiers = const [],
+    this.rewardAvatarId,
   });
 
   bool get isWeekly => type == MissionType.weekly;
+  bool get isMilestone => type == MissionType.milestone;
 
-  /// The maximum meaningful progress value (daily target or top weekly tier).
+  /// The maximum meaningful progress value (single target, or top weekly tier).
   int get topTarget => isWeekly ? tiers.last.target : target;
 
   String title(bool isAr) => isAr ? titleAr : titleEn;

@@ -953,7 +953,7 @@ export const deleteMyAccount = functions.https.onCall(async (data, context) => {
 // FUNCTION: redeemReferralCode
 // ============================================================
 //
-// Atomically credits the invitee (+100) and the referrer (+100), writes
+// Atomically credits the invitee (+1000) and the referrer (+1000), writes
 // idempotent wallet_ledger records for both sides, creates
 // /referrals/{inviteeUid}, and increments the referrer's
 // Referral.validReferralCount + Referral.totalReferralCoinsEarned.
@@ -963,7 +963,7 @@ export const deleteMyAccount = functions.https.onCall(async (data, context) => {
 //
 // Idempotent: re-running with the same caller returns already-exists.
 
-const REFERRAL_REWARD = 100;
+const REFERRAL_REWARD = 1000;
 const REFERRAL_MAX_FRIENDS = 10;
 
 export const redeemReferralCode = functions.https.onCall(async (data, context) => {
@@ -1004,6 +1004,8 @@ export const redeemReferralCode = functions.https.onCall(async (data, context) =
   const referrerLedgerId = `ref_${callerUid}_referrer`;
   const inviteeLedgerRef = inviteeRef.collection("wallet_ledger").doc(inviteeLedgerId);
   const referrerLedgerRef = referrerRef.collection("wallet_ledger").doc(referrerLedgerId);
+  const pendingRewardId = `${referrerUid}_${callerUid}`;
+  const pendingRewardRef = db.collection("pending_referral_rewards").doc(pendingRewardId);
 
   let newReferrerCount = 0;
   let inviteeAfter = 0;
@@ -1099,11 +1101,17 @@ export const redeemReferralCode = functions.https.onCall(async (data, context) =
       tx.set(inviteeLedgerRef, {
         uid: callerUid,
         type: "referral_invitee_reward",
-        source: "redeemReferralCode",
+        source: "referral_invitee_reward",
         delta: REFERRAL_REWARD,
+        coins: REFERRAL_REWARD,
         before: inviteeBefore,
         after: inviteeAfter,
         transactionId: inviteeLedgerId,
+        mode: "online",
+        status: "synced",
+        localCreatedAtMs: Date.now(),
+        title: "Friend invite reward",
+        message: `You received ${REFERRAL_REWARD} coins from a friend`,
         code,
         referrerUid,
         createdAt: now,
@@ -1112,13 +1120,37 @@ export const redeemReferralCode = functions.https.onCall(async (data, context) =
       tx.set(referrerLedgerRef, {
         uid: referrerUid,
         type: "referral_referrer_reward",
-        source: "redeemReferralCode",
+        source: "referral_referrer_reward",
         delta: REFERRAL_REWARD,
+        coins: REFERRAL_REWARD,
         before: referrerBefore,
         after: referrerAfter,
         transactionId: referrerLedgerId,
+        mode: "online",
+        status: "synced",
+        localCreatedAtMs: Date.now(),
+        title: "Referral accepted",
+        message: `A friend accepted your invite. You received ${REFERRAL_REWARD} coins.`,
         code,
         inviteeUid: callerUid,
+        createdAt: now,
+      });
+
+      const inviteeData = inviteeSnap.data() ?? {};
+      const profile = (inviteeData.Profile ?? inviteeData.profile ?? {}) as Record<string, unknown>;
+      const inviteeName = String(profile.name ?? profile.displayName ?? inviteeData.displayName ?? "");
+      const inviteePhotoURL = String(profile.photoURL ?? inviteeData.photoURL ?? "");
+      tx.set(pendingRewardRef, {
+        id: pendingRewardId,
+        type: "referral_accepted",
+        uid: referrerUid,
+        referrerUid,
+        inviteeUid: callerUid,
+        inviteeName,
+        inviteePhotoURL,
+        coins: REFERRAL_REWARD,
+        message: "Your friend accepted your invite",
+        seen: false,
         createdAt: now,
       });
     });

@@ -13,9 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../coins/iap_coins_service.dart';
 import '../../core/app_l10n.dart';
 import '../../core/app_theme.dart';
-import '../../core/coin_format.dart';
 import '../../core/keys.dart';
-import '../../models/game_avatar.dart';
 import '../../models/offline_profile.dart';
 import '../../services/app_mode_service.dart';
 import '../../services/arena/arena_repo.dart';
@@ -25,22 +23,24 @@ import '../../services/audit_service.dart';
 import '../../services/connectivity_service.dart';
 import '../../services/local_store.dart';
 import '../../services/notification_service.dart';
-import '../../services/perf_mode_service.dart';
+import '../../services/online_reconnect_controller.dart';
 import '../../services/fcm_service.dart';
 import '../../services/referral/pending_referral_reward_service.dart';
 import '../../services/session_service.dart';
 import '../../services/sound_service.dart';
 import '../../services/user_repo.dart';
+import '../../services/wallet_history_service.dart';
+import '../../screens/games/game_page.dart';
 import '../../screens/games/setup_page.dart';
 import '../../screens/games/friend_setup_page.dart';
 import '../../screens/games/level_game_setup_page.dart';
+import '../../utils/board_utils.dart';
 import '../../screens/arena/arena_page.dart';
 import '../../screens/arena/widgets/active_room_resume_dialog.dart';
 import '../../screens/store/store_page.dart';
 import '../../screens/settings/settings_page.dart';
 import '../missions/missions_page.dart';
 import '../missions/mission_widgets.dart';
-import '../../services/mission_service.dart';
 import '../../core/app_config.dart';
 import '../../utils/navigation_utils.dart';
 import '../../widgets/app_ui.dart';
@@ -70,113 +70,165 @@ class _HomeHubState extends State<HomeHub>
   StreamSubscription? _sessionSub;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _firestoreSub;
 
-  // Staggered card entrance animation
   late final AnimationController _cardAnim;
-  late final List<Animation<double>> _cardFades;
-  late final List<Animation<Offset>> _cardSlides;
 
   bool get _isGuest => FirebaseAuth.instance.currentUser == null;
 
   @override
   void initState() {
     super.initState();
+    final startupStart = DateTime.now();
     WidgetsBinding.instance.addObserver(this);
-    AuditService.log('app_open');
 
-    // Offline-first: a signed-in user must never inherit a guest's offline
-    // character portrait. Clear it on mount; guests keep theirs (seeded at
-    // startup / during offline setup). The disconnect-based offline mode sets
-    // this notifier without remounting HomeHub, so it is unaffected.
-    if (!_isGuest) {
-      LocalStore.offlineAvatarAssetNotifier.value = null;
-    }
-
-    // Register the listener-cancel hook so LocalStore.restartIntoOfflineMode()
-    // can cancel Firestore/session streams without holding a HomeHub reference.
     LocalStore.registerCancelListenersCallback(_cancelAllListeners);
+    OnlineReconnectController.instance.registerScreenHooks(
+      cancelOnlineListeners: _cancelAllListeners,
+      onOnlineRestored: _onGlobalOnlineRestored,
+    );
 
-    // Register the confirmed "Go Online" handler so the offline-mode
-    // overlay can trigger the real reconnect flow without faking
-    // connectivity events.
-    AppModeService.registerConfirmedGoOnlineHandler(_runConfirmedGoOnline);
-
-    _refresh();
-    ConnectivityService().isOnline.addListener(_onConnectivityChanged);
-    ConnectivityService().online.then((online) {
-      if (mounted) setState(() => _offline = !online);
-    });
-
-    // Cancel Firestore/session listeners the moment auth state becomes null
-    // (handles sign-out from SettingsPage before HomeHub is disposed)
-    _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
-      if (user == null) {
-        _cancelAllListeners();
-        if (kDebugMode) debugPrint('[HomeHub] auth=null — listeners cancelled');
-      }
-    });
-
-    // Defer Firestore/session listeners + onboarding to after first frame
-    // so the 600 ms card entrance animation is not disrupted by the first snapshot.
-    // IAP is deferred further (stable-online + 1.5 s) so MediaPlayer / Billing
-    // init don't compete with the entrance animation for the main thread.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        _startFirestoreListener();
-        _startSessionListener();
-      }
-      _scheduleIapInit();
-      if (mounted) _checkNewUserOnboarding();
-      if (mounted) _checkPendingReferralRewards();
-      if (mounted) _maybePromptNotificationPermission();
-      _initFcm();
-      _scheduleGlobalResumeCheck();
-      // Trigger music init after the 600ms entrance animation completes.
-      // Delayed to avoid competing with the animation for the main thread.
-      Future.delayed(const Duration(milliseconds: 700), () {
-        if (mounted) {
-          unawaited(SoundService().init());
-          if (kDebugMode) debugPrint('[MUSIC] init triggered from HomeHub');
-        }
-      });
-    });
-
-    // Staggered entrance: smooth 600ms sequence
-    const starts = <double>[0.0, 0.3];
-    const ends = <double>[0.6, 1.0];
     _cardAnim = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 600));
-    _cardFades = List.generate(2, (i) {
-      return Tween<double>(begin: 0, end: 1).animate(
-        CurvedAnimation(
-            parent: _cardAnim,
-            curve: Interval(starts[i], ends[i], curve: Curves.easeOutCubic)),
-      );
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (!_isGuest && LocalStore.offlineAvatarAssetNotifier.value != null) {
+        LocalStore.offlineAvatarAssetNotifier.value = null;
+      }
+      final firstFrameMs =
+          DateTime.now().difference(startupStart).inMilliseconds;
+      if (kDebugMode) {
+        debugPrint('[PERF] home_first_frame_ms=$firstFrameMs');
+        debugPrint('[PERF] home_layout_ready_ms=$firstFrameMs');
+      }
+
+      Future<void>.delayed(const Duration(milliseconds: 120), () async {
+        unawaited(_runBackgroundJob('connectivity snapshot', () async {
+          final online = await ConnectivityService().online;
+          if (mounted) setState(() => _offline = !online);
+        }));
+      });
+
+      Future<void>.delayed(const Duration(milliseconds: 500), () {
+        unawaited(_runBackgroundJob('local profile refresh', _refresh));
+      });
+
+      _authSub = FirebaseAuth.instance.authStateChanges().listen((user) {
+        if (user == null) {
+          _cancelAllListeners();
+          if (kDebugMode) {
+            debugPrint('[HomeHub] auth=null — listeners cancelled');
+          }
+        }
+      });
+
+      Future<void>.delayed(const Duration(milliseconds: 850), () {
+        unawaited(_runBackgroundJob('online listeners', () async {
+          _startFirestoreListener();
+          await _startSessionListener();
+        }));
+      });
+
+      Future<void>.delayed(const Duration(milliseconds: 1300), () {
+        unawaited(
+            _runBackgroundJob('onboarding check', _checkNewUserOnboarding));
+      });
+
+      Future<void>.delayed(const Duration(milliseconds: 1800), () {
+        unawaited(_runBackgroundJob(
+          'pending referral rewards',
+          _checkPendingReferralRewards,
+        ));
+      });
+
+      Future<void>.delayed(const Duration(milliseconds: 2300), () {
+        unawaited(_runBackgroundJob(
+          'notification setup',
+          _maybePromptNotificationPermission,
+        ));
+      });
+
+      Future<void>.delayed(const Duration(milliseconds: 2800), () {
+        if (!mounted) return;
+        _initFcm();
+        _scheduleIapInit();
+      });
+
+      Future<void>.delayed(const Duration(milliseconds: 3400), () {
+        if (!mounted) return;
+        _scheduleGlobalResumeCheck();
+        unawaited(_runBackgroundJob('sound warm-up', SoundService().init));
+        unawaited(_runBackgroundJob(
+          'app-open audit',
+          () async => AuditService.log('app_open'),
+        ));
+        if (kDebugMode) debugPrint('[MUSIC] init triggered from HomeHub');
+      });
+
+      Future<void>.delayed(const Duration(milliseconds: 4200), () {
+        if (!mounted) return;
+        _precacheHomeAssets();
+      });
     });
-    _cardSlides = List.generate(2, (i) {
-      return Tween<Offset>(begin: const Offset(0, 0.3), end: Offset.zero)
-          .animate(
-        CurvedAnimation(
-            parent: _cardAnim,
-            curve: Interval(starts[i], ends[i], curve: Curves.easeOutCubic)),
-      );
-    });
-    if (PerfMode.enabled.value) {
-      // Performance Mode: skip the staggered entrance animation and show the
-      // cards immediately in their final position.
-      _cardAnim.value = 1.0;
-    } else {
-      Future.delayed(const Duration(milliseconds: 80), () {
-        if (mounted) _cardAnim.forward();
+  }
+
+  Future<void> _runBackgroundJob(
+    String name,
+    Future<void> Function() job,
+  ) async {
+    if (!mounted) return;
+    try {
+      await job();
+    } catch (error, stackTrace) {
+      if (kDebugMode) {
+        debugPrint('[HomeHub] deferred $name failed: $error');
+        debugPrintStack(stackTrace: stackTrace);
+      }
+    }
+  }
+
+  void _precacheHomeAssets() {
+    final paths = <String>[
+      'assets/game/levels.webp',
+      'assets/game/friend.webp',
+      'assets/game/ai.webp',
+      'assets/game/online-money.webp',
+    ];
+    for (var index = 0; index < paths.length; index++) {
+      final path = paths[index];
+      Future<void>.delayed(Duration(milliseconds: index * 180), () async {
+        if (!mounted) return;
+        try {
+          await precacheImage(AssetImage(path), context, onError: (_, __) {});
+        } catch (_) {}
       });
     }
+  }
+
+  Future<void> _onGlobalOnlineRestored() async {
+    if (!mounted) return;
+    _startFirestoreListener();
+    _startSessionListener();
+    await _refresh();
+    unawaited(_checkPendingReferralRewards());
+    unawaited(_initIap());
+    if (mounted) {
+      setState(() {
+        _offline = false;
+        _offlineProfile = null;
+      });
+    }
+    if (kDebugMode) debugPrint('[ONLINE] listeners started');
   }
 
   /// Schedule the one-shot global "Active Room Found" check shortly after the
   /// home entrance settles, so the resume prompt appears immediately on app
   /// open (not only after the user opens the Online tab).
   void _scheduleGlobalResumeCheck() {
-    Future.delayed(const Duration(milliseconds: 900), () {
-      if (mounted) _maybeShowGlobalActiveRoomPrompt();
+    Future<void>.delayed(const Duration(milliseconds: 900), () {
+      unawaited(_runBackgroundJob(
+        'active room resume check',
+        _maybeShowGlobalActiveRoomPrompt,
+      ));
     });
   }
 
@@ -442,14 +494,21 @@ class _HomeHubState extends State<HomeHub>
   Future<void> _maybePromptNotificationPermission() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      if (prefs.getBool(Keys.hasPromptedNotification) ?? false) return;
+      if (prefs.getBool(Keys.hasPromptedNotification) ?? false) {
+        // Already prompted — re-apply the daily reminder from saved prefs so a
+        // reinstall/upgrade keeps (or clears) the 9 PM schedule correctly.
+        await NotificationService().init();
+        await NotificationService().syncDailyReminderFromPrefs();
+        return;
+      }
       await NotificationService().init();
       final granted =
           await NotificationService().requestNotificationsPermission();
       await prefs.setBool(Keys.hasPromptedNotification, true);
       if (granted) {
         await prefs.setBool(Keys.notificationsEnabled, true);
-        // Real notifications come from FCM now — register the device token.
+        // Schedule the local daily 9 PM reminder and register the FCM token.
+        await NotificationService().scheduleDailyPlayReminder();
         await FcmService.instance.registerToken();
       }
     } catch (e) {
@@ -639,6 +698,7 @@ class _HomeHubState extends State<HomeHub>
 
   // ────────────────────────────────────────────────────────────────────────
 
+  // ignore: unused_element
   void _onConnectivityChanged() {
     // While a controlled reconnect is in progress, ignore stale
     // connectivity-blip events (the Firestore SDK retries briefly during
@@ -758,6 +818,7 @@ class _HomeHubState extends State<HomeHub>
   /// User-confirmed Go Online from the OnlineSwitchConfirmOverlay.
   /// Runs the same reconnect sequence as a connectivity-tick reconnect,
   /// but skips the "if offline ask user" guard (the user already chose).
+  // ignore: unused_element
   Future<void> _runConfirmedGoOnline() async {
     if (_isReconnecting) return;
     await _runReconnectSequence(reason: 'user_confirmed_go_online');
@@ -868,6 +929,13 @@ class _HomeHubState extends State<HomeHub>
       // Step 7 — flip to online. canUseOnlineServices is now true; only
       // now is it safe to start listeners and IAP.
       AppModeService.setMode(AppMode.online);
+      unawaited(WalletHistoryService.instance
+          .flushPending(stillSignedIn.uid)
+          .catchError((Object error) {
+        if (kDebugMode) {
+          debugPrint('[WALLET_HISTORY] reconnect flush deferred: $error');
+        }
+      }));
 
       // Step 8 — listeners.
       if (mounted) {
@@ -969,7 +1037,12 @@ class _HomeHubState extends State<HomeHub>
           }
 
           // Sync cosmetics
-          if (cosmetics != null) {
+          // Startup/auth already hydrates the local cosmetics cache. Once the
+          // player changes any cosmetic in this process, local state is the
+          // runtime source of truth until its background mirror converges;
+          // applying a delayed snapshot here could undo a fresh equip or
+          // unequip (and could also erase newly purchased ownership).
+          if (cosmetics != null && LocalStore.cosmeticsVersion.value == 0) {
             final xColor = cosmetics['xColor'] as String?;
             final oColor = cosmetics['oColor'] as String?;
             final rawEquippedAvatar =
@@ -1067,8 +1140,9 @@ class _HomeHubState extends State<HomeHub>
           // permission-denied after sign-out is expected — cancel silently
           _firestoreSub?.cancel();
           _firestoreSub = null;
-          if (kDebugMode)
+          if (kDebugMode) {
             debugPrint('[HomeHub] Firestore stream closed (signed out)');
+          }
           return;
         }
         if (kDebugMode) debugPrint('[HomeHub] Firestore listener error: $e');
@@ -1118,8 +1192,7 @@ class _HomeHubState extends State<HomeHub>
     _cancelAllListeners();
     // Unregister the cancel hook — this HomeHub instance is going away.
     LocalStore.registerCancelListenersCallback(null);
-    AppModeService.registerConfirmedGoOnlineHandler(null);
-    ConnectivityService().isOnline.removeListener(_onConnectivityChanged);
+    OnlineReconnectController.instance.clearScreenHooks();
     _cardAnim.dispose();
     super.dispose();
   }
@@ -1184,7 +1257,7 @@ class _HomeHubState extends State<HomeHub>
       context: context,
       barrierDismissible: false,
       barrierLabel: 'Force Logout',
-      barrierColor: Colors.black.withOpacity(0.7),
+      barrierColor: Colors.black.withValues(alpha: 0.7),
       transitionDuration: const Duration(milliseconds: 300),
       transitionBuilder: (ctx, a1, a2, child) {
         return FadeTransition(
@@ -1219,7 +1292,8 @@ class _HomeHubState extends State<HomeHub>
                               shape: BoxShape.circle,
                               boxShadow: [
                                 BoxShadow(
-                                  color: AppPalette.danger.withOpacity(0.4),
+                                  color:
+                                      AppPalette.danger.withValues(alpha: 0.4),
                                   blurRadius: 24,
                                   spreadRadius: 2,
                                 ),
@@ -1282,7 +1356,7 @@ class _HomeHubState extends State<HomeHub>
                           AppPillButton(
                             label: "BACK TO LOGIN",
                             icon: Icons.login,
-                            fill: AppPalette.primary.withOpacity(0.9),
+                            fill: AppPalette.primary.withValues(alpha: 0.9),
                             onPressed: () {
                               Navigator.of(ctx).pushNamedAndRemoveUntil(
                                 '/login',
@@ -1373,99 +1447,13 @@ class _HomeHubState extends State<HomeHub>
   Widget _buildHomeCoinButton({
     required bool compact,
     required bool landscape,
-    required double iconSize,
   }) {
-    return Material(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(999),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(999),
-        onTap: _openHomeCoinsStore,
-        child: Container(
-          padding: EdgeInsets.symmetric(
-            horizontal: compact ? 8 : 10,
-            vertical: landscape ? (compact ? 4 : 5) : (compact ? 5 : 7),
-          ),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(999),
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                AppPalette.homePanelStrong.withOpacity(0.95),
-                AppPalette.homeBgSecondary.withOpacity(0.92),
-              ],
-            ),
-            border: Border.all(
-              color: AppPalette.homeStroke.withOpacity(0.38),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.22),
-                blurRadius: 14,
-                offset: const Offset(0, 8),
-              ),
-              BoxShadow(
-                color: AppPalette.gold.withOpacity(0.10),
-                blurRadius: 12,
-                spreadRadius: -4,
-              ),
-            ],
-          ),
-          child: ValueListenableBuilder<int>(
-            valueListenable: LocalStore.coinsNotifier,
-            builder: (_, coins, __) {
-              return FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerLeft,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Image.asset(
-                      'assets/coin/COIN-SHOP.png',
-                      width: iconSize,
-                      height: iconSize,
-                      fit: BoxFit.contain,
-                      // Small icon: cap decode resolution so the full-size
-                      // source isn't re-decoded on every coin-balance rebuild.
-                      cacheWidth: 96,
-                    ),
-                    SizedBox(width: compact ? 6 : 8),
-                    Text(
-                      formatCoins(coins, compact: true),
-                      style: homeOrbitron(
-                        fontSize: landscape ? 18 : (compact ? 17 : 21),
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 0.6,
-                        color: AppPalette.homeTitle,
-                      ),
-                    ),
-                    SizedBox(width: compact ? 5 : 7),
-                    Container(
-                      width: landscape ? 20 : 22,
-                      height: landscape ? 20 : 22,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        gradient: const LinearGradient(
-                          colors: [AppPalette.goldHighlight, AppPalette.gold],
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: AppPalette.gold.withOpacity(0.4),
-                            blurRadius: 8,
-                          ),
-                        ],
-                      ),
-                      child: Icon(Icons.add_rounded,
-                          size: landscape ? 15 : 16, color: AppPalette.bgDepth),
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
-        ),
-      ),
+    // Shared coin pill (same widget used on Settings/Missions/Online/Invite)
+    // so the coin display is visually identical across the app.
+    return ArenaCoinBalance(
+      onTap: _openHomeCoinsStore,
+      compact: compact || landscape,
+      minWidth: landscape ? 116 : (compact ? 104 : 128),
     );
   }
 
@@ -1473,64 +1461,20 @@ class _HomeHubState extends State<HomeHub>
     required double size,
     required bool compact,
   }) {
-    final framePadding = compact ? 2.0 : 4.0;
-    final radius = size / 2 + framePadding;
+    // Just the profile photo + equipped frame — no decorative box behind it.
+    // The avatar now fills what used to be the whole framed container so it
+    // reads bigger and cleaner.
+    final framePadding = compact ? 2.5 : 3.5;
+    final avatarSize = size + framePadding * 2;
     return Material(
       color: Colors.transparent,
-      borderRadius: BorderRadius.circular(radius),
+      shape: const CircleBorder(),
       child: InkWell(
-        borderRadius: BorderRadius.circular(radius),
+        customBorder: const CircleBorder(),
         onTap: _handleHomeProfileTap,
-        child: Padding(
-          padding: EdgeInsets.all(framePadding),
-          child: _offline && _offlineProfile != null
-              ? _buildOfflineAvatarImage(size: size, profile: _offlineProfile!)
-              : ValueListenableBuilder<int>(
-                  valueListenable: LocalStore.equippedAvatarNotifier,
-                  builder: (_, avatarId, ___) {
-                    // Nullable resolver: avatarId == 0 or unknown id → no
-                    // paid frame, profile photo / character portrait
-                    // only. Never fall back to Avatar__1 (a paid item).
-                    final avatar = gameAvatarByIdOrNull(avatarId);
-                    if (kDebugMode && avatar == null) {
-                      debugPrint(
-                          '[PROFILE] no equipped avatar — showing profile image only');
-                    }
-                    return FullAvatarDisplay(
-                      size: size,
-                      avatar: avatar,
-                    );
-                  },
-                ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildOfflineAvatarImage({
-    required double size,
-    required OfflinePlayerProfile profile,
-  }) {
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        border: Border.all(
-          color: AppPalette.warning.withOpacity(0.70),
-          width: 2,
-        ),
-      ),
-      child: ClipOval(
-        child: Image.asset(
-          profile.avatarAssetPath,
-          fit: BoxFit.cover,
-          cacheWidth: 256,
-          errorBuilder: (_, __, ___) => Icon(
-            Icons.person,
-            size: size * 0.6,
-            color: AppPalette.warning,
-          ),
+        child: ArenaProfileAvatar.current(
+          size: avatarSize,
+          fallbackInitials: _playerName,
         ),
       ),
     );
@@ -1541,9 +1485,9 @@ class _HomeHubState extends State<HomeHub>
       width: double.infinity,
       padding: const EdgeInsets.symmetric(vertical: 6),
       decoration: BoxDecoration(
-        color: AppPalette.warning.withOpacity(0.14),
+        color: AppPalette.warning.withValues(alpha: 0.14),
         border: Border(
-          bottom: BorderSide(color: AppPalette.warning.withOpacity(0.30)),
+          bottom: BorderSide(color: AppPalette.warning.withValues(alpha: 0.30)),
         ),
       ),
       child: Row(
@@ -1569,80 +1513,100 @@ class _HomeHubState extends State<HomeHub>
 
   Widget _buildHomeTopBar() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 8, 18, 10),
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
       child: LayoutBuilder(
         builder: (context, constraints) {
           final width = constraints.maxWidth;
           final landscape =
               MediaQuery.orientationOf(context) == Orientation.landscape;
           final compact = width < 360;
-          final minSideWidth = 94.0;
-          final maxSideWidth = landscape ? 148.0 : 162.0;
-          final desiredSideWidth = width * (landscape ? 0.22 : 0.24);
+          final minSideWidth = compact ? 104.0 : 128.0;
+          final maxSideWidth = landscape ? 156.0 : 180.0;
+          final desiredSideWidth = width * (landscape ? 0.25 : 0.34);
+          final minCenterWidth = compact ? 88.0 : 96.0;
+          final sideUpperBound = max(84.0, (width - minCenterWidth) / 2);
           final sideSlotWidth = min(
+            min(maxSideWidth, sideUpperBound),
             max(minSideWidth, desiredSideWidth),
-            min(maxSideWidth, max(minSideWidth, (width - 120.0) / 2)),
           );
-          final centerWidth = max(120.0, width - sideSlotWidth * 2);
-          final topBarHeight = landscape ? 66.0 : (compact ? 74.0 : 84.0);
-          final avatarSize = landscape ? 48.0 : (compact ? 50.0 : 60.0);
-          final coinIconSize = landscape ? 26.0 : (compact ? 28.0 : 34.0);
+          final centerWidth = max(0.0, width - sideSlotWidth * 2);
+          final topBarHeight = landscape ? 72.0 : (compact ? 92.0 : 106.0);
+          final avatarSize = landscape ? 50.0 : (compact ? 60.0 : 72.0);
 
-          return SizedBox(
-            height: topBarHeight,
-            child: Row(
-              children: [
-                SizedBox(
-                  width: sideSlotWidth,
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: _buildHomeCoinButton(
-                      compact: compact,
-                      landscape: landscape,
-                      iconSize: coinIconSize,
-                    ),
-                  ),
-                ),
-                SizedBox(
-                  width: centerWidth,
-                  child: Center(
-                    child:
-                        ArenaLogo(height: landscape ? 46 : (compact ? 44 : 54)),
-                  ),
-                ),
-                SizedBox(
-                  width: sideSlotWidth,
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: Directionality(
-                      textDirection: TextDirection.ltr,
-                      child: Row(
+          return Directionality(
+            textDirection: TextDirection.ltr,
+            child: SizedBox(
+              height: topBarHeight,
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: sideSlotWidth,
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          _buildHomeAvatarButton(
-                            size: avatarSize,
-                            compact: compact,
-                          ),
-                          SizedBox(width: compact ? 5 : 7),
-                          Flexible(
-                            child: Text(
-                              _playerName.isEmpty
-                                  ? AppL10n.of(context).playerDefaultName
-                                  : _playerName,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: homeBodyFont(context,
-                                  fontSize: compact ? 11 : 13,
-                                  fontWeight: FontWeight.w700,
-                                  color: AppPalette.homeTitle),
+                          DecoratedBox(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(24),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: AppPalette.homeCyan
+                                      .withValues(alpha: 0.20),
+                                  blurRadius: 20,
+                                  spreadRadius: -4,
+                                ),
+                              ],
+                            ),
+                            child: _buildHomeAvatarButton(
+                              size: landscape ? avatarSize : avatarSize - 8,
+                              compact: compact,
                             ),
                           ),
+                          if (!landscape && _playerName.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 3),
+                              child: SizedBox(
+                                width: sideSlotWidth - 8,
+                                child: Text(
+                                  _playerName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  textAlign: TextAlign.center,
+                                  style: safeInter(
+                                    fontSize: compact ? 11.0 : 12.2,
+                                    fontWeight: FontWeight.w900,
+                                    color: AppPalette.homeTitle
+                                        .withValues(alpha: 0.94),
+                                  ),
+                                ),
+                              ),
+                            ),
                         ],
                       ),
                     ),
                   ),
-                ),
-              ],
+                  SizedBox(
+                    width: centerWidth,
+                    child: Center(
+                      child: _XoArenaTitle(
+                        compact: compact,
+                        landscape: landscape,
+                      ),
+                    ),
+                  ),
+                  SizedBox(
+                    width: sideSlotWidth,
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: _buildHomeCoinButton(
+                        compact: compact,
+                        landscape: landscape,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           );
         },
@@ -1664,13 +1628,7 @@ class _HomeHubState extends State<HomeHub>
                   _buildHomeTopBar(),
                   if (_offline) _buildOfflineBanner(),
                   Expanded(
-                    child: FadeTransition(
-                      opacity: _cardFades[0],
-                      child: SlideTransition(
-                        position: _cardSlides[0],
-                        child: _buildHomeContent(),
-                      ),
-                    ),
+                    child: _buildHomeContent(),
                   ),
                 ],
               ),
@@ -1742,174 +1700,319 @@ class _HomeHubState extends State<HomeHub>
   }
 
   Widget _buildHomeContent() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _buildHomeShortcutsRow(),
-          const SizedBox(height: 14),
-          _buildFeaturedOnlineCard(),
-          const SizedBox(height: 14),
-          _buildModeCardsRow(),
-          const SizedBox(height: 16),
-          MissionPreviewPanel(onViewAll: _openMissions),
-          const SizedBox(height: 12),
-          _buildWeeklyStrip(),
-          const SizedBox(height: 18),
-          _buildBottomCta(),
-        ],
-      ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 360;
+        // Symmetric, small side margins so main content fills ~92-96% of the
+        // screen width. The Store/Settings edge buttons below are a Stack
+        // overlay (Positioned, drawn after the ListView) — they do not
+        // reserve any layout width, they simply sit on top of the content's
+        // right edge.
+        final sidePad = compact ? 12.0 : 14.0;
+        final dockTop = compact ? 56.0 : 66.0;
+        final dockGap = compact ? 86.0 : 94.0;
+        return Stack(
+          clipBehavior: Clip.none,
+          children: [
+            ListView(
+              padding: EdgeInsets.fromLTRB(sidePad, 4, sidePad, 14),
+              physics: const BouncingScrollPhysics(),
+              children: [
+                _buildFeaturedOnlineCard(),
+                const SizedBox(height: 10),
+                _buildModeCardsRow(),
+                const SizedBox(height: 10),
+                MissionPreviewPanel(onViewAll: _openMissions),
+                const SizedBox(height: 14),
+                _buildBottomCta(),
+                const SizedBox(height: 8),
+              ],
+            ),
+            Positioned(
+              right: compact ? -20 : -22,
+              top: dockTop,
+              child: _homeEdgeShortcutButton(
+                iconChild: Image.asset('assets/shop.png',
+                    width: compact ? 50 : 54,
+                    height: compact ? 50 : 54,
+                    fit: BoxFit.contain,
+                    cacheWidth: 174,
+                    errorBuilder: (_, __, ___) => Icon(Icons.storefront_rounded,
+                        color: AppPalette.homeGold, size: compact ? 31 : 34)),
+                label: AppL10n.of(context).storeTab,
+                accent: AppPalette.homeGold,
+                fromLeft: false,
+                onTap: _openStore,
+              ),
+            ),
+            Positioned(
+              right: compact ? -20 : -22,
+              top: dockTop + dockGap,
+              child: _homeEdgeShortcutButton(
+                iconChild: _SettingsActionIcon(),
+                label: AppL10n.of(context).settingsTab,
+                accent: AppPalette.homeCyan,
+                fromLeft: false,
+                onTap: _handleHomeProfileTap,
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 
-  Widget _homeShortcutButton({
+  Widget _homeEdgeShortcutButton({
     required Widget iconChild,
     required String label,
     required VoidCallback onTap,
+    required bool fromLeft,
     Widget? badge,
+    Color accent = AppPalette.homeCyan,
   }) {
+    final panelWidth = 78.0;
+    final visibleWidth = 60.0;
+    final panelHeight = 82.0;
     return GestureDetector(
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Stack(
-            clipBehavior: Clip.none,
-            children: [
-              Container(
-                width: 56,
-                height: 56,
-                alignment: Alignment.center,
+      child: SizedBox(
+        width: panelWidth,
+        height: panelHeight,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Positioned.fill(
+              child: DecoratedBox(
                 decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(18),
+                  borderRadius: BorderRadius.circular(22),
                   gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
+                    begin:
+                        fromLeft ? Alignment.centerLeft : Alignment.centerRight,
+                    end:
+                        fromLeft ? Alignment.centerRight : Alignment.centerLeft,
                     colors: [
-                      AppPalette.homePanelStrong.withOpacity(0.95),
-                      AppPalette.homeBgSecondary.withOpacity(0.92),
+                      AppPalette.bgDepth.withValues(alpha: 0.94),
+                      AppPalette.homePanelStrong.withValues(alpha: 0.90),
+                      Color.lerp(AppPalette.homePanelDeep, accent, 0.10)!
+                          .withValues(alpha: 0.84),
                     ],
                   ),
                   border: Border.all(
-                      color: AppPalette.homeStroke.withOpacity(0.5),
-                      width: 1.2),
+                    color: accent.withValues(alpha: 0.44),
+                    width: 1.15,
+                  ),
                   boxShadow: [
                     BoxShadow(
-                      color: AppPalette.homeCyan.withOpacity(0.12),
-                      blurRadius: 14,
-                      spreadRadius: -3,
+                      color: accent.withValues(alpha: 0.25),
+                      blurRadius: 18,
+                      spreadRadius: -6,
+                      offset: const Offset(0, 8),
+                    ),
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.28),
+                      blurRadius: 18,
+                      offset: const Offset(0, 12),
                     ),
                   ],
                 ),
-                child: iconChild,
               ),
-              if (badge != null) Positioned(top: -6, right: -6, child: badge),
-            ],
-          ),
-          const SizedBox(height: 5),
-          Text(label,
-              style: homeLabelFont(context,
-                  fontSize: 8.5, color: AppPalette.homeBody)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildHomeShortcutsRow() {
-    final l10n = AppL10n.of(context);
-    return Directionality(
-      textDirection: TextDirection.ltr,
-      child: Row(
-        children: [
-          _homeShortcutButton(
-            iconChild: Image.asset('assets/moh.png',
-                width: 32,
-                height: 32,
-                cacheWidth: 96,
-                errorBuilder: (_, __, ___) => Icon(Icons.assignment_rounded,
-                    color: AppPalette.homeCyan, size: 28)),
-            label: l10n.missionsTitle,
-            onTap: _openMissions,
-            badge: ValueListenableBuilder<int>(
-              valueListenable: MissionService.instance.badgeCount,
-              builder: (_, count, __) => MissionBadge(count: count),
             ),
-          ),
-          const Spacer(),
-          _homeShortcutButton(
-            iconChild: Image.asset('assets/shop.png',
-                width: 32,
-                height: 32,
-                cacheWidth: 96,
-                errorBuilder: (_, __, ___) => Icon(Icons.storefront_rounded,
-                    color: AppPalette.homeGold, size: 28)),
-            label: l10n.storeTab,
-            onTap: _openStore,
-          ),
-          const SizedBox(width: 12),
-          _homeShortcutButton(
-            iconChild: Icon(Icons.settings_rounded,
-                color: AppPalette.homeSky, size: 30),
-            label: l10n.settingsTab,
-            onTap: _handleHomeProfileTap,
-          ),
-        ],
+            Positioned.fill(
+              child: Align(
+                alignment:
+                    fromLeft ? Alignment.centerRight : Alignment.centerLeft,
+                child: SizedBox(
+                  width: visibleWidth,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      SizedBox(
+                        width: 52,
+                        height: 48,
+                        child: Center(child: iconChild),
+                      ),
+                      const SizedBox(height: 3),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 3),
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Text(
+                            label,
+                            maxLines: 1,
+                            textAlign: TextAlign.center,
+                            style: homeLabelFont(
+                              context,
+                              fontSize: 9.5,
+                              color:
+                                  AppPalette.homeTitle.withValues(alpha: 0.94),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              top: panelHeight / 2 - 11,
+              left: fromLeft ? null : 0,
+              right: fromLeft ? 0 : null,
+              child: Container(
+                width: 2.5,
+                height: 22,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(99),
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.transparent,
+                      accent.withValues(alpha: 0.64),
+                      Colors.transparent,
+                    ],
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: accent.withValues(alpha: 0.32),
+                      blurRadius: 9,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            if (badge != null)
+              Positioned(
+                top: -5,
+                right: fromLeft ? 8 : null,
+                left: fromLeft ? null : 8,
+                child: badge,
+              ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildFeaturedOnlineCard() {
     final l10n = AppL10n.of(context);
-    return AppGlassCard(
-      padding: const EdgeInsets.all(14),
-      radius: 26,
-      borderColor: AppPalette.homeGold.withOpacity(0.4),
-      boxShadow: [
-        BoxShadow(
-          color: AppPalette.homeGold.withOpacity(0.10),
-          blurRadius: 22,
-          spreadRadius: -6,
-        ),
-      ],
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(l10n.onlineFriendsTitle,
-                    style: homeTitleFont(context, fontSize: 20)),
-                const SizedBox(height: 6),
-                Text(l10n.onlineFriendsSubtitle,
-                    style: homeBodyFont(context, fontSize: 12),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis),
-                const SizedBox(height: 12),
-                SizedBox(
-                  height: 42,
-                  child: AppPillButton(
-                    label: l10n.playNowBtn,
-                    fitLabel: true,
-                    onPressed: _openOnline,
-                  ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final height = min(max(width * 0.54, 184.0), 220.0);
+        final textWidth = min(max(width * 0.42, 138.0), 184.0);
+        return GestureDetector(
+          onTap: _openOnline,
+          child: Container(
+            height: height,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(28),
+              border: Border.all(
+                  color: AppPalette.homeCyan.withValues(alpha: 0.56),
+                  width: 1.15),
+              boxShadow: [
+                BoxShadow(
+                  color: AppPalette.homeCyan.withValues(alpha: 0.18),
+                  blurRadius: 24,
+                  spreadRadius: -8,
+                  offset: const Offset(0, 12),
+                ),
+                BoxShadow(
+                  color: AppPalette.homeBlue.withValues(alpha: 0.12),
+                  blurRadius: 34,
+                  spreadRadius: -14,
                 ),
               ],
             ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(27),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Image.asset(
+                    'assets/game/online-money.webp',
+                    fit: BoxFit.cover,
+                    alignment: Alignment.centerLeft,
+                    cacheWidth: 1000,
+                    errorBuilder: (_, __, ___) => DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [
+                            AppPalette.homePanelDeep,
+                            AppPalette.homeBlue.withValues(alpha: 0.30),
+                          ],
+                        ),
+                      ),
+                      child: Icon(Icons.public_rounded,
+                          size: 78,
+                          color: AppPalette.homeCyan.withValues(alpha: 0.65)),
+                    ),
+                  ),
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.centerLeft,
+                        end: Alignment.centerRight,
+                        colors: [
+                          AppPalette.bgDepth.withValues(alpha: 0.02),
+                          AppPalette.bgDepth.withValues(alpha: 0.28),
+                          AppPalette.bgDepth.withValues(alpha: 0.92),
+                        ],
+                        stops: const [0.0, 0.52, 1.0],
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    top: 0,
+                    bottom: 0,
+                    right: 18,
+                    width: textWidth,
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          l10n.onlineFriendsTitle,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: homeTitleFont(
+                            context,
+                            fontSize: width < 360 ? 21 : 26,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          l10n.onlineFriendsSubtitle,
+                          style: homeBodyFont(
+                            context,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: AppPalette.homeBody,
+                          ),
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 14),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 48,
+                          child: AppPillButton(
+                            label: l10n.playNowBtn,
+                            fitLabel: true,
+                            minHeight: 48,
+                            onPressed: _openOnline,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
-          const SizedBox(width: 12),
-          RepaintBoundary(
-            child: Image.asset('assets/game/online-money.webp',
-                width: 108,
-                height: 108,
-                fit: BoxFit.contain,
-                cacheWidth: 320,
-                errorBuilder: (_, __, ___) => Icon(Icons.public_rounded,
-                    size: 70, color: AppPalette.homeGold.withOpacity(0.6))),
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -1923,10 +2026,12 @@ class _HomeHubState extends State<HomeHub>
       required Color accent,
       required Color accent2,
       required VoidCallback onTap,
+      bool wide = false,
+      Alignment imageAlignment = Alignment.center,
     }) {
       return Expanded(
         child: SizedBox(
-          height: 170,
+          height: 154,
           child: BigModeCard(
             title: title,
             subtitle: subtitle,
@@ -1935,6 +2040,8 @@ class _HomeHubState extends State<HomeHub>
             accent: accent,
             accentSecondary: accent2,
             onTap: onTap,
+            wide: wide,
+            imageAlignment: imageAlignment,
           ),
         ),
       );
@@ -1942,150 +2049,67 @@ class _HomeHubState extends State<HomeHub>
 
     return Directionality(
       textDirection: TextDirection.ltr,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Column(
         children: [
-          card(
-            title: l10n.vsFriendTitle,
-            subtitle: l10n.vsFriendSubtitle,
-            badge: l10n.badgeHot,
-            asset: 'assets/game/friend.webp',
-            accent: AppPalette.homePurple,
-            accent2: AppPalette.homePink,
-            onTap: _openFriend,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              card(
+                title: l10n.vsFriendTitle,
+                subtitle: l10n.vsFriendSubtitle,
+                badge: l10n.badgeHot,
+                asset: 'assets/game/friend.webp',
+                accent: AppPalette.homePurple,
+                accent2: AppPalette.homePink,
+                onTap: _openFriend,
+                wide: true,
+                imageAlignment: Alignment.center,
+              ),
+              const SizedBox(width: 10),
+              card(
+                title: l10n.vsAiTitle,
+                subtitle: l10n.vsAiSubtitle,
+                badge: l10n.badgeAi,
+                asset: 'assets/game/ai.webp',
+                accent: AppPalette.homeCyan,
+                accent2: AppPalette.homeBlue,
+                onTap: _openAi,
+                wide: true,
+                imageAlignment: Alignment.centerRight,
+              ),
+            ],
           ),
-          const SizedBox(width: 10),
-          card(
-            title: l10n.vsAiTitle,
-            subtitle: l10n.vsAiSubtitle,
-            badge: l10n.badgeAi,
-            asset: 'assets/game/ai.webp',
-            accent: AppPalette.homeCyan,
-            accent2: AppPalette.homeBlue,
-            onTap: _openAi,
-          ),
-          const SizedBox(width: 10),
-          card(
-            title: l10n.levelsTitle,
-            subtitle: l10n.levelsSubtitle,
-            badge: l10n.badgeReward,
-            asset: 'assets/game/levels.webp',
-            accent: AppPalette.homeSky,
-            accent2: AppPalette.homeBlue,
-            onTap: _openLevels,
+          const SizedBox(height: 10),
+          SizedBox(
+            height: 132,
+            child: BigModeCard(
+              title: l10n.levelsTitle,
+              subtitle: l10n.levelsSubtitle,
+              badge: l10n.badgeReward,
+              assetPath: 'assets/game/levels.webp',
+              accent: AppPalette.homeSky,
+              accentSecondary: AppPalette.homeBlue,
+              onTap: _openLevels,
+              wide: true,
+              imageAlignment: Alignment.centerRight,
+              textAlignment: Alignment.centerLeft,
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildWeeklyStrip() {
-    final l10n = AppL10n.of(context);
-    return ValueListenableBuilder<int>(
-      valueListenable: MissionService.instance.revision,
-      builder: (context, _, __) {
-        final allDone = MissionService.instance.allWeeklyDone();
-        final frac = MissionService.instance.weeklyProgressFraction();
-        return AppGlassCard(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-          radius: 20,
-          borderColor: AppPalette.homeStroke,
-          child: Row(
-            children: [
-              Icon(
-                  allDone
-                      ? Icons.verified_rounded
-                      : Icons.calendar_month_rounded,
-                  size: 18,
-                  color: allDone ? AppPalette.success : AppPalette.homePurple),
-              const SizedBox(width: 10),
-              Expanded(
-                child: allDone
-                    ? Text(l10n.missionsWeekDone,
-                        style: safeInter(
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w700,
-                            color: AppPalette.success))
-                    : Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(l10n.missionsWeeklyTab,
-                              style: homeLabelFont(context,
-                                  fontSize: 9, color: AppPalette.homePurple)),
-                          const SizedBox(height: 5),
-                          MissionProgressBar(
-                              value: frac, color: AppPalette.homePurple),
-                        ],
-                      ),
-              ),
-              const SizedBox(width: 10),
-              Text('${(frac * 100).round()}%',
-                  style: safeOrbitron(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w800,
-                      color: AppPalette.homePurple)),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  void _handlePlayNowCta() {
-    if (!_isGuest) {
-      _openOnline();
-      return;
-    }
-    showDialog(
-      context: context,
-      builder: (ctx) {
-        final l10n = AppL10n.of(ctx);
-        return Dialog(
-          backgroundColor: Colors.transparent,
-          child: AppGlassCard(
-            padding: const EdgeInsets.all(22),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.groups_rounded,
-                    size: 54, color: AppPalette.homeGold),
-                const SizedBox(height: 14),
-                Text(l10n.playOnlineSignInTitle,
-                    textAlign: TextAlign.center,
-                    style: safeInter(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: AppPalette.homeTitle)),
-                const SizedBox(height: 18),
-                SizedBox(
-                  width: double.infinity,
-                  child: AppPillButton(
-                    label: l10n.signInBtn,
-                    onPressed: () {
-                      Navigator.of(ctx).pop();
-                      Navigator.of(context).pushNamed('/login');
-                    },
-                  ),
-                ),
-                const SizedBox(height: 10),
-                SizedBox(
-                  width: double.infinity,
-                  child: AppPillButton(
-                    label: l10n.playVsAiBtn,
-                    fill: Colors.white.withOpacity(0.06),
-                    stroke: AppPalette.strokeStrong,
-                    onPressed: () {
-                      Navigator.of(ctx).pop();
-                      _openAi();
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
+  Future<void> _handlePlayNowCta() async {
+    await Navigator.of(context).push(_fadeRoute(
+      GamePage(
+        mode: GameMode.ai,
+        difficulty: AIDifficulty.medium,
+        playerSymbol: PlayerSymbol.x,
+      ),
+    ));
+    _refresh();
+    unawaited(_onGameReturned());
   }
 
   Widget _buildBottomCta() {
@@ -2093,10 +2117,10 @@ class _HomeHubState extends State<HomeHub>
     return GestureDetector(
       onTap: _handlePlayNowCta,
       child: Container(
-        height: 60,
+        height: 66,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(999),
           gradient: const LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
@@ -2108,27 +2132,160 @@ class _HomeHubState extends State<HomeHub>
           ),
           boxShadow: [
             BoxShadow(
-              color: AppPalette.gold.withOpacity(0.4),
+              color: AppPalette.gold.withValues(alpha: 0.4),
               blurRadius: 22,
               spreadRadius: -4,
               offset: const Offset(0, 8),
             ),
           ],
+          border: Border.all(
+            color: AppPalette.goldHighlight.withValues(alpha: 0.62),
+            width: 1.2,
+          ),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.play_arrow_rounded, color: AppPalette.bgDepth, size: 26),
-            const SizedBox(width: 8),
+            Icon(Icons.play_arrow_rounded, color: AppPalette.bgDepth, size: 32),
+            const SizedBox(width: 10),
             Text(l10n.playNowBtn,
                 style: safeOrbitron(
-                    fontSize: 18,
+                    fontSize: 21,
                     fontWeight: FontWeight.w900,
-                    letterSpacing: 2.0,
+                    letterSpacing: 2.4,
                     color: AppPalette.bgDepth)),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _XoArenaTitle extends StatelessWidget {
+  final bool compact;
+  final bool landscape;
+
+  const _XoArenaTitle({required this.compact, required this.landscape});
+
+  @override
+  Widget build(BuildContext context) {
+    final xoSize = landscape ? 25.0 : (compact ? 31.0 : 36.0);
+    final arenaSize = landscape ? 13.0 : (compact ? 16.0 : 19.0);
+
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          ShaderMask(
+            shaderCallback: (bounds) => const LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Color(0xFF9DF3FF),
+                AppPalette.homeCyan,
+                Color(0xFF287BFF),
+              ],
+            ).createShader(bounds),
+            child: Text(
+              'XO',
+              style: safeOrbitron(
+                fontSize: xoSize,
+                fontWeight: FontWeight.w900,
+                letterSpacing: compact ? 4.2 : 5.0,
+                color: Colors.white,
+                height: 0.95,
+                shadows: [
+                  Shadow(
+                    color: AppPalette.homeCyan.withValues(alpha: 0.86),
+                    blurRadius: 20,
+                  ),
+                  Shadow(
+                    color: AppPalette.homeSky.withValues(alpha: 0.48),
+                    blurRadius: 32,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 2),
+          ShaderMask(
+            shaderCallback: (bounds) => const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Color(0xFFFFFFFF),
+                Color(0xFFBFCBFF),
+                AppPalette.homePurple,
+              ],
+            ).createShader(bounds),
+            child: Text(
+              'ARENA',
+              style: safeOrbitron(
+                fontSize: arenaSize,
+                fontWeight: FontWeight.w900,
+                letterSpacing: compact ? 3.8 : 4.4,
+                color: Colors.white,
+                height: 1.0,
+                shadows: [
+                  Shadow(
+                    color: AppPalette.homeCyan.withValues(alpha: 0.52),
+                    blurRadius: 16,
+                  ),
+                  Shadow(
+                    color: AppPalette.homePurple.withValues(alpha: 0.50),
+                    blurRadius: 24,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SettingsActionIcon extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      alignment: Alignment.center,
+      children: [
+        Container(
+          width: 48,
+          height: 48,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: RadialGradient(
+              colors: [
+                AppPalette.homeCyan.withValues(alpha: 0.22),
+                AppPalette.homeBlue.withValues(alpha: 0.08),
+                Colors.transparent,
+              ],
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: AppPalette.homeCyan.withValues(alpha: 0.24),
+                blurRadius: 14,
+                spreadRadius: -6,
+              ),
+            ],
+          ),
+        ),
+        Icon(
+          Icons.settings_rounded,
+          color: AppPalette.homeCyan,
+          size: 40,
+          shadows: [
+            Shadow(
+              color: AppPalette.homeBlue.withValues(alpha: 0.58),
+              blurRadius: 10,
+            ),
+          ],
+        ),
+      ],
     );
   }
 }

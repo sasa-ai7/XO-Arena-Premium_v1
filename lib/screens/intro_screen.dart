@@ -54,21 +54,24 @@ class _IntroScreenState extends State<IntroScreen>
         parent: _ctrl, curve: const Interval(0.0, 0.30, curve: Curves.easeOut));
 
     _xFade = CurvedAnimation(
-        parent: _ctrl, curve: const Interval(0.05, 0.32, curve: Curves.easeOut));
+        parent: _ctrl,
+        curve: const Interval(0.05, 0.32, curve: Curves.easeOut));
     _xSlide = Tween<Offset>(begin: const Offset(-1.4, 0), end: Offset.zero)
         .animate(CurvedAnimation(
             parent: _ctrl,
             curve: const Interval(0.05, 0.42, curve: Curves.easeOutCubic)));
 
     _oFade = CurvedAnimation(
-        parent: _ctrl, curve: const Interval(0.28, 0.55, curve: Curves.easeOut));
+        parent: _ctrl,
+        curve: const Interval(0.28, 0.55, curve: Curves.easeOut));
     _oSlide = Tween<Offset>(begin: const Offset(1.4, 0), end: Offset.zero)
         .animate(CurvedAnimation(
             parent: _ctrl,
             curve: const Interval(0.28, 0.64, curve: Curves.easeOutCubic)));
 
     _arenaFade = CurvedAnimation(
-        parent: _ctrl, curve: const Interval(0.55, 0.82, curve: Curves.easeOut));
+        parent: _ctrl,
+        curve: const Interval(0.55, 0.82, curve: Curves.easeOut));
     _arenaSlide = Tween<Offset>(begin: const Offset(0, 0.5), end: Offset.zero)
         .animate(CurvedAnimation(
             parent: _ctrl,
@@ -83,8 +86,6 @@ class _IntroScreenState extends State<IntroScreen>
       if (!mounted) return;
       // Warm the auth/setup assets while the intro plays so the next screen
       // paints instantly (no first-frame decode jank).
-      precacheImage(const AssetImage('assets/XO-BACK.png'), context,
-          onError: (_, __) {});
       precacheImage(const AssetImage('assets/xo.webp'), context,
           onError: (_, __) {});
       _runIntroSequence();
@@ -194,38 +195,41 @@ class _IntroScreenState extends State<IntroScreen>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    SlideTransition(
-                      position: _xSlide,
-                      child: FadeTransition(
-                        opacity: _xFade,
-                        child: const SizedBox(
-                          width: 118,
-                          height: 118,
-                          child: CustomPaint(
-                            painter: _GlowXPainter(color: AppPalette.primary),
+                Directionality(
+                  textDirection: TextDirection.ltr,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SlideTransition(
+                        position: _xSlide,
+                        child: FadeTransition(
+                          opacity: _xFade,
+                          child: const SizedBox(
+                            width: 118,
+                            height: 118,
+                            child: CustomPaint(
+                              painter: _GlowXPainter(color: AppPalette.primary),
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 6),
-                    SlideTransition(
-                      position: _oSlide,
-                      child: FadeTransition(
-                        opacity: _oFade,
-                        child: const SizedBox(
-                          width: 118,
-                          height: 118,
-                          child: CustomPaint(
-                            painter:
-                                _GlowOPainter(color: AppPalette.accentPurple),
+                      const SizedBox(width: 6),
+                      SlideTransition(
+                        position: _oSlide,
+                        child: FadeTransition(
+                          opacity: _oFade,
+                          child: const SizedBox(
+                            width: 118,
+                            height: 118,
+                            child: CustomPaint(
+                              painter:
+                                  _GlowOPainter(color: AppPalette.accentPurple),
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
                 const SizedBox(height: 16),
                 SlideTransition(
@@ -313,10 +317,8 @@ class _DriftingXOPainter extends CustomPainter {
       paint.color = (g.isX ? AppPalette.homeCyan : AppPalette.homePurple)
           .withValues(alpha: 0.10);
       if (g.isX) {
-        canvas.drawLine(
-            Offset(cx - r, cy - r), Offset(cx + r, cy + r), paint);
-        canvas.drawLine(
-            Offset(cx + r, cy - r), Offset(cx - r, cy + r), paint);
+        canvas.drawLine(Offset(cx - r, cy - r), Offset(cx + r, cy + r), paint);
+        canvas.drawLine(Offset(cx + r, cy - r), Offset(cx - r, cy + r), paint);
       } else {
         canvas.drawCircle(Offset(cx, cy), r, paint);
       }

@@ -11,6 +11,11 @@ service cloud.firestore {
       return signedIn() && request.auth.uid == uid;
     }
 
+    function deletingOwnAccount(uid) {
+      return isMe(uid)
+        && get(/databases/$(database)/documents/users/$(uid)).data.deletionInProgress == true;
+    }
+
     // Admin check — passes for EITHER:
     //   • token.email == 'adminarena77@gmail.com' (the hardcoded bootstrap admin), OR
     //   • /admins/{uid} doc exists with active == true (new admins onboarded
@@ -41,18 +46,18 @@ service cloud.firestore {
 
     // Temporary no-Cloud-Functions referral fallback:
     // lets the invitee create one verified referral doc, then allows only the
-    // matching referrer's Wallet.coins to increase by exactly 100 coins.
+    // matching referrer's Wallet.coins to increase by exactly 1000 coins.
     function isReferralReferrerCredit(uid) {
       return signedIn()
         && uid != request.auth.uid
         && existsAfter(/databases/$(database)/documents/referrals/$(request.auth.uid))
         && getAfter(/databases/$(database)/documents/referrals/$(request.auth.uid)).data.referrerUid == uid
-        && getAfter(/databases/$(database)/documents/referrals/$(request.auth.uid)).data.rewardAmount == 100
+        && getAfter(/databases/$(database)/documents/referrals/$(request.auth.uid)).data.rewardAmount == 1000
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['Wallet', 'Referral'])
         && resource.data.Wallet is map
         && resource.data.Wallet.coins is int
         && request.resource.data.Wallet is map
-        && request.resource.data.Wallet.coins == resource.data.Wallet.coins + 100
+        && request.resource.data.Wallet.coins == resource.data.Wallet.coins + 1000
         && request.resource.data.Referral is map
         && request.resource.data.Referral.validReferralCount is int
         && request.resource.data.Referral.totalReferralCoinsEarned is int;
@@ -121,19 +126,46 @@ service cloud.firestore {
       // wallet_ledger: immutable audit trail — owner can read and create,
       // but never update or delete. Admin retains full access.
       match /wallet_ledger/{transactionId} {
-        allow read, create: if isMe(uid) || isAdmin();
-        allow update, delete: if isAdmin();
+        allow read: if isMe(uid) || isAdmin();
+        allow create: if isAdmin() || (isMe(uid)
+          && request.resource.data.uid == uid
+          && request.resource.data.transactionId == transactionId
+          && request.resource.data.delta is int
+          && request.resource.data.localCreatedAtMs is int);
+        allow update: if isAdmin();
+        allow delete: if isAdmin() || deletingOwnAccount(uid);
+      }
+
+      match /transactions/{transactionId} {
+        allow read: if isMe(uid) || isAdmin();
+        allow create: if isMe(uid) || isAdmin();
+        allow update: if isAdmin();
+        allow delete: if isAdmin() || deletingOwnAccount(uid);
       }
 
       // ownedAvatars: once unlocked, cannot be revoked by the client.
       match /ownedAvatars/{avatarId} {
         allow read, create: if isMe(uid) || isAdmin();
-        allow update, delete: if isAdmin();
+        allow update: if isAdmin();
+        allow delete: if isAdmin() || deletingOwnAccount(uid);
       }
 
       // Remaining subcollections (onlineRoomHistory, user_logs,
       // transactions, purchase_counts, Arena, etc.) — owner-writable.
-      match /{subPath=**} {
+      match /purchase_counts/{productId} {
+        allow read, create, update: if isMe(uid) || isAdmin();
+        allow delete: if isAdmin() || deletingOwnAccount(uid);
+      }
+      match /onlineRoomHistory/{matchId} {
+        allow read, create, update: if isMe(uid) || isAdmin();
+        allow delete: if isAdmin() || deletingOwnAccount(uid);
+      }
+      match /user_logs/{logId} {
+        allow read, create: if isMe(uid) || isAdmin();
+        allow update: if isAdmin();
+        allow delete: if isAdmin() || deletingOwnAccount(uid);
+      }
+      match /Arena/{document=**} {
         allow read, create, update, delete: if isMe(uid) || isAdmin();
       }
     }
@@ -291,7 +323,7 @@ service cloud.firestore {
         && request.resource.data.referrerUid != request.auth.uid
         && request.resource.data.code is string
         && referralCodeOwnerMatches(request.resource.data.code, request.resource.data.referrerUid)
-        && request.resource.data.rewardAmount == 100
+        && request.resource.data.rewardAmount == 1000
         && !exists(/databases/$(database)/documents/referrals/$(inviteeUid));
       allow update, delete: if isAdmin();
     }
@@ -314,7 +346,7 @@ service cloud.firestore {
         && request.resource.data.referrerUid is string
         && request.resource.data.referrerUid != request.auth.uid
         && request.resource.data.uid == request.resource.data.referrerUid
-        && request.resource.data.coins == 100
+        && request.resource.data.coins == 1000
         && request.resource.data.seen == false;
       allow update: if signedIn()
         && request.auth.uid == resource.data.uid

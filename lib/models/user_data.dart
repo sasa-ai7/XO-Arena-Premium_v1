@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../coins/coins_catalog.dart';
 import 'game_avatar.dart';
+import 'game_emoji.dart';
 
 /// Profile data stored in Firestore.
 class UserProfile {
@@ -37,13 +39,16 @@ class UserProfile {
         'email': email,
         'provider': provider,
         if (createdAt != null) 'createdAt': Timestamp.fromDate(createdAt!),
-        if (lastLoginAt != null) 'lastLoginAt': Timestamp.fromDate(lastLoginAt!),
-        if (welcomeGiftClaimed != null) 'welcomeGiftClaimed': welcomeGiftClaimed,
+        if (lastLoginAt != null)
+          'lastLoginAt': Timestamp.fromDate(lastLoginAt!),
+        if (welcomeGiftClaimed != null)
+          'welcomeGiftClaimed': welcomeGiftClaimed,
         if (photoURL != null) 'photoURL': photoURL,
         if (characterType != null) 'characterType': characterType,
         if (ageVerified != null) 'ageVerified': ageVerified,
         if (minimumAgePassed != null) 'minimumAgePassed': minimumAgePassed,
-        if (ageVerifiedAt != null) 'ageVerifiedAt': Timestamp.fromDate(ageVerifiedAt!),
+        if (ageVerifiedAt != null)
+          'ageVerifiedAt': Timestamp.fromDate(ageVerifiedAt!),
         if (updatedAt != null) 'updatedAt': Timestamp.fromDate(updatedAt!),
       };
 
@@ -128,6 +133,10 @@ class UserCosmetics {
   final List<String> ownedOSkins;
   final String selectedXSkin;
   final String selectedOSkin;
+  // Emoji system — catalog ids. Free emojis are implicitly owned; new
+  // accounts start with the 5 free emojis equipped (resolved at read time).
+  final List<String> ownedEmojis;
+  final List<String> equippedEmojis;
 
   const UserCosmetics({
     required this.xColor,
@@ -143,6 +152,8 @@ class UserCosmetics {
     this.ownedOSkins = const ['default'],
     this.selectedXSkin = 'default',
     this.selectedOSkin = 'default',
+    this.ownedEmojis = const [],
+    this.equippedEmojis = const [],
   });
 
   Map<String, dynamic> toMap() => {
@@ -156,6 +167,8 @@ class UserCosmetics {
         'ownedOSkins': ownedOSkins,
         'selectedXSkin': selectedXSkin,
         'selectedOSkin': selectedOSkin,
+        'ownedEmojis': ownedEmojis,
+        'equippedEmojis': equippedEmojis,
       };
 
   factory UserCosmetics.fromMap(Map<String, dynamic>? m) {
@@ -172,6 +185,8 @@ class UserCosmetics {
         ownedOSkins: ['default'],
         selectedXSkin: 'default',
         selectedOSkin: 'default',
+        ownedEmojis: const [],
+        equippedEmojis: const [],
       );
     }
     final ownedX = m['ownedXColors'];
@@ -179,14 +194,27 @@ class UserCosmetics {
     final ownedAvatarsRaw = m['ownedAvatars'];
     final ownedXSkinsRaw = m['ownedXSkins'];
     final ownedOSkinsRaw = m['ownedOSkins'];
+    final ownedEmojisRaw = m['ownedEmojis'];
+    final equippedEmojisRaw = m['equippedEmojis'];
+
+    List<String> parseEmojiIds(dynamic raw) => raw is List
+        ? raw
+            .map((e) => e.toString())
+            .where(EmojiCatalog.isValidId)
+            .toList()
+        : const <String>[];
 
     final parsedOwnedAvatars = ownedAvatarsRaw is List
-        ? ownedAvatarsRaw.map((e) => (e as num).toInt()).toList()
+        ? ownedAvatarsRaw
+            .map(parseEquippedAvatarId)
+            .where((id) => id > 0)
+            .toSet()
+            .toList()
         : const <int>[];
-    final rawEquipped = (m['equippedAvatar'] as num?)?.toInt() ?? 0;
+    final rawEquipped = parseEquippedAvatarId(m['equippedAvatar']);
     // Sanitize: if the equipped avatar is not actually owned, force 0.
     // Also reset to 0 if the id was removed from the catalog (see
-    // [kRemovedAvatarIds] — currently ids 7 and 8). The owned list is kept
+    // [kRemovedAvatarIds] — currently only id 8). The owned list is kept
     // intact so a future re-introduction wouldn't need a re-grant, but the
     // UI never sees the removed id.
     int equipped;
@@ -219,6 +247,8 @@ class UserCosmetics {
           : const ['default'],
       selectedXSkin: m['selectedXSkin'] as String? ?? 'default',
       selectedOSkin: m['selectedOSkin'] as String? ?? 'default',
+      ownedEmojis: parseEmojiIds(ownedEmojisRaw),
+      equippedEmojis: parseEmojiIds(equippedEmojisRaw),
     );
   }
 }
@@ -298,7 +328,8 @@ class TransactionRecord {
       coins: (m['coins'] as num?)?.toInt() ?? 0,
       type: mapLegacyType(rawType),
       createdAt: (m['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
-      balanceBefore: (m['balanceBefore'] as num?)?.toInt() ?? (m['previousBalance'] as num?)?.toInt(),
+      balanceBefore: (m['balanceBefore'] as num?)?.toInt() ??
+          (m['previousBalance'] as num?)?.toInt(),
       balanceAfter: (m['balanceAfter'] as num?)?.toInt(),
       description: m['description'] as String?,
     );
@@ -361,16 +392,56 @@ class UserData {
     this.settings = const UserSettings(),
   });
 
+  /// Merge the server `Cosmetics` map with `Inventory.avatars` entitlements so
+  /// premium-IAP avatars (written to Inventory by the Cloud Function) are
+  /// treated as owned by the cosmetics pipeline. Returns a plain map suitable
+  /// for [UserCosmetics.fromMap].
+  static Map<String, dynamic> _mergeUserCosmetics({
+    required Object? cosmeticsRaw,
+    required Object? inventoryRaw,
+  }) {
+    final cosmetics = <String, dynamic>{
+      if (cosmeticsRaw is Map)
+        for (final entry in cosmeticsRaw.entries)
+          entry.key.toString(): entry.value,
+    };
+
+    // Collect entitlement-derived avatar ids from Inventory.avatars.
+    final inventoryAvatars =
+        (inventoryRaw is Map) ? inventoryRaw['avatars'] : null;
+    if (inventoryAvatars is List) {
+      final entitlementIds = <int>{};
+      for (final e in inventoryAvatars) {
+        final id = CoinsCatalog.avatarIdForEntitlement(e.toString());
+        if (id != null) entitlementIds.add(id);
+      }
+      if (entitlementIds.isNotEmpty) {
+        final owned = <int>{};
+        final existing = cosmetics['ownedAvatars'];
+        if (existing is List) {
+          for (final v in existing) {
+            final n = v is int ? v : int.tryParse(v.toString());
+            if (n != null) owned.add(n);
+          }
+        }
+        owned.addAll(entitlementIds);
+        cosmetics['ownedAvatars'] = owned.toList()..sort();
+      }
+    }
+    return cosmetics;
+  }
+
   factory UserData.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>? ?? {};
-    // Dual-key read: new documents use 'Inventory', legacy documents use 'Cosmetics'.
-    final inventoryMap =
-        (data['Inventory'] ?? data['Cosmetics']) as Map<String, dynamic>?;
+    final cosmeticsMap = _mergeUserCosmetics(
+      cosmeticsRaw: data['Cosmetics'],
+      inventoryRaw: data['Inventory'],
+    );
     return UserData(
       profile: UserProfile.fromMap(data['Profile'] as Map<String, dynamic>?),
       wallet: UserWallet.fromMap(data['Wallet'] as Map<String, dynamic>?),
       stats: UserStats.fromMap(data['Stats'] as Map<String, dynamic>?),
-      cosmetics: UserCosmetics.fromMap(inventoryMap),
+      cosmetics: UserCosmetics.fromMap(cosmeticsMap),
       progress: UserProgress.fromMap(data['Progress'] as Map<String, dynamic>?),
       settings: UserSettings.fromMap(data['Settings'] as Map<String, dynamic>?),
     );

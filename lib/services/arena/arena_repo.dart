@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../models/arena/arena_room.dart';
 import '../app_mode_service.dart';
+import '../connectivity_service.dart';
 import 'arena_room_code.dart';
 
 /// Errors returned by [ArenaRepo] in user-facing flows.
@@ -23,6 +24,10 @@ enum ArenaJoinError {
   kickedCooldown,
   networkTimeout,
   unknown,
+}
+
+class ArenaOfflineException implements Exception {
+  const ArenaOfflineException();
 }
 
 class ArenaJoinResult {
@@ -293,9 +298,8 @@ class ArenaRepo {
     int last = room.updatedAt;
     for (final entry in room.playersPresence.values) {
       final ls = entry['lastSeenMs'];
-      final v = ls is num
-          ? ls.toInt()
-          : int.tryParse(ls?.toString() ?? '') ?? 0;
+      final v =
+          ls is num ? ls.toInt() : int.tryParse(ls?.toString() ?? '') ?? 0;
       if (v > last) last = v;
     }
     return last;
@@ -306,9 +310,8 @@ class ArenaRepo {
   /// governed by the 10-minute creation TTL ([kArenaRoomTtlMs]) instead and
   /// always return false here. Terminal rooms are never "stale" (already done).
   bool isRoomStaleByInactivity(ArenaRoom room) {
-    final occupied =
-        (room.guestUid != null && room.guestUid!.isNotEmpty) ||
-            room.status != 'waiting';
+    final occupied = (room.guestUid != null && room.guestUid!.isNotEmpty) ||
+        room.status != 'waiting';
     if (!occupied) return false;
     const terminal = <String>{
       'finished',
@@ -339,7 +342,8 @@ class ArenaRepo {
       return const ActiveRoomCheck(ActiveRoomValidity.none);
     }
 
-    Future<ActiveRoomCheck> clearAnd(ActiveRoomValidity v, String reason) async {
+    Future<ActiveRoomCheck> clearAnd(
+        ActiveRoomValidity v, String reason) async {
       await clearActiveRoomMirror(uid);
       if (kDebugMode) {
         debugPrint('[ARENA_ACTIVE_ROOM] cleared reason=$reason uid=$uid '
@@ -357,13 +361,20 @@ class ArenaRepo {
 
     final status = room.status;
     final now = DateTime.now().millisecondsSinceEpoch;
-    if (status == 'finished') return clearAnd(ActiveRoomValidity.finished, 'finished');
-    if (status == 'cancelled') return clearAnd(ActiveRoomValidity.cancelled, 'cancelled');
-    if (status == 'abandoned') return clearAnd(ActiveRoomValidity.abandoned, 'abandoned');
-    if (status == 'expired') return clearAnd(ActiveRoomValidity.expired, 'expired');
-    final occupied =
-        (room.guestUid != null && room.guestUid!.isNotEmpty) ||
-            room.status != 'waiting';
+    if (status == 'finished') {
+      return clearAnd(ActiveRoomValidity.finished, 'finished');
+    }
+    if (status == 'cancelled') {
+      return clearAnd(ActiveRoomValidity.cancelled, 'cancelled');
+    }
+    if (status == 'abandoned') {
+      return clearAnd(ActiveRoomValidity.abandoned, 'abandoned');
+    }
+    if (status == 'expired') {
+      return clearAnd(ActiveRoomValidity.expired, 'expired');
+    }
+    final occupied = (room.guestUid != null && room.guestUid!.isNotEmpty) ||
+        room.status != 'waiting';
     // Empty waiting room: 10-minute creation TTL. Occupied room: 20-minute
     // inactivity TTL (a long match must not be killed by the creation TTL).
     if (!occupied && room.expiresAt > 0 && now > room.expiresAt) {
@@ -410,6 +421,10 @@ class ArenaRepo {
     required int betAmount,
     Map<String, dynamic>? hostProfile,
   }) async {
+    if (!AppModeService.canUseOnlineServices ||
+        !ConnectivityService().isOnline.value) {
+      throw const ArenaOfflineException();
+    }
     final uid = _uid;
     if (uid == null) {
       throw StateError('Not signed in.');
@@ -502,8 +517,14 @@ class ArenaRepo {
     int? joinerCoins,
     Map<String, dynamic>? guestProfile,
   }) async {
+    if (!AppModeService.canUseOnlineServices ||
+        !ConnectivityService().isOnline.value) {
+      return const ArenaJoinResult.failure(ArenaJoinError.networkTimeout);
+    }
     final uid = _uid;
-    if (uid == null) return const ArenaJoinResult.failure(ArenaJoinError.unknown);
+    if (uid == null) {
+      return const ArenaJoinResult.failure(ArenaJoinError.unknown);
+    }
     if (kDebugMode) debugPrint('[ARENA] join attempt code=$code');
 
     // Validate any saved active-room pointer BEFORE the guard. A kicked /
@@ -535,32 +556,42 @@ class ArenaRepo {
       if (kDebugMode) debugPrint('[ARENA] join read timeout code=$code');
       return const ArenaJoinResult.failure(ArenaJoinError.networkTimeout);
     }
-    if (kDebugMode) debugPrint('[ARENA] join room exists=${preSnap.exists} code=$code');
+    if (kDebugMode) {
+      debugPrint('[ARENA] join room exists=${preSnap.exists} code=$code');
+    }
     if (!preSnap.exists) {
-      if (kDebugMode) debugPrint('[ARENA] join failed code=$code reason=notFound');
+      if (kDebugMode) {
+        debugPrint('[ARENA] join failed code=$code reason=notFound');
+      }
       return const ArenaJoinResult.failure(ArenaJoinError.notFound);
     }
     final raw = _asRoomMap(preSnap.value);
     if (raw == null) {
-      if (kDebugMode) debugPrint('[ARENA] join failed code=$code reason=corruptOrMissing');
+      if (kDebugMode) {
+        debugPrint('[ARENA] join failed code=$code reason=corruptOrMissing');
+      }
       return const ArenaJoinResult.failure(ArenaJoinError.notFound);
     }
     final now = DateTime.now().millisecondsSinceEpoch;
     final expiresAt = (raw['expiresAt'] as num?)?.toInt() ?? 0;
     if (expiresAt > 0 && now > expiresAt) {
-      if (kDebugMode) debugPrint('[ARENA] join failed code=$code reason=expired expiresAt=$expiresAt now=$now');
+      if (kDebugMode) {
+        debugPrint(
+            '[ARENA] join failed code=$code reason=expired expiresAt=$expiresAt now=$now');
+      }
       return const ArenaJoinResult.failure(ArenaJoinError.expired);
     }
     final hostUid = (raw['hostUid'] ?? '').toString();
     if (hostUid == uid) {
-      if (kDebugMode) debugPrint('[ARENA] join failed code=$code reason=selfJoin');
+      if (kDebugMode) {
+        debugPrint('[ARENA] join failed code=$code reason=selfJoin');
+      }
       return const ArenaJoinResult.failure(ArenaJoinError.selfJoin);
     }
     // Kick-cooldown guard. The host only writes `kickedUsers/<uid>` entries
     // when removing this specific guest, so the check is per-room.
-    final kickedEntry = (raw['kickedUsers'] is Map)
-        ? ((raw['kickedUsers'] as Map)[uid])
-        : null;
+    final kickedEntry =
+        (raw['kickedUsers'] is Map) ? ((raw['kickedUsers'] as Map)[uid]) : null;
     if (kickedEntry is Map) {
       final untilMs = (kickedEntry['untilMs'] as num?)?.toInt() ?? 0;
       if (untilMs > now) {
@@ -577,12 +608,18 @@ class ArenaRepo {
     }
     final status = (raw['status'] ?? 'waiting').toString();
     if (status != 'waiting') {
-      if (kDebugMode) debugPrint('[ARENA] join failed code=$code reason=notWaiting status=$status');
+      if (kDebugMode) {
+        debugPrint(
+            '[ARENA] join failed code=$code reason=notWaiting status=$status');
+      }
       return const ArenaJoinResult.failure(ArenaJoinError.notWaiting);
     }
     final existingGuest = raw['guestUid'] as String?;
     if (existingGuest != null && existingGuest.isNotEmpty) {
-      if (kDebugMode) debugPrint('[ARENA] join failed code=$code reason=full guest=$existingGuest');
+      if (kDebugMode) {
+        debugPrint(
+            '[ARENA] join failed code=$code reason=full guest=$existingGuest');
+      }
       return const ArenaJoinResult.failure(ArenaJoinError.full);
     }
     // Wallet check for betting rooms.
@@ -590,7 +627,10 @@ class ArenaRepo {
     final betAmount = (raw['betAmount'] as num?)?.toInt() ?? 0;
     if (betEnabled && betAmount > 0 && joinerCoins != null) {
       if (joinerCoins < betAmount) {
-        if (kDebugMode) debugPrint('[ARENA] join failed code=$code reason=notEnoughCoins balance=$joinerCoins bet=$betAmount');
+        if (kDebugMode) {
+          debugPrint(
+              '[ARENA] join failed code=$code reason=notEnoughCoins balance=$joinerCoins bet=$betAmount');
+        }
         return const ArenaJoinResult.failure(ArenaJoinError.notEnoughCoins);
       }
     }
@@ -610,42 +650,42 @@ class ArenaRepo {
     if (kDebugMode) debugPrint('[ARENA] join transaction starting code=$code');
     final txn = await _withTimeoutOrNull(
       ref.runTransaction((current) {
-      if (current == null) {
-        // No cached snapshot yet; let Firebase retry with server data. We
-        // return success(current) so the transaction stays pending until the
-        // server value arrives, instead of aborting outright.
-        return Transaction.success(current);
-      }
-      if (current is! Map) {
-        // Corrupt node (e.g. a leftover string at /rooms/{code}). Abort so
-        // the outer recheck path surfaces a clean notFound instead of
-        // throwing a TypeError that the caller would see as a timeout.
-        return Transaction.abort();
-      }
-      final map = Map<dynamic, dynamic>.from(current);
-      final g = (map['guestUid'] ?? '').toString();
-      final h = (map['hostUid'] ?? '').toString();
-      // Re-entry by the same user (host or guest) is a no-op success.
-      if (g == uid || h == uid) {
+        if (current == null) {
+          // No cached snapshot yet; let Firebase retry with server data. We
+          // return success(current) so the transaction stays pending until the
+          // server value arrives, instead of aborting outright.
+          return Transaction.success(current);
+        }
+        if (current is! Map) {
+          // Corrupt node (e.g. a leftover string at /rooms/{code}). Abort so
+          // the outer recheck path surfaces a clean notFound instead of
+          // throwing a TypeError that the caller would see as a timeout.
+          return Transaction.abort();
+        }
+        final map = Map<dynamic, dynamic>.from(current);
+        final g = (map['guestUid'] ?? '').toString();
+        final h = (map['hostUid'] ?? '').toString();
+        // Re-entry by the same user (host or guest) is a no-op success.
+        if (g == uid || h == uid) {
+          return Transaction.success(map);
+        }
+        if (g.isNotEmpty) return Transaction.abort();
+        map['guestUid'] = uid;
+        map['guestName'] = guestName;
+        map['guestPhoto'] = guestPhoto;
+        map['guestReady'] = false;
+        map['status'] = 'waiting';
+        map['updatedAt'] = ServerValue.timestamp;
+        // Bind whichever X/O slot was reserved for the guest.
+        if (map['xUid'] == '__pending__') map['xUid'] = uid;
+        if (map['oUid'] == '__pending__') map['oUid'] = uid;
+        // Add guest profile entry under players.
+        final players = Map<dynamic, dynamic>.from(
+            (map['players'] as Map?) ?? const <dynamic, dynamic>{});
+        players[uid] = guestPlayerEntry;
+        map['players'] = players;
         return Transaction.success(map);
-      }
-      if (g.isNotEmpty) return Transaction.abort();
-      map['guestUid'] = uid;
-      map['guestName'] = guestName;
-      map['guestPhoto'] = guestPhoto;
-      map['guestReady'] = false;
-      map['status'] = 'waiting';
-      map['updatedAt'] = ServerValue.timestamp;
-      // Bind whichever X/O slot was reserved for the guest.
-      if (map['xUid'] == '__pending__') map['xUid'] = uid;
-      if (map['oUid'] == '__pending__') map['oUid'] = uid;
-      // Add guest profile entry under players.
-      final players = Map<dynamic, dynamic>.from(
-          (map['players'] as Map?) ?? const <dynamic, dynamic>{});
-      players[uid] = guestPlayerEntry;
-      map['players'] = players;
-      return Transaction.success(map);
-    }),
+      }),
       timeout: const Duration(seconds: 8),
       label: 'joinRoom.tx1',
     );
@@ -655,14 +695,18 @@ class ArenaRepo {
       return const ArenaJoinResult.failure(ArenaJoinError.networkTimeout);
     }
     if (kDebugMode) {
-      debugPrint('[ARENA] join transaction committed=${txn.committed} code=$code');
+      debugPrint(
+          '[ARENA] join transaction committed=${txn.committed} code=$code');
     }
 
     if (!txn.committed) {
       // Distinguish "genuine full" from "transient transaction abort" by
       // re-reading server state. Only surface `full` when the room truly has
       // a different guest. This eliminates the false first-tap "Room is full".
-      if (kDebugMode) debugPrint('[ARENA] join txn not committed, re-checking server state code=$code');
+      if (kDebugMode) {
+        debugPrint(
+            '[ARENA] join txn not committed, re-checking server state code=$code');
+      }
       final recheck = await _withTimeoutOrNull(
         ref.get(),
         timeout: const Duration(seconds: 6),
@@ -677,19 +721,26 @@ class ArenaRepo {
       }
       final rmap = _asRoomMap(recheck.value);
       if (rmap == null) {
-        if (kDebugMode) debugPrint('[ARENA] join failed code=$code reason=corruptOrMissing (recheck)');
+        if (kDebugMode) {
+          debugPrint(
+              '[ARENA] join failed code=$code reason=corruptOrMissing (recheck)');
+        }
         return const ArenaJoinResult.failure(ArenaJoinError.notFound);
       }
       final g2 = (rmap['guestUid'] ?? '').toString();
       final h2 = (rmap['hostUid'] ?? '').toString();
       if (g2 == uid || h2 == uid) {
         await _setActiveRoomMirror(uid, code);
-        if (kDebugMode) debugPrint('[ARENA] joined room via recheck code=$code');
+        if (kDebugMode) {
+          debugPrint('[ARENA] joined room via recheck code=$code');
+        }
         return ArenaJoinResult.success(ArenaRoom.fromMap(rmap));
       }
       if (g2.isEmpty) {
         // Transient abort (local cache miss). Retry once.
-        if (kDebugMode) debugPrint('[ARENA] retrying join after transient abort code=$code');
+        if (kDebugMode) {
+          debugPrint('[ARENA] retrying join after transient abort code=$code');
+        }
         final retry = await _withTimeoutOrNull(
           ref.runTransaction((current) {
             if (current == null) return Transaction.success(current);
@@ -746,7 +797,10 @@ class ArenaRepo {
     }
     final newMap = _asRoomMap(newSnap.value);
     if (newMap == null) {
-      if (kDebugMode) debugPrint('[ARENA] join failed code=$code reason=corruptOrMissing (postSnap)');
+      if (kDebugMode) {
+        debugPrint(
+            '[ARENA] join failed code=$code reason=corruptOrMissing (postSnap)');
+      }
       return const ArenaJoinResult.failure(ArenaJoinError.notFound);
     }
     await _setActiveRoomMirror(uid, code);
@@ -761,18 +815,27 @@ class ArenaRepo {
     required bool isHost,
     required bool ready,
   }) async {
+    if (!AppModeService.canUseOnlineServices ||
+        !ConnectivityService().isOnline.value) {
+      throw const ArenaOfflineException();
+    }
     final field = isHost ? 'hostReady' : 'guestReady';
     await _roomsRef.child(code).update(<String, Object?>{
       field: ready,
       'updatedAt': ServerValue.timestamp,
     });
     if (kDebugMode) {
-      debugPrint('[ARENA] ${isHost ? "host" : "guest"} ready=$ready code=$code');
+      debugPrint(
+          '[ARENA] ${isHost ? "host" : "guest"} ready=$ready code=$code');
     }
   }
 
   /// Move from waiting → countdown. Picks the starting turn (X always starts).
   Future<void> startCountdown({required ArenaRoom room}) async {
+    if (!AppModeService.canUseOnlineServices ||
+        !ConnectivityService().isOnline.value) {
+      throw const ArenaOfflineException();
+    }
     final firstTurn = room.xUid;
     await _roomsRef.child(room.roomCode).update(<String, Object?>{
       'status': 'countdown',
@@ -787,6 +850,10 @@ class ArenaRepo {
 
   /// Countdown finished → gameplay.
   Future<void> startPlaying({required String code}) async {
+    if (!AppModeService.canUseOnlineServices ||
+        !ConnectivityService().isOnline.value) {
+      throw const ArenaOfflineException();
+    }
     await _roomsRef.child(code).update(<String, Object?>{
       'status': 'playing',
       'updatedAt': ServerValue.timestamp,
@@ -956,7 +1023,8 @@ class ArenaRepo {
       final currentVersion = (map['roundVersion'] as num?)?.toInt() ?? 0;
       if (currentVersion != expectedRoundVersion) {
         if (kDebugMode) {
-          debugPrint('[ARENA_PHASE_B] transaction abort reason=version_mismatch '
+          debugPrint(
+              '[ARENA_PHASE_B] transaction abort reason=version_mismatch '
               'expected=$expectedRoundVersion actual=$currentVersion');
         }
         return Transaction.abort();
@@ -1008,6 +1076,134 @@ class ArenaRepo {
     if (kDebugMode) {
       debugPrint('[ARENA] room finished winner=$roomWinnerUid');
     }
+  }
+
+  /// Creates one room-level reconnect grace window. The transaction prevents
+  /// both clients from racing to replace an already-active window.
+  Future<bool> startDisconnectGrace({
+    required String code,
+    required String disconnectedUid,
+    Duration grace = const Duration(minutes: 2),
+  }) async {
+    final caller = _uid;
+    if (caller == null || caller == disconnectedUid) return false;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final result = await _roomsRef.child(code).runTransaction((current) {
+      final raw = _asRoomMap(current);
+      if (raw == null) return Transaction.abort();
+      final host = (raw['hostUid'] ?? '').toString();
+      final guest = (raw['guestUid'] ?? '').toString();
+      if (caller != host && caller != guest) return Transaction.abort();
+      if (disconnectedUid != host && disconnectedUid != guest) {
+        return Transaction.abort();
+      }
+      final status = (raw['status'] ?? '').toString();
+      if (!const <String>{
+        'waiting',
+        'ready',
+        'countdown',
+        'playing',
+        'round_end'
+      }.contains(status)) {
+        return Transaction.abort();
+      }
+      final activeUid = (raw['disconnectUid'] ?? '').toString();
+      final deadline = (raw['disconnectDeadlineAt'] as num?)?.toInt() ?? 0;
+      if (activeUid.isNotEmpty && deadline > now) return Transaction.abort();
+      raw['disconnectUid'] = disconnectedUid;
+      raw['disconnectStartedAt'] = now;
+      raw['disconnectDeadlineAt'] = now + grace.inMilliseconds;
+      raw['disconnectResolved'] = false;
+      raw['updatedAt'] = ServerValue.timestamp;
+      return Transaction.success(raw);
+    });
+    return result.committed;
+  }
+
+  /// Clears the grace window only when it still belongs to [reconnectedUid].
+  Future<bool> clearDisconnectGrace({
+    required String code,
+    required String reconnectedUid,
+  }) async {
+    final caller = _uid;
+    if (caller == null) return false;
+    final result = await _roomsRef.child(code).runTransaction((current) {
+      final raw = _asRoomMap(current);
+      if (raw == null) return Transaction.abort();
+      final host = (raw['hostUid'] ?? '').toString();
+      final guest = (raw['guestUid'] ?? '').toString();
+      if (caller != host && caller != guest) return Transaction.abort();
+      if ((raw['disconnectUid'] ?? '').toString() != reconnectedUid) {
+        return Transaction.abort();
+      }
+      raw.remove('disconnectUid');
+      raw.remove('disconnectStartedAt');
+      raw.remove('disconnectDeadlineAt');
+      raw['disconnectResolved'] = true;
+      raw['updatedAt'] = ServerValue.timestamp;
+      return Transaction.success(raw);
+    });
+    return result.committed;
+  }
+
+  /// Atomically awards a disconnect forfeit after the grace deadline. Every
+  /// precondition is rechecked inside RTDB, making duplicate timeout calls safe.
+  Future<bool> finishRoomByDisconnectForfeit({
+    required String code,
+    required String disconnectedUid,
+    required String winnerUid,
+  }) async {
+    final caller = _uid;
+    if (caller == null || caller != winnerUid) return false;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final result = await _roomsRef.child(code).runTransaction((current) {
+      final raw = _asRoomMap(current);
+      if (raw == null) return Transaction.abort();
+      final host = (raw['hostUid'] ?? '').toString();
+      final guest = (raw['guestUid'] ?? '').toString();
+      if (winnerUid != host && winnerUid != guest) return Transaction.abort();
+      if (disconnectedUid != host && disconnectedUid != guest) {
+        return Transaction.abort();
+      }
+      if ((winnerUid == host ? guest : host) != disconnectedUid) {
+        return Transaction.abort();
+      }
+      final status = (raw['status'] ?? '').toString();
+      if (!const <String>{
+        'waiting',
+        'ready',
+        'countdown',
+        'playing',
+        'round_end'
+      }.contains(status)) {
+        return Transaction.abort();
+      }
+      if ((raw['disconnectUid'] ?? '').toString() != disconnectedUid ||
+          raw['disconnectResolved'] == true) {
+        return Transaction.abort();
+      }
+      final deadline = (raw['disconnectDeadlineAt'] as num?)?.toInt() ?? 0;
+      if (deadline <= 0 || now < deadline) return Transaction.abort();
+      final presence = raw['playersPresence'];
+      if (presence is Map) {
+        final entry = presence[disconnectedUid];
+        if (entry is Map && (entry['state'] ?? '').toString() == 'online') {
+          final lastSeen = (entry['lastSeenMs'] as num?)?.toInt() ?? 0;
+          if (now - lastSeen <= 10000) return Transaction.abort();
+        }
+      }
+      raw['status'] = 'finished';
+      raw['roomWinnerUid'] = winnerUid;
+      raw['result'] = 'disconnect_forfeit';
+      raw['finalResult'] = 'disconnect_forfeit';
+      raw['loserUid'] = disconnectedUid;
+      raw['leftByUid'] = disconnectedUid;
+      raw['finishedAt'] = ServerValue.timestamp;
+      raw['updatedAt'] = ServerValue.timestamp;
+      raw['disconnectResolved'] = true;
+      return Transaction.success(raw);
+    });
+    return result.committed;
   }
 
   /// Host writes the final round result AND the match finish in ONE atomic
@@ -1068,21 +1264,29 @@ class ArenaRepo {
   /// message instead of a generic "Could not kick player" toast.
   Future<ArenaKickResult> kickGuest({required String code}) async {
     final uid = _uid;
-    if (uid == null) return const ArenaKickResult.fail(ArenaKickFailure.notHost);
+    if (uid == null) {
+      return const ArenaKickResult.fail(ArenaKickFailure.notHost);
+    }
     final ref = _roomsRef.child(code);
     final snap = await _withTimeoutOrNull(ref.get(),
         timeout: const Duration(seconds: 5), label: 'kickGuest.read');
     if (snap == null) {
-      if (kDebugMode) debugPrint('[ARENA_KICK] failed step=read reason=network');
+      if (kDebugMode) {
+        debugPrint('[ARENA_KICK] failed step=read reason=network');
+      }
       return const ArenaKickResult.fail(ArenaKickFailure.network);
     }
     if (!snap.exists) {
-      if (kDebugMode) debugPrint('[ARENA_KICK] failed step=read reason=no_room');
+      if (kDebugMode) {
+        debugPrint('[ARENA_KICK] failed step=read reason=no_room');
+      }
       return const ArenaKickResult.fail(ArenaKickFailure.unknown);
     }
     final raw = _asRoomMap(snap.value);
     if (raw == null) {
-      if (kDebugMode) debugPrint('[ARENA_KICK] failed step=read reason=bad_shape');
+      if (kDebugMode) {
+        debugPrint('[ARENA_KICK] failed step=read reason=bad_shape');
+      }
       return const ArenaKickResult.fail(ArenaKickFailure.unknown);
     }
     final hostUid = (raw['hostUid'] ?? '').toString();
@@ -1096,7 +1300,8 @@ class ArenaRepo {
     final guestUid = (raw['guestUid'] ?? '').toString();
     if (guestUid.isEmpty) {
       if (kDebugMode) {
-        debugPrint('[ARENA_KICK] failed step=preflight reason=noGuest code=$code');
+        debugPrint(
+            '[ARENA_KICK] failed step=preflight reason=noGuest code=$code');
       }
       return const ArenaKickResult.fail(ArenaKickFailure.noGuest);
     }
@@ -1162,7 +1367,8 @@ class ArenaRepo {
               : ArenaKickFailure.unknown);
       if (kDebugMode) {
         if (e.code == 'permission-denied') {
-          debugPrint('[RTDB_DENIED] op=kickGuest room=$code error=${e.message}');
+          debugPrint(
+              '[RTDB_DENIED] op=kickGuest room=$code error=${e.message}');
         }
         debugPrint('[ARENA_KICK] failed step=write_multipath '
             'reason=$reason error=${e.code}:${e.message}');
@@ -1196,7 +1402,8 @@ class ArenaRepo {
         'updatedAt': ServerValue.timestamp,
       }).timeout(const Duration(seconds: 5));
       if (kDebugMode) {
-        debugPrint('[ARENA] match cancelled-with-refund room=$code by=$selfUid');
+        debugPrint(
+            '[ARENA] match cancelled-with-refund room=$code by=$selfUid');
       }
     } catch (e) {
       if (kDebugMode) debugPrint('[ARENA] cancelMatchWithRefund failed: $e');
@@ -1253,7 +1460,8 @@ class ArenaRepo {
   /// Default grace period is 25 seconds.
   Future<void> setCleanupAfter(String code,
       {Duration grace = const Duration(seconds: 25)}) async {
-    final cleanupAt = DateTime.now().millisecondsSinceEpoch + grace.inMilliseconds;
+    final cleanupAt =
+        DateTime.now().millisecondsSinceEpoch + grace.inMilliseconds;
     try {
       await _roomsRef.child(code).update(<String, Object?>{
         'cleanupAfter': cleanupAt,
@@ -1291,7 +1499,8 @@ class ArenaRepo {
         final hostUid = (raw['hostUid'] ?? '').toString();
         if (hostUid.isNotEmpty && hostUid != uid) {
           if (kDebugMode) {
-            debugPrint('[ARENA] cancel skipped — caller is not host room=$code');
+            debugPrint(
+                '[ARENA] cancel skipped — caller is not host room=$code');
           }
           await clearActiveRoomMirror(uid);
           return;
@@ -1315,7 +1524,8 @@ class ArenaRepo {
         return;
       } catch (e) {
         if (kDebugMode) {
-          debugPrint('[ARENA] cancel remove failed, falling back to status=cancelled: $e');
+          debugPrint(
+              '[ARENA] cancel remove failed, falling back to status=cancelled: $e');
         }
       }
     }
@@ -1348,7 +1558,9 @@ class ArenaRepo {
   Future<void> leaveRoomAsGuest(String code) async {
     final uid = _uid;
     if (uid == null) return;
-    if (kDebugMode) debugPrint('[ARENA] guest leave requested room=$code uid=$uid');
+    if (kDebugMode) {
+      debugPrint('[ARENA] guest leave requested room=$code uid=$uid');
+    }
     final ref = _roomsRef.child(code);
     try {
       final snap = await ref.get().timeout(const Duration(seconds: 5));
@@ -1358,11 +1570,13 @@ class ArenaRepo {
       }
       final raw = _asRoomMap(snap.value) ?? const <dynamic, dynamic>{};
       final status = (raw['status'] ?? 'waiting').toString();
-      final beforePlay =
-          status == 'waiting' || status == 'ready';
+      final beforePlay = status == 'waiting' || status == 'ready';
       if (beforePlay) {
         try {
-          await ref.child('guestUid').set(null).timeout(const Duration(seconds: 5));
+          await ref
+              .child('guestUid')
+              .set(null)
+              .timeout(const Duration(seconds: 5));
           await ref.child('guestName').set(null);
           await ref.child('guestPhoto').set(null);
           await ref.child('guestReady').set(false);

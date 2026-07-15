@@ -265,6 +265,22 @@
           ".validate": "!newData.exists() || newData.isNumber()"
         },
 
+        "disconnectUid": {
+          ".validate": "!newData.exists() || (newData.isString() && (newData.val() == newData.parent().child('hostUid').val() || newData.val() == newData.parent().child('guestUid').val()))"
+        },
+
+        "disconnectStartedAt": {
+          ".validate": "!newData.exists() || newData.isNumber()"
+        },
+
+        "disconnectDeadlineAt": {
+          ".validate": "!newData.exists() || (newData.isNumber() && newData.val() >= newData.parent().child('disconnectStartedAt').val())"
+        },
+
+        "disconnectResolved": {
+          ".validate": "!newData.exists() || newData.isBoolean()"
+        },
+
         "_hostLeftAt": {
           ".write": "auth != null && data.parent().child('hostUid').val() == auth.uid",
           ".validate": "!newData.exists() || newData.isNumber()"
@@ -431,6 +447,46 @@
 
             "$other": {
               ".validate": true
+            }
+          }
+        },
+
+        "chatSignals": {
+          "$uid": {
+            ".read": "auth != null && (data.parent().parent().child('hostUid').val() == auth.uid || data.parent().parent().child('guestUid').val() == auth.uid)",
+            ".write": "auth != null && auth.uid == $uid && (data.parent().parent().child('hostUid').val() == auth.uid || data.parent().parent().child('guestUid').val() == auth.uid)",
+            ".validate": "!newData.exists() || ($uid == auth.uid && (newData.parent().parent().child('hostUid').val() == auth.uid || newData.parent().parent().child('guestUid').val() == auth.uid) && (newData.parent().parent().child('status').val() == 'waiting' || newData.parent().parent().child('status').val() == 'ready' || newData.parent().parent().child('status').val() == 'countdown' || newData.parent().parent().child('status').val() == 'playing' || newData.parent().parent().child('status').val() == 'round_end') && newData.hasChildren(['type','senderUid','senderName','payload','sentAtMs','clientSentAtMs','nonce']) && newData.child('senderUid').val() == auth.uid && newData.child('senderUid').val() == $uid && newData.child('senderName').isString() && newData.child('senderName').val().length > 0 && newData.child('senderName').val().length <= 40 && newData.child('payload').isString() && newData.child('payload').val().length > 0 && newData.child('payload').val().length <= 120 && newData.child('sentAtMs').isNumber() && newData.child('clientSentAtMs').isNumber() && newData.child('nonce').isString() && newData.child('nonce').val().length > 0 && newData.child('nonce').val().length <= 40 && ((newData.child('type').val() == 'message') || (newData.child('type').val() == 'emoji' && newData.child('payload').val().matches(/^[a-z0-9_]{1,40}$/))))",
+
+            "type": {
+              ".validate": "newData.isString() && (newData.val() == 'message' || newData.val() == 'emoji')"
+            },
+
+            "senderUid": {
+              ".validate": "newData.isString() && newData.val() == auth.uid && newData.val() == $uid"
+            },
+
+            "senderName": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 40"
+            },
+
+            "payload": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 120"
+            },
+
+            "sentAtMs": {
+              ".validate": "newData.isNumber()"
+            },
+
+            "clientSentAtMs": {
+              ".validate": "newData.isNumber()"
+            },
+
+            "nonce": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 40"
+            },
+
+            "$other": {
+              ".validate": false
             }
           }
         },

@@ -86,9 +86,19 @@ class AuditService {
     } catch (e) {
       final lower = e.toString().toLowerCase();
       if (lower.contains('permission-denied')) {
-        // Permanent auth error — discard queue, do not retry
         _pendingQueue.clear();
-        if (kDebugMode) debugPrint('[AUDIT] permission-denied, queue cleared');
+        _auditBlockedUntil = DateTime.now().add(const Duration(hours: 1));
+        if (kDebugMode) {
+          debugPrint('[AUDIT] permission-denied, blocked for 1h');
+        }
+      } else if (lower.contains('unavailable') ||
+          lower.contains('unknownhost') ||
+          lower.contains('deadline')) {
+        _pendingQueue.insertAll(0, queueToWrite);
+        _auditBlockedUntil = DateTime.now().add(const Duration(minutes: 2));
+        if (kDebugMode) {
+          debugPrint('[AUDIT] network error, backing off 2min: $e');
+        }
       } else {
         _pendingQueue.insertAll(0, queueToWrite);
         if (kDebugMode) debugPrint('[AUDIT] Flush failed, events re-queued: $e');

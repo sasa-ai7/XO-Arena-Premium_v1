@@ -141,7 +141,7 @@ class _AccountCharacterSelectScreenState
                               Expanded(
                                 child: _CharacterCard(
                                   label: l10n.male,
-                                  imagePath: 'assets/account/man.png',
+                                  imagePath: 'assets/account/man.webp',
                                   isSelected: _selectedCharacterType == 'male',
                                   onTap: () => _selectCharacter('male'),
                                 ),
@@ -150,7 +150,7 @@ class _AccountCharacterSelectScreenState
                               Expanded(
                                 child: _CharacterCard(
                                   label: l10n.female,
-                                  imagePath: 'assets/account/feminine.png',
+                                  imagePath: 'assets/account/feminine.webp',
                                   isSelected:
                                       _selectedCharacterType == 'female',
                                   onTap: () => _selectCharacter('female'),

@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import '../core/app_l10n.dart';
 import '../core/app_theme.dart';
 import '../services/app_mode_service.dart';
+import '../services/wallet_history_service.dart';
 import '../widgets/app_ui.dart';
 
 /// Read-only screen showing all safe user account data from Firestore.
@@ -59,19 +60,15 @@ class AccountDetailsScreen extends StatelessWidget {
                 return Center(
                   child: Text(
                     AppL10n.of(context).errorLoadingAccount,
-                    style: bodyFont(context)
-                        .copyWith(color: AppPalette.danger),
+                    style: bodyFont(context).copyWith(color: AppPalette.danger),
                   ),
                 );
               }
 
               final data = snapshot.data?.data() ?? {};
-              final profile =
-                  (data['Profile'] as Map<String, dynamic>?) ?? {};
-              final wallet =
-                  (data['Wallet'] as Map<String, dynamic>?) ?? {};
-              final stats =
-                  (data['Stats'] as Map<String, dynamic>?) ?? {};
+              final profile = (data['Profile'] as Map<String, dynamic>?) ?? {};
+              final wallet = (data['Wallet'] as Map<String, dynamic>?) ?? {};
+              final stats = (data['Stats'] as Map<String, dynamic>?) ?? {};
               final inventory =
                   (data['Inventory'] as Map<String, dynamic>?) ?? {};
 
@@ -232,11 +229,9 @@ class AccountDetailsScreen extends StatelessWidget {
 
   // ── Helpers ──────────────────────────────────────────────────────────────
 
-  static String? _str(dynamic v) =>
-      v?.toString();
+  static String? _str(dynamic v) => v?.toString();
 
-  static String _num(dynamic v) =>
-      (v as num?)?.toInt().toString() ?? '0';
+  static String _num(dynamic v) => (v as num?)?.toInt().toString() ?? '0';
 
   static String _fmtCoins(dynamic v) {
     final n = (v as num?)?.toInt() ?? 0;
@@ -268,7 +263,6 @@ class AccountDetailsScreen extends StatelessWidget {
     if (dt == null) return '—';
     return DateFormat('MMM d, yyyy  h:mm a').format(dt.toLocal());
   }
-
 }
 
 // ── _SectionCard ─────────────────────────────────────────────────────────────
@@ -308,8 +302,7 @@ class _SectionCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
-          const Divider(
-              color: AppPalette.strokeSoft, height: 1, thickness: 1),
+          const Divider(color: AppPalette.strokeSoft, height: 1, thickness: 1),
           const SizedBox(height: 8),
           ...children,
         ],
@@ -424,8 +417,8 @@ class _ListRow extends StatelessWidget {
                                 decoration: BoxDecoration(
                                   color: AppPalette.surface2,
                                   borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(
-                                      color: AppPalette.strokeSoft),
+                                  border:
+                                      Border.all(color: AppPalette.strokeSoft),
                                 ),
                                 child: Text(
                                   id,
@@ -461,25 +454,16 @@ class _TransactionsSection extends StatelessWidget {
       title: 'RECENT TRANSACTIONS',
       icon: Icons.receipt_long_outlined,
       children: [
-        StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-          // Guard: never start Firestore listener while offline.
-          stream: AppModeService.isOfflineLike
-              ? null
-              : FirebaseFirestore.instance
-                  .collection('users')
-                  .doc(uid)
-                  .collection('transactions')
-                  .orderBy('createdAt', descending: true)
-                  .limit(20)
-                  .snapshots(),
+        FutureBuilder<WalletHistoryReadResult>(
+          future: WalletHistoryService.instance.readMergedHistory(uid),
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return const Padding(
                 padding: EdgeInsets.all(16),
                 child: Center(
                   child: CircularProgressIndicator(
-                    valueColor: AlwaysStoppedAnimation<Color>(
-                        AppPalette.primary),
+                    valueColor:
+                        AlwaysStoppedAnimation<Color>(AppPalette.primary),
                     strokeWidth: 2,
                   ),
                 ),
@@ -494,7 +478,7 @@ class _TransactionsSection extends StatelessWidget {
               );
             }
 
-            final docs = snapshot.data?.docs ?? [];
+            final docs = snapshot.data?.entries.take(20).toList() ?? [];
 
             if (docs.isEmpty) {
               return Text(
@@ -508,16 +492,13 @@ class _TransactionsSection extends StatelessWidget {
             }
 
             return Column(
-              children: docs.map((doc) {
-                final d = doc.data();
+              children: docs.map((d) {
                 final type = d['type'] as String? ?? '—';
-                final amount = (d['amount'] as num?)?.toInt() ?? 0;
-                final balBefore =
-                    (d['balanceBefore'] as num?)?.toInt();
-                final balAfter =
-                    (d['balanceAfter'] as num?)?.toInt();
-                final createdAt = d['createdAt'];
-                final itemName = d['itemName'] as String?;
+                final amount = WalletHistoryService.signedDelta(d);
+                final balBefore = (d['balanceBefore'] as num?)?.toInt();
+                final balAfter = (d['balanceAfter'] as num?)?.toInt();
+                final createdAt = d['dateTime'] ?? d['createdAt'];
+                final itemName = (d['title'] ?? d['itemName'])?.toString();
 
                 final isPositive = amount >= 0;
                 final amountStr = isPositive
@@ -557,8 +538,7 @@ class _TransactionsSection extends StatelessWidget {
                                 ),
                               ),
                             ],
-                            if (balBefore != null &&
-                                balAfter != null) ...[
+                            if (balBefore != null && balAfter != null) ...[
                               const SizedBox(height: 2),
                               Text(
                                 '${NumberFormat('#,###').format(balBefore)} → ${NumberFormat('#,###').format(balAfter)} coins',
@@ -571,8 +551,7 @@ class _TransactionsSection extends StatelessWidget {
                             ],
                             const SizedBox(height: 2),
                             Text(
-                              AccountDetailsScreen._formatTimestamp(
-                                  createdAt),
+                              AccountDetailsScreen._formatTimestamp(createdAt),
                               style: safeInter(
                                 fontSize: 10,
                                 fontWeight: FontWeight.w400,

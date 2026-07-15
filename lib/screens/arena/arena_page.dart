@@ -8,15 +8,16 @@ import '../../core/app_theme.dart';
 import '../../services/app_mode_service.dart';
 import '../../services/arena/arena_repo.dart';
 import '../../services/arena/arena_resume_flow.dart';
+import '../../services/connectivity_service.dart';
 import '../../services/referral/referral_service.dart';
 import '../../widgets/app_ui.dart';
+import '../../widgets/arena_neon_widgets.dart';
 import '../../widgets/arena_toast.dart';
 import '../referral/enter_invite_code_page.dart';
-import '../referral/invite_friends_page.dart';
+import '../store/store_page.dart';
 import 'arena_create_room_page.dart';
 import 'arena_join_room_page.dart';
 import 'widgets/active_room_resume_dialog.dart';
-import 'widgets/arena_card.dart';
 
 /// Root widget for the Arena bottom-nav tab.
 class ArenaPage extends StatefulWidget {
@@ -31,6 +32,12 @@ class _ArenaPageState extends State<ArenaPage> {
   @override
   void initState() {
     super.initState();
+    final openedAt = DateTime.now();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!kDebugMode) return;
+      final ms = DateTime.now().difference(openedAt).inMilliseconds;
+      debugPrint('[PERF] online_page_open_ms=$ms');
+    });
     _reconcile();
   }
 
@@ -48,7 +55,11 @@ class _ArenaPageState extends State<ArenaPage> {
   }
 
   Future<bool> _requireOnline() async {
-    if (AppModeService.canUseOnlineServices) return true;
+    if (AppModeService.canUseOnlineServices &&
+        ConnectivityService().isOnline.value &&
+        FirebaseAuth.instance.currentUser != null) {
+      return true;
+    }
     if (mounted) {
       ArenaToast.warning(context, AppL10n.of(context).arenaOnlineOnly);
     }
@@ -208,15 +219,6 @@ class _ArenaPageState extends State<ArenaPage> {
     ));
   }
 
-  Future<void> _onInvite() async {
-    if (!AppConfig.kEnableReferralRewards) return;
-    if (!await _requireOnline()) return;
-    if (!mounted) return;
-    Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => const InviteFriendsPage(),
-    ));
-  }
-
   Future<void> _onEnterCode() async {
     if (!AppConfig.kEnableReferralRewards) return;
     if (!await _requireOnline()) return;
@@ -226,82 +228,90 @@ class _ArenaPageState extends State<ArenaPage> {
     ));
   }
 
+  Future<void> _openCoinsStore() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const StorePage(initialTab: 2)),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final l10n = AppL10n.of(context);
     final showBackButton = !widget.embedded;
+    final l10n = AppL10n.of(context);
 
     final body = SafeArea(
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
+      child: Directionality(
+        textDirection: l10n.isAr ? TextDirection.rtl : TextDirection.ltr,
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (showBackButton) ...[
-              const SizedBox(height: 4),
-              Row(
+            XoArenaScreenHeader(
+              showBack: showBackButton,
+              onBack: () => Navigator.of(context).maybePop(),
+              onCoinsTap: _openCoinsStore,
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  AppIconButton(
-                    icon: Icons.arrow_back,
-                    onTap: () => Navigator.of(context).maybePop(),
+                  Text(
+                    l10n.arenaTab,
+                    style: homeTitleFont(context, fontSize: 28),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    l10n.arenaScreenSubtitle,
+                    style: homeBodyFont(
+                      context,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                      color: AppPalette.homeBody,
+                    ),
                   ),
                 ],
               ),
-              const SizedBox(height: 10),
-            ] else
-              const SizedBox(height: 4),
-            Text(
-              l10n.arenaTab,
-              style: const TextStyle(
-                color: AppPalette.text,
-                fontSize: 28,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 1.2,
-                fontFamily: 'Orbitron',
+            ),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+                physics: const BouncingScrollPhysics(),
+                children: [
+                  NeonArenaActionCard(
+                    assetPath: kArenaCreateRoomAsset,
+                    title: l10n.createRoom,
+                    subtitleLines: [
+                      l10n.createRoomSubtitle1,
+                      l10n.createRoomSubtitle2,
+                    ],
+                    buttonLabel: l10n.startBtn,
+                    accent: AppPalette.homeCyan,
+                    accentSecondary: AppPalette.homeBlue,
+                    onPressed: _onCreate,
+                  ),
+                  const SizedBox(height: 14),
+                  NeonArenaActionCard(
+                    assetPath: kArenaJoinRoomAsset,
+                    title: l10n.joinRoom,
+                    subtitleLines: [
+                      l10n.joinRoomSubtitle1,
+                      l10n.joinRoomSubtitle2,
+                    ],
+                    buttonLabel: l10n.joinBtn,
+                    accent: AppPalette.homePurple,
+                    accentSecondary: AppPalette.homeCyan,
+                    onPressed: _onJoin,
+                  ),
+                  if (AppConfig.kEnableReferralRewards) ...[
+                    const SizedBox(height: 14),
+                    InviteCodePanel(
+                      onEnterCode: _onEnterCode,
+                      compact: false,
+                    ),
+                  ],
+                  const SizedBox(height: 6),
+                ],
               ),
             ),
-            const SizedBox(height: 4),
-            Text(
-              l10n.playWithFriend,
-              style: const TextStyle(
-                color: AppPalette.textMuted,
-                fontSize: 14,
-              ),
-            ),
-            const SizedBox(height: 20),
-            if (AppConfig.kEnableReferralRewards) ...[
-              ArenaCard(
-                icon: Icons.card_giftcard_rounded,
-                title: l10n.inviteFriendsTitle,
-                subtitle: l10n.inviteFriendsBody,
-                accent: AppPalette.gold,
-                onTap: _onInvite,
-              ),
-              const SizedBox(height: 12),
-            ],
-            ArenaCard(
-              icon: Icons.add_circle_outline_rounded,
-              title: l10n.createRoom,
-              subtitle: l10n.playWithFriend,
-              accent: AppPalette.primary,
-              onTap: _onCreate,
-            ),
-            const SizedBox(height: 12),
-            ArenaCard(
-              icon: Icons.login_rounded,
-              title: l10n.joinRoom,
-              accent: AppPalette.accentPurple,
-              onTap: _onJoin,
-            ),
-            if (AppConfig.kEnableReferralRewards) ...[
-              const SizedBox(height: 12),
-              ArenaCard(
-                icon: Icons.confirmation_number_outlined,
-                title: l10n.enterInviteCode,
-                accent: AppPalette.success,
-                onTap: _onEnterCode,
-              ),
-            ],
           ],
         ),
       ),

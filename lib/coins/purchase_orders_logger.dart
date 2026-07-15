@@ -276,7 +276,8 @@ class PurchaseOrdersLogger {
     final txId = _transactionIdFor(p, uid: uid);
     if (txId == null) {
       if (kDebugMode) {
-        debugPrint('[IAP_LOG] logCfMirror skipped — no orderId or purchaseToken for ${p.productID}');
+        debugPrint(
+            '[IAP_LOG] logCfMirror skipped — no orderId or purchaseToken for ${p.productID}');
       }
       return;
     }
@@ -409,13 +410,24 @@ class PurchaseOrdersLogger {
           'coins': coinsToGrant,
           'amount': coinsToGrant,
           'coinsDelta': coinsToGrant,
+          'delta': coinsToGrant,
           'balanceBefore': balanceBefore,
           'balanceAfter': balanceAfter,
+          'before': balanceBefore,
+          'after': balanceAfter,
           if (orderId != null) 'orderId': orderId,
           if (tokenHash != null) 'purchaseTokenHash': tokenHash,
           'transactionId': txId,
-          'status': 'coin_granted_client_fallback',
-          'source': _kSource,
+          'status': 'synced',
+          'source': 'iap_purchase',
+          'mode': 'online',
+          'title': 'Coin Purchase',
+          'message': 'Google Play coin purchase',
+          'description': 'Google Play coin purchase',
+          'itemType': 'coins',
+          'itemId': productId,
+          'assetPath': CoinsCatalog.assetForCoinProduct(productId),
+          'localCreatedAtMs': DateTime.now().millisecondsSinceEpoch,
           'platform': _kPlatform,
           'verified': false,
           'trustedRevenue': false,
@@ -471,9 +483,8 @@ class PurchaseOrdersLogger {
       productId,
       orderId: orderId,
       purchaseTokenHash: tokenHash,
-      status: granted
-          ? 'coin_granted_client_fallback'
-          : 'already_processed_client',
+      status:
+          granted ? 'coin_granted_client_fallback' : 'already_processed_client',
       coins: coinsToGrant,
       balanceBefore: balanceBefore,
       balanceAfter: balanceAfter,

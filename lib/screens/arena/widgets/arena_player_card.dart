@@ -4,9 +4,7 @@ import '../../../core/app_l10n.dart';
 import '../../../core/app_theme.dart';
 import '../../../models/game_avatar.dart';
 import '../../../services/arena/arena_presence_service.dart';
-import '../../../services/local_store.dart';
 import '../../../widgets/full_avatar_display.dart';
-import 'arena_profile_circle.dart';
 import 'arena_skin_preview.dart';
 
 /// Premium player card used in the arena match header.
@@ -131,9 +129,8 @@ class ArenaPlayerCard extends StatelessWidget {
     final l10n = AppL10n.of(context);
     final glowColor = isYou ? AppPalette.success : AppPalette.accentPurple;
     final scoreColor = isYou ? AppPalette.primary : AppPalette.accentPurple;
-    final borderColor = isActiveTurn
-        ? glowColor
-        : glowColor.withValues(alpha: 0.4);
+    final borderColor =
+        isActiveTurn ? glowColor : glowColor.withValues(alpha: 0.4);
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 240),
@@ -238,84 +235,33 @@ class _TopRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppL10n.of(context);
-    const double avatarSize = 52;
-    final ringColors = isYou
-        ? const <Color>[AppPalette.success, AppPalette.primary]
-        : const <Color>[AppPalette.accentPurple, AppPalette.primary];
-
-    Widget circle;
-    if (avatar != null) {
-      // Paid avatar equipped → render full frame (photo composited inside).
-      // Self uses bound notifiers via FullAvatarDisplay; opponent passes a
-      // static photoUrl through CompositeAvatar directly.
-      if (useBoundNotifiers) {
-        circle = SizedBox(
-          width: avatarSize,
-          height: avatarSize,
-          child: FullAvatarDisplay(
+    const double avatarSize = 60;
+    final presenceColor = switch (presence) {
+      PresenceState.online => AppPalette.success,
+      PresenceState.weak => AppPalette.warning,
+      PresenceState.offline => AppPalette.danger,
+      null => AppPalette.success,
+    };
+    final circle = useBoundNotifiers
+        ? ArenaProfileAvatar.current(
             size: avatarSize,
-            avatar: avatar,
-            fallbackName: name,
-          ),
-        );
-      } else {
-        circle = SizedBox(
-          width: avatarSize,
-          height: avatarSize,
-          child: CompositeAvatar(
-            assetPath: avatar!.assetPath,
-            photoUrl: photoUrl,
+            fallbackInitials: name,
+            showOnlineStatus: presence != null,
+            statusColor: presenceColor,
+          )
+        : ArenaProfileAvatar(
+            profileImageUrl: photoUrl,
+            equippedAvatarFrameAsset: avatar?.assetPath,
+            equippedAvatar: avatar,
             size: avatarSize,
-            fallbackName: name,
-            profileSizeRatio: avatar!.previewScale,
-            frameScale: avatar!.frameScale,
-            verticalOffset: avatar!.verticalOffset,
-            innerCircleScale: avatar!.innerCircleScale,
-          ),
-        );
-      }
-    } else if (useBoundNotifiers) {
-      circle = ValueListenableBuilder<String?>(
-        valueListenable: LocalStore.profilePhotoUrlNotifier,
-        builder: (_, photo, __) => ArenaProfileCircle(
-          name: name,
-          photoUrl: photo,
-          size: avatarSize,
-          ringColors: ringColors,
-        ),
-      );
-    } else {
-      circle = ArenaProfileCircle(
-        name: name,
-        photoUrl: photoUrl,
-        size: avatarSize,
-        ringColors: ringColors,
-      );
-    }
-
-    final dot = presence;
-    Widget circleWithDot = circle;
-    if (dot != null) {
-      circleWithDot = SizedBox(
-        width: avatarSize,
-        height: avatarSize,
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            circle,
-            Positioned(
-              right: -2,
-              bottom: -2,
-              child: _PresenceDot(state: dot),
-            ),
-          ],
-        ),
-      );
-    }
+            fallbackInitials: name,
+            showOnlineStatus: presence != null,
+            statusColor: presenceColor,
+          );
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        circleWithDot,
+        circle,
         const SizedBox(width: 12),
         Expanded(
           child: Column(
@@ -368,35 +314,6 @@ class _TopRow extends StatelessWidget {
         ),
         if (onKick != null) _KickButton(onTap: onKick!),
       ],
-    );
-  }
-}
-
-class _PresenceDot extends StatelessWidget {
-  final PresenceState state;
-  const _PresenceDot({required this.state});
-
-  @override
-  Widget build(BuildContext context) {
-    final color = switch (state) {
-      PresenceState.online => AppPalette.success,
-      PresenceState.weak => AppPalette.warning,
-      PresenceState.offline => AppPalette.danger,
-    };
-    return Container(
-      width: 14,
-      height: 14,
-      decoration: BoxDecoration(
-        color: color,
-        shape: BoxShape.circle,
-        border: Border.all(color: AppPalette.panel, width: 2),
-        boxShadow: [
-          BoxShadow(
-            color: color.withValues(alpha: 0.6),
-            blurRadius: 6,
-          ),
-        ],
-      ),
     );
   }
 }

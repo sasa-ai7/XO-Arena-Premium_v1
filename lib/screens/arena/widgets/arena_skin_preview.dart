@@ -65,7 +65,7 @@ class ArenaSkinPreview extends StatelessWidget {
         fit: BoxFit.contain,
         child: hasCustomSkin
             ? Image.asset(
-                'assets/${isX ? 'x' : 'o'}/$skin.png',
+                'assets/${isX ? 'x' : 'o'}/$skin.webp',
                 width: size * 0.72,
                 height: size * 0.72,
                 fit: BoxFit.contain,

@@ -9,6 +9,7 @@ import 'package:flutter/foundation.dart';
 import '../../core/app_config.dart';
 import '../app_mode_service.dart';
 import '../local_store.dart';
+import '../mission_service.dart';
 import '../online_wallet_service.dart';
 import '../wallet_ledger_types.dart';
 
@@ -20,10 +21,16 @@ enum ReferralError {
   notFound,
   notEligible,
   capacityFull,
+
   /// Timeout / no connectivity / Cloud Function temporarily unavailable.
   /// Surfaces a distinct, actionable message instead of the generic
   /// "unknown" so the user understands a retry will likely succeed.
   networkError,
+
+  /// The account (invitee or referrer) is still syncing right after sign-up.
+  /// A friendly "Please try again in a moment." + automatic single retry
+  /// resolves the common brand-new-account race.
+  notReady,
   unknown,
 }
 
@@ -65,7 +72,7 @@ class ReferralService {
   ReferralService._();
   static final ReferralService instance = ReferralService._();
 
-  static const int kRewardPerFriend = 100;
+  static const int kRewardPerFriend = 1000;
   static const int kMaxFriends = 10;
 
   final FirebaseFirestore _fs = FirebaseFirestore.instance;
@@ -79,8 +86,8 @@ class ReferralService {
   // Network timeouts. Tuned so that a typical Wi-Fi cold call (~1-3 s) is
   // never cut off, but a stuck request never spins the UI past ~15 s.
   static const Duration _kEnsureCodeTimeout = Duration(seconds: 12);
-  static const Duration _kRedeemCallableTimeout = Duration(seconds: 15);
-  static const Duration _kFallbackReadTimeout = Duration(seconds: 10);
+  static const Duration _kRedeemCallableTimeout = Duration(seconds: 8);
+  static const Duration _kFallbackReadTimeout = Duration(seconds: 6);
   static const Duration _kFallbackCommitTimeout = Duration(seconds: 15);
 
   /// 9-digit invite code (e.g. "123456789").
@@ -101,8 +108,8 @@ class ReferralService {
     try {
       final userRef = _fs.collection('users').doc(uid);
       final userSnap = await userRef.get().timeout(_kEnsureCodeTimeout);
-      final existing =
-          ((userSnap.data() ?? const {})['Referral'] as Map?)?['code'] as String?;
+      final existing = ((userSnap.data() ?? const {})['Referral']
+          as Map?)?['code'] as String?;
       if (existing != null && existing.length == 9) {
         if (kDebugMode) debugPrint('[REFERRAL] code already=$existing');
         return existing;
@@ -156,7 +163,16 @@ class ReferralService {
     try {
       final snap = await _fs.collection('users').doc(uid).get();
       final r = (snap.data() ?? const {})['Referral'];
-      if (r is Map) return r.map((k, v) => MapEntry(k.toString(), v));
+      if (r is Map) {
+        final map = r.map((k, v) => MapEntry(k.toString(), v));
+        // "Invite a friend" milestone: satisfied once at least one friend has
+        // redeemed this user's code. Capped + claim-once, so re-reads are safe.
+        final validCount = (map['validReferralCount'] as num?)?.toInt() ?? 0;
+        if (validCount >= 1) {
+          unawaited(MissionService.instance.trackEvent('friend_invited'));
+        }
+        return map;
+      }
     } catch (_) {}
     return <String, dynamic>{};
   }
@@ -210,6 +226,7 @@ class ReferralService {
     }
     final normalized = code.trim().replaceAll(RegExp(r'\D'), '');
     if (kDebugMode) {
+      debugPrint('[REFERRAL] code entered');
       debugPrint('[REFERRAL] normalized code=$normalized');
     }
     if (normalized.length != 9) {
@@ -238,6 +255,24 @@ class ReferralService {
     final inviteePhotoURL = auth?.photoURL ?? '';
 
     try {
+      if (kDebugMode) {
+        debugPrint('[REFERRAL] applyCode start code=$normalized uid=$uid');
+      }
+
+      // ── Readiness: a brand-new account can reach here before its profile
+      // and referral code finished syncing (initAfterAuth is best-effort).
+      // Ensure the invitee's own profile/referral doc exists first; if it is
+      // not ready we surface a friendly, retryable "notReady" instead of a
+      // scary technical error. The caller auto-retries once.
+      final selfReady = await ensureCode(uid);
+      if (selfReady == null) {
+        if (kDebugMode) {
+          debugPrint('[REFERRAL] friendly failure reason=notReady '
+              '(self profile/code not synced yet) uid=$uid');
+        }
+        return const ReferralRedeemResult.fail(ReferralError.notReady);
+      }
+
       // ── Pre-check: has this invitee already used ANY code? ──
       // Catches the confusing case where the code is valid but the user
       // already redeemed a different code. Without this, the user sees the
@@ -262,13 +297,14 @@ class ReferralService {
       }
 
       if (kDebugMode) {
-        debugPrint('[REFERRAL] callable redeemReferralCode code=$normalized uid=$uid');
+        debugPrint(
+            '[REFERRAL] callable redeemReferralCode code=$normalized uid=$uid');
       }
-      final callable = FirebaseFunctions.instance
-          .httpsCallable('redeemReferralCode');
+      final callable =
+          FirebaseFunctions.instance.httpsCallable('redeemReferralCode');
       final res = await callable
-          .call(<String, dynamic>{'code': normalized})
-          .timeout(_kRedeemCallableTimeout);
+          .call(<String, dynamic>{'code': normalized}).timeout(
+              _kRedeemCallableTimeout);
       final data = (res.data is Map)
           ? Map<String, dynamic>.from(res.data as Map)
           : const <String, dynamic>{};
@@ -285,13 +321,14 @@ class ReferralService {
       }
       if (kDebugMode) {
         debugPrint('[REFERRAL] redeem ok newBalance=$newBalance');
+        debugPrint('[REFERRAL] reward granted');
       }
       String? referrerUid;
       String referrerName = '';
       String referrerPhotoURL = '';
       try {
         final codeSnap =
-            await _fs.collection('referral_codes').doc(code).get();
+            await _fs.collection('referral_codes').doc(normalized).get();
         referrerUid = (codeSnap.data() ?? const {})['uid'] as String?;
         if (referrerUid != null && referrerUid.isNotEmpty) {
           final p = await _readUserProfile(referrerUid);
@@ -303,6 +340,7 @@ class ReferralService {
             inviteeName: inviteeName,
             inviteePhotoURL: inviteePhotoURL,
           );
+          if (kDebugMode) debugPrint('[REFERRAL] pending reward created');
         }
       } catch (e) {
         if (kDebugMode) {
@@ -318,14 +356,16 @@ class ReferralService {
       );
     } on FirebaseFunctionsException catch (e) {
       if (kDebugMode) {
-        debugPrint('[REFERRAL] redeem CF error code=${e.code} msg=${e.message}');
+        debugPrint(
+            '[REFERRAL] redeem CF error code=${e.code} msg=${e.message}');
       }
       if (_shouldUseClientFallback(e.code)) {
         if (kDebugMode) {
-          debugPrint('[REFERRAL] redeemReferralCode not available; using client fallback');
+          debugPrint(
+              '[REFERRAL] redeemReferralCode not available; using client fallback');
         }
         return _redeemWithClientFallback(
-          code: code,
+          code: normalized,
           uid: uid,
           inviteeName: inviteeName,
           inviteePhotoURL: inviteePhotoURL,
@@ -334,16 +374,17 @@ class ReferralService {
       return ReferralRedeemResult.fail(_mapCfError(e.code));
     } on TimeoutException {
       if (kDebugMode) {
-        debugPrint('[REFERRAL] callable redeem timeout — falling back to client');
+        debugPrint(
+            '[REFERRAL] callable redeem timeout — falling back to client');
       }
       return _redeemWithClientFallback(
-        code: code,
+        code: normalized,
         uid: uid,
         inviteeName: inviteeName,
         inviteePhotoURL: inviteePhotoURL,
       );
     } catch (e) {
-      if (kDebugMode) debugPrint('[REFERRAL] redeem error: $e');
+      if (kDebugMode) debugPrint('[REFERRAL] failed friendly');
       return const ReferralRedeemResult.fail(ReferralError.unknown);
     } finally {
       if (_inFlightCode == normalized) _inFlightCode = null;
@@ -395,27 +436,31 @@ class ReferralService {
       if (referrerUid.isEmpty) {
         return const ReferralRedeemResult.fail(ReferralError.notFound);
       }
+      if (kDebugMode) {
+        debugPrint(
+            '[REFERRAL] code owner found referrer=$referrerUid code=$code');
+      }
       if (referrerUid == uid) {
         if (kDebugMode) {
-          debugPrint('[REFERRAL] blocked reason=ownCode code=$code');
+          debugPrint('[REFERRAL] self referral blocked code=$code');
         }
         return const ReferralRedeemResult.fail(ReferralError.selfReferral);
       }
 
-      final referralSnap = await referralRef.get().timeout(_kFallbackReadTimeout);
+      final referralSnap =
+          await referralRef.get().timeout(_kFallbackReadTimeout);
       if (kDebugMode) {
-        debugPrint('[REFERRAL] existing referral exists=${referralSnap.exists} uid=$uid');
+        debugPrint(
+            '[REFERRAL] existing referral exists=${referralSnap.exists} uid=$uid');
       }
       if (referralSnap.exists) {
         if (kDebugMode) {
-          debugPrint('[REFERRAL] blocked because invitee already used a '
-              'different code before uid=$uid (fallback path)');
+          debugPrint('[REFERRAL] already used blocked (fallback) uid=$uid');
         }
         return const ReferralRedeemResult.fail(ReferralError.alreadyUsed);
       }
 
-      final inviteeSnap =
-          await inviteeRef.get().timeout(_kFallbackReadTimeout);
+      final inviteeSnap = await inviteeRef.get().timeout(_kFallbackReadTimeout);
       final inviteeData = inviteeSnap.data() ?? const <String, dynamic>{};
 
       // Referrer capacity guard (best-effort — rules don't enforce this).
@@ -424,7 +469,8 @@ class ReferralService {
         final refSnap = await _fs.collection('users').doc(referrerUid).get();
         final refReferral = (refSnap.data() ?? const {})['Referral'];
         if (refReferral is Map) {
-          final count = (refReferral['validReferralCount'] as num?)?.toInt() ?? 0;
+          final count =
+              (refReferral['validReferralCount'] as num?)?.toInt() ?? 0;
           if (count >= kMaxFriends) {
             return const ReferralRedeemResult.fail(ReferralError.capacityFull);
           }
@@ -495,11 +541,15 @@ class ReferralService {
       batch.set(inviteeLedgerRef, <String, dynamic>{
         'uid': uid,
         'type': LedgerType.referralInviteeReward,
-        'source': 'client_fallback',
+        'source': LedgerType.referralInviteeReward,
         'delta': kRewardPerFriend,
+        'coins': kRewardPerFriend,
         'before': oldBalance,
         'after': newBalance,
         'transactionId': inviteeLedgerId,
+        'mode': 'online',
+        'status': 'synced',
+        'localCreatedAtMs': DateTime.now().millisecondsSinceEpoch,
         'title': 'Friend invite reward',
         'message': referrerProfile.name.isEmpty
             ? 'You received $kRewardPerFriend coins'
@@ -526,6 +576,13 @@ class ReferralService {
       });
 
       await batch.commit().timeout(_kFallbackCommitTimeout);
+      if (kDebugMode) {
+        debugPrint(
+            '[REFERRAL] reward created invitee=$uid referrer=$referrerUid '
+            'coins=$kRewardPerFriend');
+        debugPrint('[REFERRAL] pending reward created');
+        debugPrint('[REFERRAL] reward granted');
+      }
       try {
         await OnlineWalletService().setFromServer(
           newBalance,
@@ -535,8 +592,8 @@ class ReferralService {
         LocalStore.coinsNotifier.value = newBalance;
       }
       if (kDebugMode) {
-        debugPrint('[REFERRAL] redeem success invitee=$uid referrer=$referrerUid coins=$kRewardPerFriend');
-        debugPrint('[REFERRAL] client fallback ok newBalance=$newBalance');
+        debugPrint('[REFERRAL] success invitee=$uid referrer=$referrerUid '
+            'newBalance=$newBalance');
       }
       return ReferralRedeemResult.ok(
         rewardCoins: kRewardPerFriend,
@@ -548,15 +605,24 @@ class ReferralService {
       );
     } on TimeoutException {
       if (kDebugMode) {
-        debugPrint('[REFERRAL] client fallback timeout — retryable network error');
+        debugPrint(
+            '[REFERRAL] client fallback timeout — retryable network error');
       }
       return const ReferralRedeemResult.fail(ReferralError.networkError);
     } on FirebaseException catch (e) {
       if (kDebugMode) {
-        debugPrint('[REFERRAL] client fallback Firebase error code=${e.code} msg=${e.message}');
+        debugPrint(
+            '[REFERRAL] client fallback Firebase error code=${e.code} msg=${e.message}');
       }
       if (e.code == 'permission-denied') {
-        return const ReferralRedeemResult.fail(ReferralError.unknown);
+        // The most common cause here is a referrer whose wallet doc has not
+        // finished syncing (the credit rule requires an existing int balance).
+        // Surface a friendly, retryable message rather than a scary error.
+        if (kDebugMode) {
+          debugPrint('[REFERRAL] friendly failure reason=notReady '
+              '(permission-denied — referrer likely not synced yet)');
+        }
+        return const ReferralRedeemResult.fail(ReferralError.notReady);
       }
       if (e.code == 'already-exists') {
         return const ReferralRedeemResult.fail(ReferralError.alreadyUsed);
@@ -581,8 +647,7 @@ class ReferralService {
     required String inviteePhotoURL,
   }) async {
     final pendingRewardId = '${referrerUid}_$inviteeUid';
-    final ref =
-        _fs.collection('pending_referral_rewards').doc(pendingRewardId);
+    final ref = _fs.collection('pending_referral_rewards').doc(pendingRewardId);
     try {
       final existing = await ref.get();
       if (existing.exists) return;
@@ -628,19 +693,22 @@ class ReferralService {
         return ReferralError.capacityFull;
       case 'unauthenticated':
         if (kDebugMode) {
-          debugPrint('[REFERRAL] unauthenticated — user not signed in to Firebase Auth');
+          debugPrint(
+              '[REFERRAL] unauthenticated — user not signed in to Firebase Auth');
         }
         // Surface as a network error: the most common practical cause is
         // that the auth token is mid-refresh / the client has lost connection.
         return ReferralError.networkError;
       case 'permission-denied':
         if (kDebugMode) {
-          debugPrint('[REFERRAL] permission-denied — check function deployment & App Check enforcement');
+          debugPrint(
+              '[REFERRAL] permission-denied — check function deployment & App Check enforcement');
         }
         return ReferralError.unknown;
       case 'deadline-exceeded':
         if (kDebugMode) {
-          debugPrint('[REFERRAL] CF deadline-exceeded — treating as network error');
+          debugPrint(
+              '[REFERRAL] CF deadline-exceeded — treating as network error');
         }
         return ReferralError.networkError;
       case 'not-implemented':

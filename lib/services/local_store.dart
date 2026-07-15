@@ -1,5 +1,7 @@
 import 'dart:math';
 
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/foundation.dart';
@@ -10,6 +12,7 @@ import '../core/app_config.dart';
 import '../core/keys.dart';
 import '../core/neon_colors.dart';
 import '../models/game_avatar.dart';
+import '../models/game_emoji.dart';
 import '../models/offline_profile.dart';
 import '../models/user_data.dart';
 import '../services/app_mode_service.dart';
@@ -17,10 +20,43 @@ import '../services/arena/arena_cosmetics_loader.dart';
 import '../services/auth_service.dart';
 import '../services/connectivity_service.dart';
 import '../services/user_repo.dart';
+import '../services/wallet_history_service.dart';
 
 class LocalStore {
   static Future<SharedPreferences> _p() => SharedPreferences.getInstance();
   static String? get _uid => AuthService().currentUser?.uid;
+
+  // ── Online / offline data namespace ──────────────────────────────────────
+  //
+  // Cosmetics (colors, avatars, skins, emojis) are stored under the SHARED
+  // keys when the player is online, and under the `offline_*` keys when the
+  // app is in [AppMode.offline] — mirroring how the wallet already routes in
+  // [updateCoins]. This keeps offline/guest inventory completely separate from
+  // the online account, so buying offline never touches the online data and
+  // vice-versa. Firestore mirroring is additionally short-circuited offline by
+  // [_syncToFirestore]'s `canUseOnlineServices` guard.
+  static bool get _offlineNs => AppModeService.current == AppMode.offline;
+
+  static const Map<String, String> _offlineKeyMap = {
+    Keys.xColor: Keys.offlineXColor,
+    Keys.oColor: Keys.offlineOColor,
+    Keys.ownedXColors: Keys.offlineOwnedXColors,
+    Keys.ownedOColors: Keys.offlineOwnedOColors,
+    Keys.ownedAvatars: Keys.offlineOwnedAvatars,
+    Keys.equippedAvatar: Keys.offlineSelectedAvatar,
+    Keys.ownedEmojis: Keys.offlineOwnedEmojis,
+    Keys.equippedEmojis: Keys.offlineEquippedEmojis,
+    Keys.selectedXSkin: Keys.offlineSelectedXSkin,
+    Keys.selectedOSkin: Keys.offlineSelectedOSkin,
+    Keys.ownedXSkins: Keys.offlineOwnedXSkins,
+    Keys.ownedOSkins: Keys.offlineOwnedOSkins,
+  };
+
+  /// Resolves a cosmetics storage key to its offline counterpart when the app
+  /// is in offline mode. Online mode (and any unmapped key) returns [onlineKey]
+  /// unchanged, so online behavior is byte-for-byte identical to before.
+  static String _ck(String onlineKey) =>
+      _offlineNs ? (_offlineKeyMap[onlineKey] ?? onlineKey) : onlineKey;
 
   /// Public accessor for the current user's UID (null if not signed in).
   static String? get uid => _uid;
@@ -58,7 +94,7 @@ class LocalStore {
   static final ValueNotifier<String?> profilePhotoUrlNotifier =
       ValueNotifier<String?>(null);
 
-  /// Asset path for the offline character portrait (e.g., assets/account/man.png).
+  /// Asset path for the offline character portrait (e.g., assets/account/man.webp).
   /// Non-null while in offline mode; null when online.
   /// [FullAvatarDisplay] shows this as the profile image when non-null.
   static final ValueNotifier<String?> offlineAvatarAssetNotifier =
@@ -81,7 +117,11 @@ class LocalStore {
 
   static List<String> _parseSkinList(String? raw) {
     if (raw == null || raw.isEmpty) return [];
-    return raw.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+    return raw
+        .split(',')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
   }
 
   /// Build the Cosmetics map from current SharedPreferences, with optional overrides.
@@ -93,6 +133,8 @@ class LocalStore {
     List<int>? ownedO,
     List<int>? ownedAvatars,
     int? equippedAvatar,
+    List<String>? ownedEmojis,
+    List<String>? equippedEmojis,
   }) {
     final customXConfigs = p.getString(Keys.customXConfigs);
     final customOConfigs = p.getString(Keys.customOConfigs);
@@ -109,15 +151,24 @@ class LocalStore {
       'ownedOColors': ownedO ??
           _parseOwnedList(p.getString(Keys.ownedOColors) ?? '0', fallback: 0),
       'equippedAvatar': equippedAvatar ?? p.getInt(Keys.equippedAvatar) ?? 0,
-      'ownedAvatars': ownedAvatars ?? (() {
-        final s = p.getString(Keys.ownedAvatars) ?? '';
-        if (s.isEmpty) return <int>[];
-        return s.split(',').map(int.tryParse).whereType<int>().toSet().toList()..sort();
-      })(),
+      'ownedAvatars': ownedAvatars ??
+          (() {
+            final s = p.getString(Keys.ownedAvatars) ?? '';
+            if (s.isEmpty) return <int>[];
+            return s
+                .split(',')
+                .map(int.tryParse)
+                .whereType<int>()
+                .toSet()
+                .toList()
+              ..sort();
+          })(),
       'selectedXSkin': p.getString(Keys.selectedXSkin) ?? 'default',
       'selectedOSkin': p.getString(Keys.selectedOSkin) ?? 'default',
       'ownedXSkins': _parseSkinList(p.getString(Keys.ownedXSkins)),
       'ownedOSkins': _parseSkinList(p.getString(Keys.ownedOSkins)),
+      'ownedEmojis': ownedEmojis ?? _parseOwnedEmojis(p),
+      'equippedEmojis': equippedEmojis ?? _parseEquippedEmojis(p),
       if (customXConfigs != null && customXConfigs.isNotEmpty)
         'customXConfigsV2': customXConfigs,
       if (customOConfigs != null && customOConfigs.isNotEmpty)
@@ -135,7 +186,8 @@ class LocalStore {
     // connectionLostDuringOnlineMatch / restartingToOffline.
     if (!AppModeService.canUseOnlineServices) {
       if (kDebugMode) {
-        debugPrint('[GUARD] _syncToFirestore blocked mode=${AppModeService.current}');
+        debugPrint(
+            '[GUARD] _syncToFirestore blocked mode=${AppModeService.current}');
       }
       return;
     }
@@ -162,8 +214,8 @@ class LocalStore {
     int equippedAvatarId = 0,
   }) {
     final charAsset = (characterType == 'female')
-        ? 'assets/account/feminine.png'
-        : 'assets/account/man.png';
+        ? 'assets/account/feminine.webp'
+        : 'assets/account/man.webp';
 
     if (AppModeService.isOfflineLike) {
       // Offline: always local character portrait — never Google photo.
@@ -196,9 +248,12 @@ class LocalStore {
         ? <int>{}
         : ownedRaw.split(',').map(int.tryParse).whereType<int>().toSet();
     final equipped = p.getInt(Keys.equippedAvatar) ?? 0;
-    if (equipped > 0 && !ownedIds.contains(equipped)) {
+    final sanitizedEquipped = parseEquippedAvatarId(equipped);
+    if (equipped != sanitizedEquipped ||
+        (sanitizedEquipped > 0 && !ownedIds.contains(sanitizedEquipped))) {
       if (kDebugMode) {
-        debugPrint('[AVATAR_MIGRATION] equippedAvatar reset to 0 because not owned (was $equipped)');
+        debugPrint(
+            '[AVATAR_MIGRATION] equippedAvatar reset to 0 because invalid or not owned (was $equipped)');
       }
       await p.setInt(Keys.equippedAvatar, 0);
       equippedAvatarNotifier.value = 0;
@@ -213,8 +268,6 @@ class LocalStore {
     profileImagePathNotifier.value = p.getString(Keys.profilePhotoPath);
     profilePhotoUrlNotifier.value = p.getString(Keys.profilePhotoUrl);
   }
-
-
 
   static Future<void> ensureDefaults() async {
     final p = await _p();
@@ -234,10 +287,14 @@ class LocalStore {
     await p.setString(Keys.ownedOColors, p.getString(Keys.ownedOColors) ?? '0');
     await p.setInt(Keys.equippedAvatar, p.getInt(Keys.equippedAvatar) ?? 0);
     await p.setString(Keys.ownedAvatars, p.getString(Keys.ownedAvatars) ?? '');
-    await p.setString(Keys.ownedXSkins, p.getString(Keys.ownedXSkins) ?? 'default');
-    await p.setString(Keys.ownedOSkins, p.getString(Keys.ownedOSkins) ?? 'default');
-    await p.setString(Keys.selectedXSkin, p.getString(Keys.selectedXSkin) ?? 'default');
-    await p.setString(Keys.selectedOSkin, p.getString(Keys.selectedOSkin) ?? 'default');
+    await p.setString(
+        Keys.ownedXSkins, p.getString(Keys.ownedXSkins) ?? 'default');
+    await p.setString(
+        Keys.ownedOSkins, p.getString(Keys.ownedOSkins) ?? 'default');
+    await p.setString(
+        Keys.selectedXSkin, p.getString(Keys.selectedXSkin) ?? 'default');
+    await p.setString(
+        Keys.selectedOSkin, p.getString(Keys.selectedOSkin) ?? 'default');
 
     final currentLevel = p.getInt(Keys.levelGameCurrentLevel) ?? 1;
     await p.setInt(
@@ -264,7 +321,9 @@ class LocalStore {
     await p.setInt(Keys.coins, safeAmount);
     coinsNotifier.value = safeAmount;
     if (AppConfig.kEnableFirestoreWalletSync) {
-      await _syncToFirestore({'Wallet': {'coins': safeAmount}});
+      await _syncToFirestore({
+        'Wallet': {'coins': safeAmount}
+      });
     }
   }
 
@@ -277,14 +336,17 @@ class LocalStore {
       final next = max(0, current + delta);
       await p.setInt(Keys.offlineCoinsV2, next);
       coinsNotifier.value = next;
-      if (kDebugMode) debugPrint('[OFFLINE] updateCoins (offline) delta=$delta → $next');
+      if (kDebugMode) {
+        debugPrint('[OFFLINE] updateCoins (offline) delta=$delta → $next');
+      }
       return;
     }
 
     // Guard: block all wallet changes unless strictly online.
     if (!AppModeService.canUseOnlineServices) {
       if (kDebugMode) {
-        debugPrint('[GUARD] updateCoins blocked mode=${AppModeService.current}');
+        debugPrint(
+            '[GUARD] updateCoins blocked mode=${AppModeService.current}');
       }
       return;
     }
@@ -296,7 +358,9 @@ class LocalStore {
     await p.setInt(Keys.coins, next);
     coinsNotifier.value = next;
     if (AppConfig.kEnableFirestoreWalletSync) {
-      await _syncToFirestore({'Wallet': {'coins': next}});
+      unawaited(_syncToFirestore({
+        'Wallet': {'coins': next}
+      }));
     }
   }
 
@@ -313,14 +377,17 @@ class LocalStore {
     if (!AppConfig.kEnableFirestoreWalletSync) return;
     if (!AppModeService.canUseOnlineServices) {
       if (kDebugMode) {
-        debugPrint('[GUARD] syncCoinBalance blocked mode=${AppModeService.current}');
+        debugPrint(
+            '[GUARD] syncCoinBalance blocked mode=${AppModeService.current}');
       }
       return;
     }
     final uid = _uid;
     if (uid == null) return;
     final coins = await LocalStore.coins();
-    await UserRepo().syncToFirestore(uid, {'Wallet': {'coins': coins}});
+    await UserRepo().syncToFirestore(uid, {
+      'Wallet': {'coins': coins}
+    });
   }
 
   static Future<void> addCoins(int amount) async {
@@ -354,7 +421,8 @@ class LocalStore {
     // successful offline addResult and looked contradictory.
     if (AppModeService.isOfflineLike) {
       if (kDebugMode) {
-        debugPrint('[MATCH] online reward grant skipped — app is not safely online');
+        debugPrint(
+            '[MATCH] online reward grant skipped — app is not safely online');
       }
       return (coinsAdded: 0, newBalance: coinsNotifier.value);
     }
@@ -364,19 +432,23 @@ class LocalStore {
     // also disabled, there is nothing to do.
     if (!AppConfig.kEnableMatchStatsCloudFunction) {
       if (kDebugMode) {
-        debugPrint('[MATCH] stats-only CF skipped because disabled — matchId=$matchId');
+        debugPrint(
+            '[MATCH] stats-only CF skipped because disabled — matchId=$matchId');
       }
       return (coinsAdded: 0, newBalance: coinsNotifier.value);
     }
 
     final uid = _uid;
     if (uid == null) {
-      if (kDebugMode) debugPrint('[LocalStore] grantMatchRewardCF: no user signed in, skipping.');
+      if (kDebugMode)
+        debugPrint(
+            '[LocalStore] grantMatchRewardCF: no user signed in, skipping.');
       return (coinsAdded: 0, newBalance: coinsNotifier.value);
     }
 
     if (kDebugMode) {
-      debugPrint('[MATCH] stats-only CF called matchId=$matchId result=$result');
+      debugPrint(
+          '[MATCH] stats-only CF called matchId=$matchId result=$result');
     }
     try {
       final fn = FirebaseFunctions.instance.httpsCallable('grantMatchReward');
@@ -407,13 +479,18 @@ class LocalStore {
     } on FirebaseFunctionsException catch (e) {
       if (e.code == 'permission-denied') {
         // Do not retry — log once and continue
-        if (kDebugMode) debugPrint('[LocalStore] grantMatchRewardCF: permission-denied, not retrying.');
+        if (kDebugMode)
+          debugPrint(
+              '[LocalStore] grantMatchRewardCF: permission-denied, not retrying.');
       } else {
-        if (kDebugMode) debugPrint('[LocalStore] grantMatchRewardCF error: ${e.code} — ${e.message}');
+        if (kDebugMode)
+          debugPrint(
+              '[LocalStore] grantMatchRewardCF error: ${e.code} — ${e.message}');
       }
       return (coinsAdded: 0, newBalance: coinsNotifier.value);
     } catch (e) {
-      if (kDebugMode) debugPrint('[LocalStore] grantMatchRewardCF unexpected error: $e');
+      if (kDebugMode)
+        debugPrint('[LocalStore] grantMatchRewardCF unexpected error: $e');
       return (coinsAdded: 0, newBalance: coinsNotifier.value);
     }
   }
@@ -437,7 +514,8 @@ class LocalStore {
             Keys.offlineDraws, (p.getInt(Keys.offlineDraws) ?? 0) + 1);
       }
       if (kDebugMode) {
-        debugPrint('[OFFLINE] addResult (offline) result=$normalized, gamesPlayed=$gp');
+        debugPrint(
+            '[OFFLINE] addResult (offline) result=$normalized, gamesPlayed=$gp');
       }
       return; // ZERO Firestore writes
     }
@@ -483,14 +561,14 @@ class LocalStore {
 
   static Future<Color> xPieceColor() async {
     final p = await _p();
-    final hex = p.getString(Keys.xColor) ??
+    final hex = p.getString(_ck(Keys.xColor)) ??
         NeonColors.colorToString(NeonColors.xColors[0]);
     return NeonColors.stringToColor(hex);
   }
 
   static Future<Color> oPieceColor() async {
     final p = await _p();
-    final hex = p.getString(Keys.oColor) ??
+    final hex = p.getString(_ck(Keys.oColor)) ??
         NeonColors.colorToString(NeonColors.oColors[0]);
     return NeonColors.stringToColor(hex);
   }
@@ -498,72 +576,76 @@ class LocalStore {
   static Future<void> setXPieceColor(Color c) async {
     final p = await _p();
     final hex = NeonColors.colorToString(c);
-    await p.setString(Keys.xColor, hex);
+    await p.setString(_ck(Keys.xColor), hex);
     cosmeticsVersion.value++;
-    if (AppConfig.kEnableFirestoreInventorySync) {
-      await _syncToFirestore({'Cosmetics': _cosmeticsPayload(p, xColor: hex)});
+    if (!_offlineNs && AppConfig.kEnableFirestoreInventorySync) {
+      unawaited(
+          _syncToFirestore({'Cosmetics': _cosmeticsPayload(p, xColor: hex)}));
     }
   }
 
   static Future<void> setOPieceColor(Color c) async {
     final p = await _p();
     final hex = NeonColors.colorToString(c);
-    await p.setString(Keys.oColor, hex);
+    await p.setString(_ck(Keys.oColor), hex);
     cosmeticsVersion.value++;
-    if (AppConfig.kEnableFirestoreInventorySync) {
-      await _syncToFirestore({'Cosmetics': _cosmeticsPayload(p, oColor: hex)});
+    if (!_offlineNs && AppConfig.kEnableFirestoreInventorySync) {
+      unawaited(
+          _syncToFirestore({'Cosmetics': _cosmeticsPayload(p, oColor: hex)}));
     }
   }
 
   static Future<List<int>> ownedXColors() async {
     final p = await _p();
-    final s = p.getString(Keys.ownedXColors) ?? "0";
+    final s = p.getString(_ck(Keys.ownedXColors)) ?? "0";
     return s.split(",").map(int.tryParse).whereType<int>().toSet().toList()
       ..sort();
   }
 
   static Future<List<int>> ownedOColors() async {
     final p = await _p();
-    final s = p.getString(Keys.ownedOColors) ?? "0";
+    final s = p.getString(_ck(Keys.ownedOColors)) ?? "0";
     return s.split(",").map(int.tryParse).whereType<int>().toSet().toList()
       ..sort();
   }
 
   static Future<void> addOwnedXColor(int index) async {
     final p = await _p();
-    final set = (p.getString(Keys.ownedXColors) ?? "0")
+    final set = (p.getString(_ck(Keys.ownedXColors)) ?? "0")
         .split(",")
         .map(int.tryParse)
         .whereType<int>()
         .toSet();
     set.add(index);
     final list = set.toList()..sort();
-    await p.setString(Keys.ownedXColors, list.join(","));
+    await p.setString(_ck(Keys.ownedXColors), list.join(","));
     cosmeticsVersion.value++;
-    if (AppConfig.kEnableFirestoreInventorySync) {
-      await _syncToFirestore({'Cosmetics': _cosmeticsPayload(p, ownedX: list)});
+    if (!_offlineNs && AppConfig.kEnableFirestoreInventorySync) {
+      unawaited(
+          _syncToFirestore({'Cosmetics': _cosmeticsPayload(p, ownedX: list)}));
     }
   }
 
   static Future<void> addOwnedOColor(int index) async {
     final p = await _p();
-    final set = (p.getString(Keys.ownedOColors) ?? "0")
+    final set = (p.getString(_ck(Keys.ownedOColors)) ?? "0")
         .split(",")
         .map(int.tryParse)
         .whereType<int>()
         .toSet();
     set.add(index);
     final list = set.toList()..sort();
-    await p.setString(Keys.ownedOColors, list.join(","));
+    await p.setString(_ck(Keys.ownedOColors), list.join(","));
     cosmeticsVersion.value++;
-    if (AppConfig.kEnableFirestoreInventorySync) {
-      await _syncToFirestore({'Cosmetics': _cosmeticsPayload(p, ownedO: list)});
+    if (!_offlineNs && AppConfig.kEnableFirestoreInventorySync) {
+      unawaited(
+          _syncToFirestore({'Cosmetics': _cosmeticsPayload(p, ownedO: list)}));
     }
   }
 
   static Future<List<int>> ownedAvatars() async {
     final p = await _p();
-    final s = p.getString(Keys.ownedAvatars) ?? '';
+    final s = p.getString(_ck(Keys.ownedAvatars)) ?? '';
     if (s.isEmpty) return [];
     return s.split(',').map(int.tryParse).whereType<int>().toSet().toList()
       ..sort();
@@ -571,83 +653,233 @@ class LocalStore {
 
   static Future<int> equippedAvatar() async {
     final p = await _p();
-    return p.getInt(Keys.equippedAvatar) ?? 0;
+    return p.getInt(_ck(Keys.equippedAvatar)) ?? 0;
   }
 
   static Future<void> addOwnedAvatar(int id) async {
     final p = await _p();
-    final s = p.getString(Keys.ownedAvatars) ?? '';
+    final s = p.getString(_ck(Keys.ownedAvatars)) ?? '';
     final set = (s.isEmpty ? <String>[] : s.split(','))
         .map(int.tryParse)
         .whereType<int>()
         .toSet();
     set.add(id);
     final list = set.toList()..sort();
-    await p.setString(Keys.ownedAvatars, list.join(','));
+    await p.setString(_ck(Keys.ownedAvatars), list.join(','));
     cosmeticsVersion.value++;
-    if (AppConfig.kEnableFirestoreInventorySync) {
-      await _syncToFirestore(
-          {'Cosmetics': _cosmeticsPayload(p, ownedAvatars: list)});
+    if (!_offlineNs && AppConfig.kEnableFirestoreInventorySync) {
+      // Fire-and-forget: local ownership + notifier already updated, so the
+      // UI reflects the purchase instantly. The Firestore mirror runs in the
+      // background and must not block the store tap.
+      unawaited(_syncToFirestore(
+          {'Cosmetics': _cosmeticsPayload(p, ownedAvatars: list)}));
       if (kDebugMode) debugPrint('[INVENTORY_SYNC] addOwnedAvatar → $id');
     }
   }
 
   static Future<void> setEquippedAvatar(int id) async {
     final p = await _p();
+    final resolvedId = sanitizeEquippedAvatarId(id);
+    if (id != 0 && resolvedId == 0) {
+      if (kDebugMode) {
+        debugPrint('[STORE] blocked invalid avatar equip: id=$id');
+      }
+      return;
+    }
     // id == 0 means "unequip" — always allowed and falls back to the
     // Google photo / character portrait.
-    if (id != 0) {
-      final ownedRaw = p.getString(Keys.ownedAvatars) ?? '';
+    if (resolvedId != 0) {
+      final ownedRaw = p.getString(_ck(Keys.ownedAvatars)) ?? '';
       final owned = (ownedRaw.isEmpty ? <String>[] : ownedRaw.split(','))
           .map(int.tryParse)
           .whereType<int>()
           .toSet();
-      if (!owned.contains(id)) {
+      if (!owned.contains(resolvedId)) {
         if (kDebugMode) {
-          debugPrint('[STORE] blocked avatar equip because not owned: id=$id');
+          debugPrint(
+              '[STORE] blocked avatar equip because not owned: id=$resolvedId');
         }
         return;
       }
     }
-    await p.setInt(Keys.equippedAvatar, id);
-    equippedAvatarNotifier.value = id;
+    await p.setInt(_ck(Keys.equippedAvatar), resolvedId);
+    equippedAvatarNotifier.value = resolvedId;
     cosmeticsVersion.value++;
     if (kDebugMode) {
-      debugPrint(id == 0
+      debugPrint(resolvedId == 0
           ? '[STORE] avatar unequipped'
-          : '[STORE] avatar equipped: id=$id');
+          : '[STORE] avatar equipped: id=$resolvedId');
+      debugPrint(
+          '[PROFILE] selected_avatar=${resolvedId == 0 ? 'none' : resolvedId}');
+      debugPrint('[PROFILE] avatar_source='
+          '${resolvedId == 0 ? 'google_photo' : 'selected_avatar'}');
+      debugPrint('[PROFILE] avatar_updated_live=true');
     }
-    if (AppConfig.kEnableFirestoreInventorySync) {
-      await _syncToFirestore(
-          {'Cosmetics': _cosmeticsPayload(p, equippedAvatar: id)});
-      if (kDebugMode) debugPrint('[INVENTORY_SYNC] setEquippedAvatar → $id');
+    if (!_offlineNs && AppConfig.kEnableFirestoreInventorySync) {
+      // Background mirror — equipped avatar already live via the notifier.
+      unawaited(_syncToFirestore(
+          {'Cosmetics': _cosmeticsPayload(p, equippedAvatar: resolvedId)}));
+      if (kDebugMode) {
+        debugPrint('[INVENTORY_SYNC] setEquippedAvatar → $resolvedId');
+      }
     }
-    syncCurrentCosmeticsToActiveArenaRoom();
+    unawaited(syncCurrentCosmeticsToActiveArenaRoom());
+  }
+
+  // ── Emoji ownership + equip methods ───────────────────────────────────────
+  //
+  // Mirrors the avatar pattern: SharedPreferences is the source of truth,
+  // `cosmeticsVersion` drives live UI, and ownership/equip mirror to the
+  // Firestore `Cosmetics` map in the background. Free emojis are always
+  // implicitly owned; new players start with the 5 free emojis equipped.
+
+  /// Parses stored owned emoji ids (paid purchases) and unions the free set.
+  /// Only ids that still exist in [EmojiCatalog] are returned.
+  static List<String> _parseOwnedEmojis(SharedPreferences p) {
+    final raw = p.getString(_ck(Keys.ownedEmojis)) ?? '';
+    final set = <String>{...EmojiCatalog.freeIds};
+    for (final id in raw.split(',')) {
+      final trimmed = id.trim();
+      if (EmojiCatalog.isValidId(trimmed)) set.add(trimmed);
+    }
+    // Preserve catalog order for stable display.
+    return EmojiCatalog.allIds.where(set.contains).toList();
+  }
+
+  /// Parses the ordered equipped list, defaulting to the free emojis when unset.
+  /// Drops unknown/duplicate ids and caps at [EmojiCatalog.maxEquipped].
+  static List<String> _parseEquippedEmojis(SharedPreferences p) {
+    final raw = p.getString(_ck(Keys.equippedEmojis));
+    if (raw == null) return List<String>.from(EmojiCatalog.defaultEquipped);
+    final seen = <String>{};
+    final list = <String>[];
+    for (final id in raw.split(',')) {
+      final trimmed = id.trim();
+      if (EmojiCatalog.isValidId(trimmed) && seen.add(trimmed)) {
+        list.add(trimmed);
+      }
+      if (list.length >= EmojiCatalog.maxEquipped) break;
+    }
+    return list;
+  }
+
+  /// All emoji ids the player owns (free + purchased), in catalog order.
+  static Future<List<String>> ownedEmojis() async {
+    final p = await _p();
+    return _parseOwnedEmojis(p);
+  }
+
+  /// The ordered list of currently equipped emoji ids (max 5).
+  static Future<List<String>> equippedEmojis() async {
+    final p = await _p();
+    return _parseEquippedEmojis(p);
+  }
+
+  /// Records a purchased emoji as owned. Free emojis are already owned.
+  static Future<void> addOwnedEmoji(String id) async {
+    if (!EmojiCatalog.isValidId(id) || EmojiCatalog.isFree(id)) return;
+    final p = await _p();
+    final owned = _parseOwnedEmojis(p).toSet()..add(id);
+    // Persist only non-free ids (free are implicit).
+    final paid = owned.where((e) => !EmojiCatalog.isFree(e)).toList();
+    await p.setString(_ck(Keys.ownedEmojis), paid.join(','));
+    cosmeticsVersion.value++;
+    if (!_offlineNs && AppConfig.kEnableFirestoreInventorySync) {
+      unawaited(_syncToFirestore({
+        'Cosmetics': _cosmeticsPayload(p, ownedEmojis: _parseOwnedEmojis(p)),
+      }));
+      if (kDebugMode) debugPrint('[INVENTORY_SYNC] addOwnedEmoji → $id');
+    }
+  }
+
+  /// Persists a validated, de-duplicated, capped equipped emoji list.
+  static Future<void> setEquippedEmojis(List<String> ids) async {
+    final p = await _p();
+    final owned = _parseOwnedEmojis(p).toSet();
+    final seen = <String>{};
+    final list = <String>[];
+    for (final id in ids) {
+      if (EmojiCatalog.isValidId(id) && owned.contains(id) && seen.add(id)) {
+        list.add(id);
+      }
+      if (list.length >= EmojiCatalog.maxEquipped) break;
+    }
+    await p.setString(_ck(Keys.equippedEmojis), list.join(','));
+    cosmeticsVersion.value++;
+    if (kDebugMode) debugPrint('[STORE] equipped emojis → ${list.join(',')}');
+    if (!_offlineNs && AppConfig.kEnableFirestoreInventorySync) {
+      unawaited(_syncToFirestore(
+          {'Cosmetics': _cosmeticsPayload(p, equippedEmojis: list)}));
+    }
+  }
+
+  /// Equips [id] into the first free slot, or replaces the last slot when full.
+  /// Blocks equipping an un-owned emoji or a duplicate (already equipped).
+  static Future<void> equipEmoji(String id, {int? slot}) async {
+    if (!EmojiCatalog.isValidId(id)) return;
+    final p = await _p();
+    if (!_parseOwnedEmojis(p).contains(id)) {
+      if (kDebugMode)
+        debugPrint('[STORE] blocked emoji equip (not owned): $id');
+      return;
+    }
+    final current = _parseEquippedEmojis(p);
+    if (current.contains(id) && slot == null) return; // no duplicates
+    if (slot != null && slot >= 0 && slot < EmojiCatalog.maxEquipped) {
+      // Replace a specific slot; remove the id elsewhere to avoid duplicates.
+      final next = List<String>.from(current);
+      while (next.length <= slot) {
+        next.add('');
+      }
+      for (var i = 0; i < next.length; i++) {
+        if (i != slot && next[i] == id) next[i] = '';
+      }
+      next[slot] = id;
+      await setEquippedEmojis(next.where((e) => e.isNotEmpty).toList());
+      return;
+    }
+    if (current.length >= EmojiCatalog.maxEquipped) {
+      if (kDebugMode) debugPrint('[STORE] emoji slots full');
+      return;
+    }
+    await setEquippedEmojis([...current, id]);
+  }
+
+  /// Removes [id] from the equipped slots (if present).
+  static Future<void> unequipEmoji(String id) async {
+    final p = await _p();
+    final current = _parseEquippedEmojis(p);
+    if (!current.contains(id)) return;
+    await setEquippedEmojis(current.where((e) => e != id).toList());
   }
 
   // ── XO Image Skin methods ─────────────────────────────────────────────────
 
   static Future<String> selectedXSkin() async {
     final p = await _p();
-    return p.getString(Keys.selectedXSkin) ?? 'default';
+    return p.getString(_ck(Keys.selectedXSkin)) ?? 'default';
   }
 
   static Future<String> selectedOSkin() async {
     final p = await _p();
-    return p.getString(Keys.selectedOSkin) ?? 'default';
+    return p.getString(_ck(Keys.selectedOSkin)) ?? 'default';
   }
 
   static Future<void> setSelectedXSkin(String id) async {
     final p = await _p();
-    await p.setString(Keys.selectedXSkin, id);
+    await p.setString(_ck(Keys.selectedXSkin), id);
     cosmeticsVersion.value++;
-    if (AppConfig.kEnableFirestoreInventorySync) {
-      await _syncToFirestore({'Cosmetics': _cosmeticsPayload(p)});
+    if (!_offlineNs && AppConfig.kEnableFirestoreInventorySync) {
+      unawaited(_syncToFirestore({'Cosmetics': _cosmeticsPayload(p)}));
       if (kDebugMode) {
-        debugPrint('[INVENTORY_SYNC] ownedXSkins=${_parseSkinList(p.getString(Keys.ownedXSkins)).join(',')}');
-        debugPrint('[INVENTORY_SYNC] ownedOSkins=${_parseSkinList(p.getString(Keys.ownedOSkins)).join(',')}');
-        debugPrint('[INVENTORY_SYNC] selectedXSkin=${p.getString(Keys.selectedXSkin)}');
-        debugPrint('[INVENTORY_SYNC] selectedOSkin=${p.getString(Keys.selectedOSkin)}');
+        debugPrint(
+            '[INVENTORY_SYNC] ownedXSkins=${_parseSkinList(p.getString(Keys.ownedXSkins)).join(',')}');
+        debugPrint(
+            '[INVENTORY_SYNC] ownedOSkins=${_parseSkinList(p.getString(Keys.ownedOSkins)).join(',')}');
+        debugPrint(
+            '[INVENTORY_SYNC] selectedXSkin=${p.getString(Keys.selectedXSkin)}');
+        debugPrint(
+            '[INVENTORY_SYNC] selectedOSkin=${p.getString(Keys.selectedOSkin)}');
         debugPrint('[INVENTORY_SYNC] Firestore Cosmetics synced');
       }
     }
@@ -656,15 +888,19 @@ class LocalStore {
 
   static Future<void> setSelectedOSkin(String id) async {
     final p = await _p();
-    await p.setString(Keys.selectedOSkin, id);
+    await p.setString(_ck(Keys.selectedOSkin), id);
     cosmeticsVersion.value++;
-    if (AppConfig.kEnableFirestoreInventorySync) {
-      await _syncToFirestore({'Cosmetics': _cosmeticsPayload(p)});
+    if (!_offlineNs && AppConfig.kEnableFirestoreInventorySync) {
+      unawaited(_syncToFirestore({'Cosmetics': _cosmeticsPayload(p)}));
       if (kDebugMode) {
-        debugPrint('[INVENTORY_SYNC] ownedXSkins=${_parseSkinList(p.getString(Keys.ownedXSkins)).join(',')}');
-        debugPrint('[INVENTORY_SYNC] ownedOSkins=${_parseSkinList(p.getString(Keys.ownedOSkins)).join(',')}');
-        debugPrint('[INVENTORY_SYNC] selectedXSkin=${p.getString(Keys.selectedXSkin)}');
-        debugPrint('[INVENTORY_SYNC] selectedOSkin=${p.getString(Keys.selectedOSkin)}');
+        debugPrint(
+            '[INVENTORY_SYNC] ownedXSkins=${_parseSkinList(p.getString(Keys.ownedXSkins)).join(',')}');
+        debugPrint(
+            '[INVENTORY_SYNC] ownedOSkins=${_parseSkinList(p.getString(Keys.ownedOSkins)).join(',')}');
+        debugPrint(
+            '[INVENTORY_SYNC] selectedXSkin=${p.getString(Keys.selectedXSkin)}');
+        debugPrint(
+            '[INVENTORY_SYNC] selectedOSkin=${p.getString(Keys.selectedOSkin)}');
         debugPrint('[INVENTORY_SYNC] Firestore Cosmetics synced');
       }
     }
@@ -673,38 +909,44 @@ class LocalStore {
 
   static Future<List<String>> ownedXSkins() async {
     final p = await _p();
-    final s = p.getString(Keys.ownedXSkins) ?? 'default';
-    final ids = s.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toSet();
+    final s = p.getString(_ck(Keys.ownedXSkins)) ?? 'default';
+    final ids =
+        s.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toSet();
     if (!ids.contains('default')) ids.add('default');
     return ids.toList();
   }
 
   static Future<List<String>> ownedOSkins() async {
     final p = await _p();
-    final s = p.getString(Keys.ownedOSkins) ?? 'default';
-    final ids = s.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toSet();
+    final s = p.getString(_ck(Keys.ownedOSkins)) ?? 'default';
+    final ids =
+        s.split(',').map((e) => e.trim()).where((e) => e.isNotEmpty).toSet();
     if (!ids.contains('default')) ids.add('default');
     return ids.toList();
   }
 
   static Future<void> addOwnedXSkin(String id) async {
     final p = await _p();
-    final set = (p.getString(Keys.ownedXSkins) ?? 'default')
+    final set = (p.getString(_ck(Keys.ownedXSkins)) ?? 'default')
         .split(',')
         .map((e) => e.trim())
         .where((e) => e.isNotEmpty)
         .toSet();
     set.add('default');
     set.add(id);
-    await p.setString(Keys.ownedXSkins, set.join(','));
+    await p.setString(_ck(Keys.ownedXSkins), set.join(','));
     cosmeticsVersion.value++;
-    if (AppConfig.kEnableFirestoreInventorySync) {
-      await _syncToFirestore({'Cosmetics': _cosmeticsPayload(p)});
+    if (!_offlineNs && AppConfig.kEnableFirestoreInventorySync) {
+      unawaited(_syncToFirestore({'Cosmetics': _cosmeticsPayload(p)}));
       if (kDebugMode) {
-        debugPrint('[INVENTORY_SYNC] ownedXSkins=${_parseSkinList(p.getString(Keys.ownedXSkins)).join(',')}');
-        debugPrint('[INVENTORY_SYNC] ownedOSkins=${_parseSkinList(p.getString(Keys.ownedOSkins)).join(',')}');
-        debugPrint('[INVENTORY_SYNC] selectedXSkin=${p.getString(Keys.selectedXSkin)}');
-        debugPrint('[INVENTORY_SYNC] selectedOSkin=${p.getString(Keys.selectedOSkin)}');
+        debugPrint(
+            '[INVENTORY_SYNC] ownedXSkins=${_parseSkinList(p.getString(Keys.ownedXSkins)).join(',')}');
+        debugPrint(
+            '[INVENTORY_SYNC] ownedOSkins=${_parseSkinList(p.getString(Keys.ownedOSkins)).join(',')}');
+        debugPrint(
+            '[INVENTORY_SYNC] selectedXSkin=${p.getString(Keys.selectedXSkin)}');
+        debugPrint(
+            '[INVENTORY_SYNC] selectedOSkin=${p.getString(Keys.selectedOSkin)}');
         debugPrint('[INVENTORY_SYNC] Firestore Cosmetics synced');
       }
     }
@@ -712,22 +954,26 @@ class LocalStore {
 
   static Future<void> addOwnedOSkin(String id) async {
     final p = await _p();
-    final set = (p.getString(Keys.ownedOSkins) ?? 'default')
+    final set = (p.getString(_ck(Keys.ownedOSkins)) ?? 'default')
         .split(',')
         .map((e) => e.trim())
         .where((e) => e.isNotEmpty)
         .toSet();
     set.add('default');
     set.add(id);
-    await p.setString(Keys.ownedOSkins, set.join(','));
+    await p.setString(_ck(Keys.ownedOSkins), set.join(','));
     cosmeticsVersion.value++;
-    if (AppConfig.kEnableFirestoreInventorySync) {
-      await _syncToFirestore({'Cosmetics': _cosmeticsPayload(p)});
+    if (!_offlineNs && AppConfig.kEnableFirestoreInventorySync) {
+      unawaited(_syncToFirestore({'Cosmetics': _cosmeticsPayload(p)}));
       if (kDebugMode) {
-        debugPrint('[INVENTORY_SYNC] ownedXSkins=${_parseSkinList(p.getString(Keys.ownedXSkins)).join(',')}');
-        debugPrint('[INVENTORY_SYNC] ownedOSkins=${_parseSkinList(p.getString(Keys.ownedOSkins)).join(',')}');
-        debugPrint('[INVENTORY_SYNC] selectedXSkin=${p.getString(Keys.selectedXSkin)}');
-        debugPrint('[INVENTORY_SYNC] selectedOSkin=${p.getString(Keys.selectedOSkin)}');
+        debugPrint(
+            '[INVENTORY_SYNC] ownedXSkins=${_parseSkinList(p.getString(Keys.ownedXSkins)).join(',')}');
+        debugPrint(
+            '[INVENTORY_SYNC] ownedOSkins=${_parseSkinList(p.getString(Keys.ownedOSkins)).join(',')}');
+        debugPrint(
+            '[INVENTORY_SYNC] selectedXSkin=${p.getString(Keys.selectedXSkin)}');
+        debugPrint(
+            '[INVENTORY_SYNC] selectedOSkin=${p.getString(Keys.selectedOSkin)}');
         debugPrint('[INVENTORY_SYNC] Firestore Cosmetics synced');
       }
     }
@@ -761,7 +1007,8 @@ class LocalStore {
     final p = await _p();
     final currentUrl = p.getString(Keys.profilePhotoUrl);
     final normalized = (url == null || url.isEmpty) ? null : url;
-    if (currentUrl == normalized && profilePhotoUrlNotifier.value == normalized) {
+    if (currentUrl == normalized &&
+        profilePhotoUrlNotifier.value == normalized) {
       return;
     }
     if (normalized == null) {
@@ -782,32 +1029,100 @@ class LocalStore {
     int? balanceBefore,
     int? balanceAfter,
     String? source,
+    String? itemType,
+    String? itemId,
+    String? assetPath,
+    String? title,
   }) async {
     final isCredit = type == 'win' || type == 'recharge';
     final delta = isCredit ? coins.abs() : -coins.abs();
+    final id = transactionId?.isNotEmpty == true
+        ? transactionId!
+        : 'wallet_${DateTime.now().microsecondsSinceEpoch}_${delta.abs()}';
+    if (AppModeService.current == AppMode.offline) {
+      await WalletHistoryService.instance.recordOffline(
+        delta: delta,
+        transactionId: id,
+        source: source ?? type,
+        title: title ?? description ?? type,
+        description: description,
+        balanceBefore: balanceBefore,
+        balanceAfter: balanceAfter,
+        itemType: itemType,
+        itemId: itemId,
+        assetPath: assetPath,
+        usd: usd,
+      );
+      return;
+    }
+    final uid = _uid;
+    if (uid == null) return;
+    await WalletHistoryService.instance.recordPending(
+      uid: uid,
+      delta: delta,
+      transactionId: id,
+      source: source ?? type,
+      title: title ?? description ?? type,
+      description: description,
+      balanceBefore: balanceBefore,
+      balanceAfter: balanceAfter,
+      itemType: itemType,
+      itemId: itemId,
+      assetPath: assetPath,
+      usd: usd,
+    );
+  }
+
+  // Kept temporarily to parse pre-migration pipe records. New writes use the
+  // durable, user-scoped implementation above.
+  // ignore: unused_element
+  static Future<void> _addTopupHistoryLegacy({
+    required double usd,
+    required int coins,
+    required String type,
+    String? description,
+    String? transactionId,
+    int? balanceBefore,
+    int? balanceAfter,
+    String? source,
+    String? itemType,
+    String? assetPath,
+    String? title,
+  }) async {
+    final isCredit = type == 'win' || type == 'recharge';
+    final delta = isCredit ? coins.abs() : -coins.abs();
+    final effectiveTransactionId =
+        (transactionId != null && transactionId.isNotEmpty)
+            ? transactionId
+            : 'wallet_${DateTime.now().microsecondsSinceEpoch}_${delta.abs()}';
 
     if (kDebugMode) {
-      debugPrint('[WALLET] applying delta source=${source ?? type} delta=$delta '
+      debugPrint(
+          '[WALLET] applying delta source=${source ?? type} delta=$delta '
           'before=${balanceBefore ?? '?'} after=${balanceAfter ?? '?'}');
     }
 
     final p = await _p();
-    if (transactionId != null && transactionId.isNotEmpty) {
+    if (effectiveTransactionId.isNotEmpty) {
       final logged = p.getString(Keys.loggedTransactionIds) ?? '';
       final loggedSet = logged.split(',').where((s) => s.isNotEmpty).toSet();
-      if (loggedSet.contains(transactionId)) {
+      if (loggedSet.contains(effectiveTransactionId)) {
         if (kDebugMode) {
-          debugPrint('[WALLET_LEDGER] duplicate transaction blocked id=$transactionId');
+          debugPrint(
+              '[WALLET_LEDGER] duplicate transaction blocked id=$effectiveTransactionId');
         }
         return;
       }
-      loggedSet.add(transactionId);
+      loggedSet.add(effectiveTransactionId);
       await p.setString(Keys.loggedTransactionIds, loggedSet.join(','));
     }
 
     final nowIso = DateTime.now().toIso8601String();
+    // Fields 8-10 (itemType|assetPath|title) are appended so older 7-field
+    // entries still parse — the reader treats any missing trailing field as
+    // absent and falls back to a generic icon.
     final entry =
-        "$nowIso|$usd|$coins|$type|${balanceBefore ?? ''}|${balanceAfter ?? ''}|${description ?? ''}";
+        "$nowIso|$usd|$coins|$type|${balanceBefore ?? ''}|${balanceAfter ?? ''}|${description ?? ''}|${itemType ?? ''}|${assetPath ?? ''}|${title ?? ''}";
     final old = p.getString(Keys.topupHistory) ?? "";
     final combined = old.isEmpty ? entry : "$entry,$old";
     await p.setString(Keys.topupHistory, combined);
@@ -816,35 +1131,64 @@ class LocalStore {
     final uid = _uid;
 
     if (kDebugMode) {
-      debugPrint('[WALLET_LEDGER] created transactionId=${transactionId ?? 'none'} '
+      debugPrint(
+          '[WALLET_LEDGER] created transactionId=$effectiveTransactionId '
           'type=${isCredit ? 'credit' : 'debit'} source=${source ?? type} delta=$delta');
     }
 
-    if (isOnline && uid != null && transactionId != null && transactionId.isNotEmpty) {
-      try {
-        final ledgerEntry = <String, dynamic>{
-          'uid': uid,
-          'mode': 'online',
-          'type': isCredit ? 'credit' : 'debit',
-          if (source != null) 'source': source,
-          'title': description ?? type,
-          'delta': delta,
-          if (balanceBefore != null) 'balanceBefore': balanceBefore,
-          if (balanceAfter != null) 'balanceAfter': balanceAfter,
-          'createdAt': FieldValue.serverTimestamp(),
-          'transactionId': transactionId,
-        };
-        await UserRepo().writeWalletLedger(uid, transactionId, ledgerEntry);
-        if (kDebugMode) debugPrint('[WALLET_LEDGER] Firestore ledger write success');
-      } catch (e) {
-        if (kDebugMode) debugPrint('[WALLET_LEDGER] failed error=$e');
-      }
+    if (isOnline && uid != null && effectiveTransactionId.isNotEmpty) {
+      final ledgerEntry = <String, dynamic>{
+        'uid': uid,
+        'mode': 'online',
+        'type': isCredit ? 'credit' : 'debit',
+        if (source != null) 'source': source,
+        'title': title ?? description ?? type,
+        if (itemType != null) 'itemType': itemType,
+        if (assetPath != null && assetPath.isNotEmpty) 'assetPath': assetPath,
+        'delta': delta,
+        if (balanceBefore != null) ...<String, dynamic>{
+          'before': balanceBefore,
+          'balanceBefore': balanceBefore,
+        },
+        if (balanceAfter != null) ...<String, dynamic>{
+          'after': balanceAfter,
+          'balanceAfter': balanceAfter,
+        },
+        if (description != null) ...<String, dynamic>{
+          'message': description,
+          'description': description,
+        },
+        'createdAt': FieldValue.serverTimestamp(),
+        'transactionId': effectiveTransactionId,
+      };
+      // Fire-and-forget: the ledger doc uses transactionId as its id (idempotent
+      // server-side), so it never double-writes. Awaiting it here would make
+      // every store purchase wait a full Firestore round-trip before the UI
+      // updates — the local balance is already authoritative.
+      unawaited(
+        UserRepo()
+            .writeWalletLedger(uid, effectiveTransactionId, ledgerEntry)
+            .then((_) {
+          if (kDebugMode) {
+            debugPrint('[WALLET_LEDGER] Firestore ledger write success');
+          }
+        }).catchError((Object e) {
+          if (kDebugMode) debugPrint('[WALLET_LEDGER] failed error=$e');
+        }),
+      );
     } else {
-      if (kDebugMode) debugPrint('[WALLET_LEDGER] local offline ledger write success');
+      if (kDebugMode)
+        debugPrint('[WALLET_LEDGER] local offline ledger write success');
     }
   }
 
   static Future<List<Map<String, dynamic>>> getTopupHistory() async {
+    return (await WalletHistoryService.instance.readMergedHistory(_uid))
+        .entries;
+  }
+
+  // ignore: unused_element
+  static Future<List<Map<String, dynamic>>> _getTopupHistoryLegacy() async {
     final uid = _uid;
     if (uid != null) {
       try {
@@ -873,6 +1217,12 @@ class LocalStore {
           : null;
       final description =
           parts.length > 6 && parts[6].isNotEmpty ? parts[6] : null;
+      // Optional trailing metadata (fields 8-10) — absent on legacy entries.
+      final itemType =
+          parts.length > 7 && parts[7].isNotEmpty ? parts[7] : null;
+      final assetPath =
+          parts.length > 8 && parts[8].isNotEmpty ? parts[8] : null;
+      final title = parts.length > 9 && parts[9].isNotEmpty ? parts[9] : null;
 
       parsed.add({
         'dateTime': dateTime,
@@ -882,6 +1232,9 @@ class LocalStore {
         if (balanceBefore != null) 'balanceBefore': balanceBefore,
         if (balanceAfter != null) 'balanceAfter': balanceAfter,
         if (description != null) 'description': description,
+        if (itemType != null) 'itemType': itemType,
+        if (assetPath != null) 'assetPath': assetPath,
+        if (title != null) 'title': title,
       });
     }
     return _dedupeHistoryList(parsed);
@@ -991,6 +1344,57 @@ class LocalStore {
 
   // ── Offline profile ──────────────────────────────────────────────────────
 
+  /// One-time migration: copy the current shared/online cosmetics + mission
+  /// progress into the `offline_*` namespace so an existing offline player
+  /// (who, before the online/offline split, read the shared keys) keeps what
+  /// they had when offline. Runs at most once — guarded by [Keys.offlineSeedDone]
+  /// — and only when an offline profile actually exists. Coins are already
+  /// stored separately in [Keys.offlineCoinsV2], so they are not re-seeded.
+  static Future<void> seedOfflineNamespaceIfNeeded() async {
+    final p = await _p();
+    if (!(p.getBool(Keys.offlineProfileExists) ?? false)) return;
+    if (p.getBool(Keys.offlineSeedDone) ?? false) return;
+
+    Future<void> copyStr(String from, String to) async {
+      if (p.containsKey(to)) return; // never clobber existing offline data
+      final v = p.getString(from);
+      if (v != null && v.isNotEmpty) await p.setString(to, v);
+    }
+
+    Future<void> copyInt(String from, String to) async {
+      if (p.containsKey(to)) return;
+      final v = p.getInt(from);
+      if (v != null) await p.setInt(to, v);
+    }
+
+    // Cosmetics.
+    await copyStr(Keys.xColor, Keys.offlineXColor);
+    await copyStr(Keys.oColor, Keys.offlineOColor);
+    await copyStr(Keys.ownedXColors, Keys.offlineOwnedXColors);
+    await copyStr(Keys.ownedOColors, Keys.offlineOwnedOColors);
+    await copyStr(Keys.ownedAvatars, Keys.offlineOwnedAvatars);
+    await copyInt(Keys.equippedAvatar, Keys.offlineSelectedAvatar);
+    await copyStr(Keys.ownedEmojis, Keys.offlineOwnedEmojis);
+    await copyStr(Keys.equippedEmojis, Keys.offlineEquippedEmojis);
+    await copyStr(Keys.selectedXSkin, Keys.offlineSelectedXSkin);
+    await copyStr(Keys.selectedOSkin, Keys.offlineSelectedOSkin);
+    await copyStr(Keys.ownedXSkins, Keys.offlineOwnedXSkins);
+    await copyStr(Keys.ownedOSkins, Keys.offlineOwnedOSkins);
+    // Missions.
+    await copyStr(Keys.missionsProgress, Keys.offlineMissionsProgress);
+    await copyStr(Keys.missionsClaimed, Keys.offlineMissionsClaimed);
+    await copyStr(Keys.missionsDedupe, Keys.offlineMissionsDedupe);
+    await copyStr(Keys.missionsLastDaily, Keys.offlineMissionsLastDaily);
+    await copyStr(Keys.missionsWeekId, Keys.offlineMissionsWeekId);
+    await copyInt(Keys.missionsLoginStreak, Keys.offlineMissionsLoginStreak);
+    await copyStr(Keys.missionsLoginDay, Keys.offlineMissionsLoginDay);
+
+    await p.setBool(Keys.offlineSeedDone, true);
+    if (kDebugMode) {
+      debugPrint('[DATA_MODE] offline namespace seeded from shared data');
+    }
+  }
+
   /// Read the offline player profile from SharedPreferences, or null if not yet created.
   static Future<OfflinePlayerProfile?> getOfflineProfile() async {
     final p = await _p();
@@ -1000,7 +1404,11 @@ class LocalStore {
     final ownedAvatarsRaw = p.getString(Keys.offlineOwnedAvatars) ?? '';
     final ownedAvatarsList = ownedAvatarsRaw.isEmpty
         ? <int>[]
-        : ownedAvatarsRaw.split(',').map(int.tryParse).whereType<int>().toList();
+        : ownedAvatarsRaw
+            .split(',')
+            .map(int.tryParse)
+            .whereType<int>()
+            .toList();
 
     // Parse owned skins (comma-separated strings).
     final ownedXSkinsRaw = p.getString(Keys.offlineOwnedXSkins) ?? '';
@@ -1050,7 +1458,8 @@ class LocalStore {
       final existing = await getOfflineProfile();
       if (existing != null) {
         if (kDebugMode) {
-          debugPrint('[OFFLINE_PROFILE] preserve existing — refusing to recreate, coins=${existing.coins}');
+          debugPrint(
+              '[OFFLINE_PROFILE] preserve existing — refusing to recreate, coins=${existing.coins}');
         }
         return existing;
       }
@@ -1083,9 +1492,14 @@ class LocalStore {
     await p.remove(Keys.offlineSelectedXSkin);
     await p.setString(Keys.offlineOwnedOSkins, '');
     await p.remove(Keys.offlineSelectedOSkin);
+    // A freshly created offline profile starts empty by design, so there is
+    // nothing to seed from the shared/online namespace — mark it done so the
+    // startup seeder never later copies an online account's cosmetics in.
+    await p.setBool(Keys.offlineSeedDone, true);
 
     if (kDebugMode) {
-      debugPrint('[OfflineProfile] Created: name=$resolvedName, type=$resolvedType');
+      debugPrint(
+          '[OfflineProfile] Created: name=$resolvedName, type=$resolvedType');
     }
 
     return OfflinePlayerProfile(
@@ -1120,10 +1534,16 @@ class LocalStore {
     final p = await _p();
     final onlineCoins = p.getInt(Keys.coins) ?? 200;
     coinsNotifier.value = onlineCoins;
+    // Back online: cosmetics accessors resolve to the shared/online keys again,
+    // so refresh the equipped-avatar frame notifier from the online inventory.
+    equippedAvatarNotifier.value = p.getInt(Keys.equippedAvatar) ?? 0;
     // Clear the offline character portrait — online profile handles its own avatar.
     offlineAvatarAssetNotifier.value = null;
     profilePhotoUrlNotifier.value = p.getString(Keys.profilePhotoUrl);
     profileImagePathNotifier.value = p.getString(Keys.profilePhotoPath);
+    if (kDebugMode) {
+      debugPrint('[DATA_MODE] mode=online read/write source=online');
+    }
   }
 
   // ── Zero-Merge Offline Restart ────────────────────────────────────────────
@@ -1162,18 +1582,22 @@ class LocalStore {
     // Step 3: cancel HomeHub listeners (Firestore + session streams).
     _cancelListenersCallback?.call();
     if (kDebugMode) {
-      debugPrint('[LISTENER] Firestore listener cancelled by restartIntoOfflineMode');
-      debugPrint('[LISTENER] session listener cancelled by restartIntoOfflineMode');
+      debugPrint(
+          '[LISTENER] Firestore listener cancelled by restartIntoOfflineMode');
+      debugPrint(
+          '[LISTENER] session listener cancelled by restartIntoOfflineMode');
     }
 
     // Step 4: load (or create) the offline profile — completely separate data.
     var profile = await getOfflineProfile();
     if (profile == null) {
       profile = await createOfflineProfile();
-      if (kDebugMode) debugPrint('[OFFLINE] no existing offline profile — created fresh');
+      if (kDebugMode)
+        debugPrint('[OFFLINE] no existing offline profile — created fresh');
     } else {
       if (kDebugMode) {
-        debugPrint('[OFFLINE] loaded offline profile: ${profile.name}, coins=${profile.coins}');
+        debugPrint(
+            '[OFFLINE] loaded offline profile: ${profile.name}, coins=${profile.coins}');
       }
     }
 
@@ -1188,7 +1612,13 @@ class LocalStore {
     // Step 7: enter offline mode.
     AppModeService.setMode(AppMode.offline);
 
+    // Now that the mode is offline, the cosmetics accessors resolve to the
+    // offline namespace — refresh the equipped-avatar frame notifier so the
+    // Home avatar reflects the offline inventory, not the online one.
+    equippedAvatarNotifier.value = await equippedAvatar();
+
     if (kDebugMode) {
+      debugPrint('[DATA_MODE] mode=offline read/write source=offline');
       debugPrint('[OFFLINE] mode=offline, coins=${profile.coins}');
       debugPrint('[OFFLINE] restartIntoOfflineMode — complete');
     }
@@ -1196,4 +1626,3 @@ class LocalStore {
     return profile;
   }
 }
-

@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 
 import '../../core/app_l10n.dart';
 import '../../core/app_theme.dart';
+import '../../core/coin_format.dart';
 import '../../models/xo_skin.dart';
+import '../../widgets/app_ui.dart';
+import 'store_product_card.dart';
 
 class XOSubTabBar extends StatelessWidget {
   final int selectedIndex;
@@ -93,207 +96,78 @@ class SkinCard extends StatelessWidget {
   });
 
   static const _gold = Color(0xFFFFD700);
-  static const _goldDeep = Color(0xFFB8860B);
-  static const _goldBorder = Color(0xFFDAA520);
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppL10n.of(context);
     final isLeg = skin.isLegendary;
     final isDef = skin.isDefault;
+    // "Owned" for card purposes includes the free default.
+    final owned = isOwned || isDef;
 
-    return RepaintBoundary(
-      child: GestureDetector(
-        onTap: isOwned
-            ? (isSelected ? null : onSelect)
-            : onBuy,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(18),
-            gradient: isSelected
-                ? LinearGradient(
-                    colors: [accent.withOpacity(0.22), AppPalette.panelDeep],
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                  )
-                : isLeg
-                    ? const LinearGradient(
-                        colors: [Color(0xFF1A1200), Color(0xFF0A0800)],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      )
-                    : LinearGradient(
-                        colors: [
-                          AppPalette.panelElevated,
-                          AppPalette.panelDeep,
-                        ],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-            border: Border.all(
-              color: isSelected
-                  ? accent.withOpacity(0.80)
-                  : isLeg
-                      ? _goldBorder.withOpacity(0.60)
-                      : AppPalette.homeStroke.withOpacity(0.18),
-              width: isSelected || isLeg ? 1.5 : 1,
+    // Preview: default cards paint the current color glyph; image skins show
+    // their WebP art with a graceful fallback.
+    final preview = isDef
+        ? DefaultPreview(isX: skin.type == 'x', xColor: xColor, oColor: oColor)
+        : Image.asset(
+            skin.assetPath,
+            fit: BoxFit.contain,
+            filterQuality: FilterQuality.medium,
+            errorBuilder: (_, __, ___) => const Center(
+              child: Icon(Icons.image_not_supported,
+                  color: Colors.white24, size: 32),
             ),
-            boxShadow: isSelected || isLeg
-                ? [
-                    BoxShadow(
-                      color: isSelected
-                          ? accent.withOpacity(0.22)
-                          : _gold.withOpacity(0.14),
-                      blurRadius: 16,
-                      spreadRadius: -2,
-                    )
-                  ]
-                : null,
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              // Legendary shimmer badge
-              if (isLeg)
-                Padding(
-                  padding: const EdgeInsets.only(top: 6, bottom: 2),
-                  child: Text(
-                    'LEGENDARY',
-                    style: safeOrbitron(
-                      fontSize: 7,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 1.4,
-                      color: _gold,
-                    ),
-                  ),
-                )
-              else
-                const SizedBox(height: 8),
-              // Skin image preview
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  child: isDef
-                      ? DefaultPreview(isX: skin.type == 'x', xColor: xColor, oColor: oColor)
-                      : Image.asset(
-                          skin.assetPath,
-                          fit: BoxFit.contain,
-                          errorBuilder: (_, __, ___) => const Center(
-                            child: Icon(Icons.image_not_supported,
-                                color: Colors.white24, size: 32),
-                          ),
-                        ),
-                ),
-              ),
-              const SizedBox(height: 6),
-              // Status badge
-              if (isSelected)
-                Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 6),
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: accent.withOpacity(0.18),
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(color: accent, width: 0.7),
-                  ),
-                  child: Text(
-                    l10n.selectedBadge,
-                    style: safeOrbitron(fontSize: 7, color: accent, fontWeight: FontWeight.w900),
-                  ),
-                )
-              else if (isOwned)
-                Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 6),
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: AppPalette.success.withOpacity(0.14),
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(color: AppPalette.success, width: 0.7),
-                  ),
-                  child: Text(
-                    l10n.ownedBadge,
-                    style: safeOrbitron(
-                        fontSize: 7, color: AppPalette.success, fontWeight: FontWeight.w900),
-                  ),
-                )
-              else if (isDef)
-                Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 6),
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: AppPalette.success.withOpacity(0.14),
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(color: AppPalette.success, width: 0.7),
-                  ),
-                  child: Text(
-                    l10n.freeBadge,
-                    style: safeOrbitron(
-                        fontSize: 7, color: AppPalette.success, fontWeight: FontWeight.w900),
-                  ),
-                )
-              else
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Image.asset('assets/coin/COIN.png',
-                        height: 11, fit: BoxFit.contain),
-                    const SizedBox(width: 3),
-                    Text(
-                      '${skin.price}',
-                      style: safeOrbitron(
-                        fontSize: 9,
-                        color: isLeg ? _gold : const Color(0xFFFFD700),
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ],
-                ),
-              const SizedBox(height: 6),
-              // Action button
-              if (!isSelected)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(6, 0, 6, 8),
-                  child: SizedBox(
-                    width: double.infinity,
-                    height: 28,
-                    child: ElevatedButton(
-                      onPressed: isOwned ? onSelect : (isDef ? onSelect : onBuy),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: isOwned || isDef
-                            ? accent.withOpacity(0.15)
-                            : isLeg
-                                ? _goldDeep
-                                : accent.withOpacity(0.80),
-                        foregroundColor: isOwned || isDef ? accent : Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                          side: BorderSide(
-                              color: isOwned || isDef
-                                  ? accent.withOpacity(0.50)
-                                  : Colors.transparent),
-                        ),
-                        padding: EdgeInsets.zero,
-                        elevation: 0,
-                      ),
-                      child: Text(
-                        isOwned || isDef ? 'SELECT' : 'BUY',
-                        style: safeOrbitron(
-                          fontSize: 9,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 1.2,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ),
-                )
-              else
-                const SizedBox(height: 8),
-            ],
-          ),
-        ),
-      ),
+          );
+
+    // Top-left status tag: LEGENDARY for premium skins, FREE for the default.
+    Widget? topTag;
+    if (isLeg) {
+      topTag = const StoreCardTag(label: 'LEGENDARY', color: _gold);
+    } else if (isDef && !isSelected) {
+      topTag = StoreCardTag(label: l10n.freeBadge, color: AppPalette.success);
+    }
+
+    // Action button — green BUY when locked, accent SELECT when owned, and a
+    // green disabled SELECTED pill when currently equipped.
+    final Widget button;
+    if (isSelected) {
+      button = AppPillButton(
+        label: l10n.selectedBadge,
+        fill: StoreCardSpec.activeGreen,
+        stroke: StoreCardSpec.activeGreen.withOpacity(0.55),
+        onPressed: null,
+        icon: Icons.check_rounded,
+        labelFontSize: 10,
+        labelLetterSpacing: 0.6,
+      );
+    } else if (owned) {
+      button = AppPillButton(
+        label: 'SELECT',
+        fill: Colors.white.withOpacity(0.04),
+        stroke: accent.withOpacity(0.50),
+        iconColor: accent,
+        icon: Icons.bolt_rounded,
+        onPressed: onSelect,
+        labelFontSize: 10,
+        labelLetterSpacing: 0.6,
+      );
+    } else {
+      button = storeBuyButton(
+        label: l10n.buyWithPrice(formatCoins(skin.price)),
+        onPressed: onBuy,
+        leading: Image.asset('assets/coin/COIN.webp',
+            height: 12, fit: BoxFit.contain),
+      );
+    }
+
+    return StoreProductCard(
+      onTap: owned ? (isSelected ? null : onSelect) : onBuy,
+      active: isSelected,
+      owned: owned,
+      activeColor: accent,
+      topTag: topTag,
+      preview: preview,
+      button: button,
     );
   }
 }

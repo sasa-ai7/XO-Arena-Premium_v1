@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
 
 import '../core/coin_format.dart';
+import '../core/app_l10n.dart';
 import '../core/app_theme.dart';
 import '../core/responsive_metrics.dart';
 import '../models/game_avatar.dart';
@@ -216,10 +217,15 @@ class _CoinsScreenState extends State<CoinsScreen> {
     );
   }
 
-  void _handlePurchaseSuccess(String productId, int coins) {
+  void _handlePurchaseSuccess(String _, int coins) {
     _hideLoadingDialog();
     if (!mounted) return;
     _showCoinSuccessToast(coins);
+    // Display-only history record so the coin purchase shows in the wallet
+    // history with the real coin image. This passes NO transactionId, so it
+    // only appends to the local topupHistory list — it does NOT write a
+    // wallet_ledger doc and does NOT change the balance (the grant already
+    // credited coins), so there is no risk of double-crediting the IAP.
   }
 
   void _handleAvatarPurchaseSuccess(PurchaseGrantResult result) {
@@ -270,7 +276,8 @@ class _CoinsScreenState extends State<CoinsScreen> {
                     ),
                   ),
                   alignment: Alignment.center,
-                  child: FullAvatarDisplay(size: 108, avatar: avatar),
+                  child: FullAvatarDisplay(
+                      size: 108, avatar: avatar, showFrame: true),
                 ),
                 const SizedBox(height: 18),
                 Text(
@@ -362,10 +369,10 @@ class _CoinsScreenState extends State<CoinsScreen> {
         color: AppPalette.success,
         seconds: 2,
       );
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
       _showFloatingMessage(
-        'Check failed: ${e.toString().replaceAll('Exception: ', '')}',
+        AppL10n.of(context).somethingWentWrong,
         icon: Icons.error_outline,
         color: AppPalette.danger,
       );
@@ -389,6 +396,9 @@ class _CoinsScreenState extends State<CoinsScreen> {
       return;
     }
 
+    final confirmed = await _confirmProductPurchase(product);
+    if (confirmed != true || !mounted) return;
+
     setState(() => _pendingPurchaseProductId = product.id);
     _showLoadingDialog();
     try {
@@ -397,7 +407,7 @@ class _CoinsScreenState extends State<CoinsScreen> {
       if (!success && _controller.errorMessage != null) {
         _hideLoadingDialog();
         _showFloatingMessage(
-          _controller.errorMessage!,
+          AppL10n.of(context).somethingWentWrong,
           icon: Icons.error_outline,
           color: AppPalette.danger,
         );
@@ -407,6 +417,74 @@ class _CoinsScreenState extends State<CoinsScreen> {
         setState(() => _pendingPurchaseProductId = null);
       }
     }
+  }
+
+  Future<bool?> _confirmProductPurchase(ProductDetails product) {
+    final l10n = AppL10n.of(context);
+    final isAvatar = CoinsCatalog.isAvatarProduct(product.id);
+    final asset = isAvatar
+        ? CoinsCatalog.avatarAssetForProductId(product.id)
+        : CoinsCatalog.assetForCoinProduct(product.id);
+    final amount = CoinsCatalog.coinsForProductId(product.id);
+    final name = isAvatar
+        ? (l10n.isAr ? 'إطار أفاتار مميز' : 'Premium avatar frame')
+        : (l10n.isAr ? '$amount عملة' : '$amount coins');
+    return showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 440),
+          child: AppGlassCard(
+            padding: const EdgeInsets.all(22),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 92,
+                  height: 92,
+                  child: Image.asset(asset, fit: BoxFit.contain),
+                ),
+                const SizedBox(height: 14),
+                Text(name,
+                    textAlign: TextAlign.center,
+                    style: safeOrbitron(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                        color: AppPalette.text)),
+                const SizedBox(height: 8),
+                Text(product.price,
+                    style: safeOrbitron(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
+                        color: AppPalette.goldHighlight)),
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    Expanded(
+                      child: AppPillButton(
+                        label: l10n.cancelBtn,
+                        onPressed: () => Navigator.pop(dialogContext, false),
+                        fill: Colors.white.withValues(alpha: 0.08),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: AppPillButton(
+                        label: l10n.confirmBtn,
+                        onPressed: () => Navigator.pop(dialogContext, true),
+                        fill: AppPalette.success,
+                        icon: Icons.shopping_bag_rounded,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   void _showLoadingDialog() {
@@ -439,8 +517,7 @@ class _CoinsScreenState extends State<CoinsScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 const CircularProgressIndicator(
-                  valueColor:
-                      AlwaysStoppedAnimation<Color>(AppPalette.primary),
+                  valueColor: AlwaysStoppedAnimation<Color>(AppPalette.primary),
                   strokeWidth: 3,
                 ),
                 const SizedBox(height: 20),
@@ -513,8 +590,8 @@ class _CoinsScreenState extends State<CoinsScreen> {
       avatarOffers.add(_PremiumAvatarOffer(
         productId: CoinsCatalog.premiumAvatarProductId,
         avatarId: CoinsCatalog.premiumAvatarId,
-        title: 'Inferno Premium Avatar',
-        subtitle: 'Animated Inferno frame — unlocked forever.',
+        title: 'Golden Halo Premium Avatar',
+        subtitle: 'Exclusive Golden Halo frame — unlocked forever.',
         assetPath: CoinsCatalog.premiumAvatarAsset,
         priceLabel: p?.price ?? CoinsCatalog.premiumAvatarFallbackPrice,
         originalPriceLabel: CoinsCatalog.premiumAvatarOriginalPrice,
@@ -530,8 +607,8 @@ class _CoinsScreenState extends State<CoinsScreen> {
       avatarOffers.add(_PremiumAvatarOffer(
         productId: CoinsCatalog.premiumAvatarApexProductId,
         avatarId: CoinsCatalog.premiumAvatarApexId,
-        title: 'Apex Premium Avatar',
-        subtitle: 'Animated Apex frame — unlocked forever.',
+        title: 'Star Crown Premium Avatar',
+        subtitle: 'Exclusive Star Crown frame — unlocked forever.',
         assetPath: CoinsCatalog.premiumAvatarApexAsset,
         priceLabel: p?.price ?? CoinsCatalog.premiumAvatarApexFallbackPrice,
         originalPriceLabel: CoinsCatalog.premiumAvatarApexOriginalPrice,
@@ -592,9 +669,8 @@ class _CoinsScreenState extends State<CoinsScreen> {
                   Align(
                     alignment: Alignment.center,
                     child: TextButton(
-                      onPressed: _controller.restoring
-                          ? null
-                          : _checkPendingPurchases,
+                      onPressed:
+                          _controller.restoring ? null : _checkPendingPurchases,
                       child: Text(
                         _controller.restoring
                             ? 'Checking...'
@@ -624,8 +700,7 @@ class _CoinsScreenState extends State<CoinsScreen> {
         borderColor: AppPalette.gold.withOpacity(0.24),
         child: Row(
           children: [
-            const Icon(Icons.info_outline,
-                color: AppPalette.warning, size: 22),
+            const Icon(Icons.info_outline, color: AppPalette.warning, size: 22),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
@@ -648,8 +723,7 @@ class _CoinsScreenState extends State<CoinsScreen> {
         borderColor: AppPalette.warning.withOpacity(0.24),
         child: Row(
           children: [
-            const Icon(Icons.info_outline,
-                color: AppPalette.warning, size: 24),
+            const Icon(Icons.info_outline, color: AppPalette.warning, size: 24),
             const SizedBox(width: 12),
             Expanded(
               child: Text(
@@ -834,7 +908,7 @@ class _StickyShopHeader extends StatelessWidget {
                       width: 132,
                       height: 132,
                       child: Image.asset(
-                        'assets/coin/COIN-SHOP.png',
+                        'assets/coin/COIN-SHOP.webp',
                         fit: BoxFit.contain,
                       ),
                     ),
@@ -921,7 +995,7 @@ class _ExactBalancePill extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Image.asset('assets/coin/COIN.png', width: 22, height: 22),
+          Image.asset('assets/coin/COIN.webp', width: 22, height: 22),
           const SizedBox(width: 8),
           Flexible(
             child: FittedBox(
@@ -1168,8 +1242,8 @@ class _PremiumAvatarSlide extends StatelessWidget {
             Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(999),
                     color: accent.withOpacity(0.14),
@@ -1187,8 +1261,8 @@ class _PremiumAvatarSlide extends StatelessWidget {
                 ),
                 const Spacer(),
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(999),
                     color: AppPalette.success.withOpacity(0.18),
@@ -1217,7 +1291,8 @@ class _PremiumAvatarSlide extends StatelessWidget {
                 SizedBox(
                   width: 116,
                   height: 116,
-                  child: FullAvatarDisplay(size: 116, avatar: avatar),
+                  child: FullAvatarDisplay(
+                      size: 116, avatar: avatar, showFrame: true),
                 ),
                 const SizedBox(width: 14),
                 Expanded(
@@ -1379,8 +1454,8 @@ class _CoinPackCard extends StatelessWidget {
               children: [
                 Flexible(
                   child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 9, vertical: 5),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
                     decoration: BoxDecoration(
                       color: accent.withOpacity(isPopular ? 0.18 : 0.12),
                       borderRadius: BorderRadius.circular(999),
@@ -1480,9 +1555,7 @@ class _CoinPackCard extends StatelessWidget {
             AppPillButton(
               label: isPending ? 'PROCESSING' : 'BUY NOW',
               onPressed: canTap ? onBuy : null,
-              fill: isPopular
-                  ? AppPalette.goldDeep
-                  : AppPalette.primary2,
+              fill: isPopular ? AppPalette.goldDeep : AppPalette.primary2,
               stroke: isPopular
                   ? AppPalette.goldHighlight.withOpacity(0.55)
                   : AppPalette.primary.withOpacity(0.45),

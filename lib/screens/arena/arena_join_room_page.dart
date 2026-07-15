@@ -45,6 +45,7 @@ class _ArenaJoinRoomPageState extends State<ArenaJoinRoomPage> {
     final data = await Clipboard.getData(Clipboard.kTextPlain);
     final raw = data?.text ?? '';
     final digits = raw.replaceAll(RegExp(r'\D'), '');
+    if (!mounted) return;
     if (digits.length < _length) {
       if (mounted) {
         ArenaToast.error(context, AppL10n.of(context).clipboardNoValidRoomCode);
@@ -133,6 +134,7 @@ class _ArenaJoinRoomPageState extends State<ArenaJoinRoomPage> {
         default:
           msg = l10n.roomNotFound;
       }
+      if (!mounted) return;
       ArenaToast.show(context, msg, kind: kind);
     } on TimeoutException {
       if (mounted) {
@@ -232,8 +234,7 @@ class _ArenaJoinRoomPageState extends State<ArenaJoinRoomPage> {
                             onDigit: _addDigit,
                             onDelete: _delete,
                             onEnter: _submit,
-                            enterEnabled:
-                                _value.length == _length && !_busy,
+                            enterEnabled: _value.length == _length && !_busy,
                           ),
                         ),
                       ),
@@ -272,8 +273,7 @@ class _KickedCooldownDialogState extends State<_KickedCooldownDialog> {
     super.initState();
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
-      final remaining =
-          widget.untilMs - DateTime.now().millisecondsSinceEpoch;
+      final remaining = widget.untilMs - DateTime.now().millisecondsSinceEpoch;
       if (remaining <= 0) {
         Navigator.of(context).maybePop();
       } else {
@@ -353,14 +353,13 @@ class _KickedCooldownDialogState extends State<_KickedCooldownDialog> {
               child: ElevatedButton(
                 onPressed: () => Navigator.of(context).maybePop(),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor:
-                      AppPalette.danger.withValues(alpha: 0.18),
+                  backgroundColor: AppPalette.danger.withValues(alpha: 0.18),
                   foregroundColor: AppPalette.danger,
                   elevation: 0,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
-                    side: const BorderSide(
-                        color: AppPalette.danger, width: 1.2),
+                    side:
+                        const BorderSide(color: AppPalette.danger, width: 1.2),
                   ),
                 ),
                 child: const Padding(

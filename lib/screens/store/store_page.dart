@@ -3,21 +3,27 @@ import 'dart:math';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/app_l10n.dart';
 import '../../core/app_theme.dart';
 import '../../core/keys.dart';
 import '../../core/neon_colors.dart';
-import '../../core/responsive_metrics.dart';
 import '../../models/game_avatar.dart';
+import '../../models/game_emoji.dart';
+import '../../services/app_mode_service.dart';
 import '../../services/local_store.dart';
+import '../../services/mission_service.dart';
+import '../../services/wallet_transaction_service.dart';
 import '../../utils/navigation_utils.dart';
 import '../../widgets/app_ui.dart';
 import '../../widgets/avatar_store_tab.dart';
+import '../../widgets/emoji_store_tab.dart';
 import '../../coins/coins_screen.dart';
 import '../../coins/premium_avatar_service.dart';
 import 'colors_tab.dart';
+import 'store_category_image_tile.dart';
 
 class StorePage extends StatefulWidget {
   final int initialTab;
@@ -45,6 +51,11 @@ class _StorePageState extends State<StorePage>
   String _selectedOSkin = 'default';
   List<String> _ownedXSkins = ['default'];
   List<String> _ownedOSkins = ['default'];
+
+  // Emoji state
+  List<String> _ownedEmojis = [];
+  List<String> _equippedEmojis = [];
+  bool _emojiTabVisited = false;
 
   // Lazily build the Avatar tab (heavy image grid) only after it is first
   // opened, mirroring the _visitedTabs lazy-tab pattern in home_hub. Colors
@@ -98,6 +109,8 @@ class _StorePageState extends State<StorePage>
     _ownedOSkins = await LocalStore.ownedOSkins();
     _selectedXSkin = await LocalStore.selectedXSkin();
     _selectedOSkin = await LocalStore.selectedOSkin();
+    _ownedEmojis = await LocalStore.ownedEmojis();
+    _equippedEmojis = await LocalStore.equippedEmojis();
     setState(() => _coins = p.getInt(Keys.coins) ?? 0);
   }
 
@@ -107,6 +120,8 @@ class _StorePageState extends State<StorePage>
         return l10n.avatarGalleryTab;
       case 2:
         return l10n.buyCoins;
+      case 3:
+        return l10n.emojiGalleryTab;
       case 0:
       default:
         return l10n.storeTab;
@@ -119,6 +134,8 @@ class _StorePageState extends State<StorePage>
         return l10n.avatarGallerySubtitle;
       case 2:
         return l10n.buyCoinsSubtitle;
+      case 3:
+        return l10n.emojiGallerySubtitle;
       case 0:
       default:
         return l10n.storeSubtitle;
@@ -270,7 +287,7 @@ class _StorePageState extends State<StorePage>
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Image.asset(
-                      'assets/coin/COIN.png',
+                      'assets/coin/COIN.webp',
                       height: 18,
                       fit: BoxFit.contain,
                     ),
@@ -313,10 +330,20 @@ class _StorePageState extends State<StorePage>
     );
   }
 
+  /// Whether the player can spend coins on cosmetics right now. Offline mode
+  /// spends the offline wallet; online requires a signed-in account. Real-money
+  /// coin PACKS remain online-only and are gated separately in the Coins tab.
+  bool _canPurchaseCosmetics() {
+    if (AppModeService.current == AppMode.offline) return true;
+    return FirebaseAuth.instance.currentUser != null;
+  }
+
+  String get _purchaseSource =>
+      AppModeService.current == AppMode.offline ? 'offline' : 'online';
+
   Future<void> _buyXColor(int i) async {
     if (_busy) return;
-    // Check if guest
-    if (FirebaseAuth.instance.currentUser == null) {
+    if (!_canPurchaseCosmetics()) {
       showSignInRequiredDialog(context);
       return;
     }
@@ -338,16 +365,25 @@ class _StorePageState extends State<StorePage>
     );
     if (confirmed != true || !mounted) return;
     setState(() => _busy = true);
-    final before = LocalStore.coinsNotifier.value;
-    await LocalStore.updateCoins(-price);
-    await LocalStore.addTopupHistory(
-        usd: 0.0,
-        coins: price,
-        type: 'loss',
-        description: 'Cosmetic Purchase',
-        balanceBefore: before,
-        balanceAfter: before - price);
+    final result = await WalletTransactionService.instance.applyDebit(
+      coins: price,
+      transactionId: 'store_x_color_${LocalStore.uid ?? 'offline'}_$i',
+      source: 'x_color_purchase',
+      title: 'Color Purchase',
+      message: 'Cosmetic Purchase',
+      itemType: 'x_color',
+      itemId: '$i',
+    );
+    if (!result.success) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      showTopNotification(context, 'Purchase failed — coins not deducted.',
+          color: AppPalette.danger);
+      return;
+    }
     await LocalStore.addOwnedXColor(i);
+    await MissionService.instance.trackAmount('coins_spent', price);
+    await MissionService.instance.trackEvent('theme_bought');
     await _load();
     if (!mounted) return;
     setState(() => _busy = false);
@@ -357,8 +393,7 @@ class _StorePageState extends State<StorePage>
 
   Future<void> _buyOColor(int i) async {
     if (_busy) return;
-    // Check if guest
-    if (FirebaseAuth.instance.currentUser == null) {
+    if (!_canPurchaseCosmetics()) {
       showSignInRequiredDialog(context);
       return;
     }
@@ -380,16 +415,25 @@ class _StorePageState extends State<StorePage>
     );
     if (confirmed != true || !mounted) return;
     setState(() => _busy = true);
-    final before = LocalStore.coinsNotifier.value;
-    await LocalStore.updateCoins(-price);
-    await LocalStore.addTopupHistory(
-        usd: 0.0,
-        coins: price,
-        type: 'loss',
-        description: 'Cosmetic Purchase',
-        balanceBefore: before,
-        balanceAfter: before - price);
+    final result = await WalletTransactionService.instance.applyDebit(
+      coins: price,
+      transactionId: 'store_o_color_${LocalStore.uid ?? 'offline'}_$i',
+      source: 'o_color_purchase',
+      title: 'Color Purchase',
+      message: 'Cosmetic Purchase',
+      itemType: 'o_color',
+      itemId: '$i',
+    );
+    if (!result.success) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      showTopNotification(context, 'Purchase failed — coins not deducted.',
+          color: AppPalette.danger);
+      return;
+    }
     await LocalStore.addOwnedOColor(i);
+    await MissionService.instance.trackAmount('coins_spent', price);
+    await MissionService.instance.trackEvent('theme_bought');
     await _load();
     if (!mounted) return;
     setState(() => _busy = false);
@@ -401,7 +445,7 @@ class _StorePageState extends State<StorePage>
 
   Future<void> _buyXSkin(String skinId, int price) async {
     if (_busy) return;
-    if (FirebaseAuth.instance.currentUser == null) {
+    if (!_canPurchaseCosmetics()) {
       showSignInRequiredDialog(context);
       return;
     }
@@ -417,17 +461,30 @@ class _StorePageState extends State<StorePage>
         context: context, isX: true, skinId: skinId, price: price);
     if (confirmed != true || !mounted) return;
     setState(() => _busy = true);
-    final before = LocalStore.coinsNotifier.value;
-    await LocalStore.updateCoins(-price);
-    await LocalStore.addTopupHistory(
-        usd: 0.0,
-        coins: price,
-        type: 'loss',
-        description: 'X Skin Purchase: $skinId',
-        balanceBefore: before,
-        balanceAfter: before - price);
+    final result = await WalletTransactionService.instance.applyDebit(
+      coins: price,
+      transactionId: 'store_x_skin_${LocalStore.uid ?? 'offline'}_$skinId',
+      source: 'store_x_skin_purchase',
+      title: 'X Skin Purchase',
+      message: 'X Skin Purchase: $skinId',
+      itemType: 'x_skin',
+      itemId: skinId,
+      assetPath: 'assets/x/$skinId.webp',
+    );
+    if (!result.success) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      showTopNotification(context, 'Purchase failed — coins not deducted.',
+          color: AppPalette.danger);
+      return;
+    }
+    if (kDebugMode)
+      debugPrint(
+          '[STORE] purchase source=$_purchaseSource item=x_skin:$skinId');
     await LocalStore.addOwnedXSkin(skinId);
     await LocalStore.setSelectedXSkin(skinId);
+    await MissionService.instance.trackAmount('coins_spent', price);
+    await MissionService.instance.trackEvent('theme_bought');
     await _load();
     if (!mounted) return;
     setState(() => _busy = false);
@@ -436,7 +493,7 @@ class _StorePageState extends State<StorePage>
 
   Future<void> _buyOSkin(String skinId, int price) async {
     if (_busy) return;
-    if (FirebaseAuth.instance.currentUser == null) {
+    if (!_canPurchaseCosmetics()) {
       showSignInRequiredDialog(context);
       return;
     }
@@ -452,17 +509,30 @@ class _StorePageState extends State<StorePage>
         context: context, isX: false, skinId: skinId, price: price);
     if (confirmed != true || !mounted) return;
     setState(() => _busy = true);
-    final before = LocalStore.coinsNotifier.value;
-    await LocalStore.updateCoins(-price);
-    await LocalStore.addTopupHistory(
-        usd: 0.0,
-        coins: price,
-        type: 'loss',
-        description: 'O Skin Purchase: $skinId',
-        balanceBefore: before,
-        balanceAfter: before - price);
+    final result = await WalletTransactionService.instance.applyDebit(
+      coins: price,
+      transactionId: 'store_o_skin_${LocalStore.uid ?? 'offline'}_$skinId',
+      source: 'store_o_skin_purchase',
+      title: 'O Skin Purchase',
+      message: 'O Skin Purchase: $skinId',
+      itemType: 'o_skin',
+      itemId: skinId,
+      assetPath: 'assets/o/$skinId.webp',
+    );
+    if (!result.success) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      showTopNotification(context, 'Purchase failed — coins not deducted.',
+          color: AppPalette.danger);
+      return;
+    }
+    if (kDebugMode)
+      debugPrint(
+          '[STORE] purchase source=$_purchaseSource item=o_skin:$skinId');
     await LocalStore.addOwnedOSkin(skinId);
     await LocalStore.setSelectedOSkin(skinId);
+    await MissionService.instance.trackAmount('coins_spent', price);
+    await MissionService.instance.trackEvent('theme_bought');
     await _load();
     if (!mounted) return;
     setState(() => _busy = false);
@@ -471,9 +541,12 @@ class _StorePageState extends State<StorePage>
 
   Future<void> _selectXSkin(String skinId) async {
     if (_busy) return;
+    final sw = Stopwatch()..start();
     await LocalStore.setSelectedXSkin(skinId);
     if (!mounted) return;
     setState(() => _selectedXSkin = skinId);
+    HapticFeedback.selectionClick();
+    debugPrint('[PERF] skin_equip_ms=${sw.elapsedMilliseconds}');
     showTopNotification(context,
         skinId == 'default' ? 'Restored default X' : 'X Skin selected!',
         color: AppPalette.success);
@@ -481,9 +554,12 @@ class _StorePageState extends State<StorePage>
 
   Future<void> _selectOSkin(String skinId) async {
     if (_busy) return;
+    final sw = Stopwatch()..start();
     await LocalStore.setSelectedOSkin(skinId);
     if (!mounted) return;
     setState(() => _selectedOSkin = skinId);
+    HapticFeedback.selectionClick();
+    debugPrint('[PERF] skin_equip_ms=${sw.elapsedMilliseconds}');
     showTopNotification(context,
         skinId == 'default' ? 'Restored default O' : 'O Skin selected!',
         color: AppPalette.success);
@@ -513,9 +589,7 @@ class _StorePageState extends State<StorePage>
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(16),
                     child: Image.asset(
-                      isX
-                          ? 'assets/x/$skinId.png'
-                          : 'assets/o/$skinId.png',
+                      isX ? 'assets/x/$skinId.webp' : 'assets/o/$skinId.webp',
                       fit: BoxFit.contain,
                     ),
                   ),
@@ -534,7 +608,7 @@ class _StorePageState extends State<StorePage>
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Image.asset('assets/coin/COIN.png',
+                    Image.asset('assets/coin/COIN.webp',
                         height: 18, fit: BoxFit.contain),
                     const SizedBox(width: 6),
                     Text(
@@ -584,7 +658,7 @@ class _StorePageState extends State<StorePage>
 
   Future<void> _buyAvatar(GameAvatar avatar) async {
     if (_busy) return;
-    if (FirebaseAuth.instance.currentUser == null) {
+    if (!_canPurchaseCosmetics()) {
       showSignInRequiredDialog(context);
       return;
     }
@@ -594,7 +668,8 @@ class _StorePageState extends State<StorePage>
         await _equipAvatar(0); // 0 = no avatar equipped
         if (kDebugMode) {
           debugPrint('[STORE] avatar unequipped');
-          debugPrint('[PROFILE] selectedAvatar=null, using fallback profile image');
+          debugPrint(
+              '[PROFILE] selectedAvatar=null, using fallback profile image');
         }
       } else {
         await _equipAvatar(avatar.id);
@@ -620,41 +695,263 @@ class _StorePageState extends State<StorePage>
     final confirmed = await showAvatarPurchaseDialog(context, avatar);
     if (confirmed != true || !mounted) return;
 
+    final sw = Stopwatch()..start();
+    debugPrint('[PERF] store_buy_start item=${avatar.id}');
     setState(() => _busy = true);
     if (avatar.price > 0) {
-      final before = LocalStore.coinsNotifier.value;
-      await LocalStore.updateCoins(-avatar.price);
-      await LocalStore.addTopupHistory(
-        usd: 0.0,
+      final result = await WalletTransactionService.instance.applyDebit(
         coins: avatar.price,
-        type: 'loss',
-        description: 'Avatar Purchase: ${avatar.name}',
-        balanceBefore: before,
-        balanceAfter: before - avatar.price,
+        transactionId:
+            'store_avatar_${LocalStore.uid ?? 'offline'}_${avatar.id}',
+        source: 'avatar_purchase',
+        title: 'Avatar Purchase',
+        message: 'Avatar Purchase: ${avatar.name}',
+        itemType: 'avatar',
+        itemId: '${avatar.id}',
+        assetPath: avatar.assetPath,
       );
+      if (!result.success) {
+        if (!mounted) return;
+        setState(() => _busy = false);
+        showTopNotification(context, 'Purchase failed — coins not deducted.',
+            color: AppPalette.danger);
+        return;
+      }
+      if (kDebugMode)
+        debugPrint(
+            '[STORE] purchase source=$_purchaseSource item=avatar:${avatar.id}');
+      await MissionService.instance.trackAmount('coins_spent', avatar.price);
     }
     await LocalStore.addOwnedAvatar(avatar.id);
     await LocalStore.setEquippedAvatar(avatar.id);
+    await MissionService.instance.trackEvent('avatar_equipped');
+    debugPrint('[PERF] store_buy_local_done_ms=${sw.elapsedMilliseconds}');
     await _load();
     if (!mounted) return;
     setState(() => _busy = false);
+    HapticFeedback.mediumImpact();
+    debugPrint('[PERF] store_buy_ui_updated_ms=${sw.elapsedMilliseconds}');
     showTopNotification(context, 'Purchased ${avatar.name}!',
         color: AppPalette.success);
   }
 
   Future<void> _equipAvatar(int id) async {
     if (_busy) return;
+    final sw = Stopwatch()..start();
     await LocalStore.setEquippedAvatar(id);
+    if (id != 0) {
+      await MissionService.instance.trackEvent('avatar_equipped');
+    }
     if (!mounted) return;
     setState(() => _equippedAvatar = id);
+    HapticFeedback.selectionClick();
+    debugPrint('[PERF] avatar_equip_ms=${sw.elapsedMilliseconds}');
     final l10n = AppL10n.of(context);
     if (id == 0) {
       showTopNotification(context, l10n.avatarUnequipped,
           color: AppPalette.textMuted);
     } else {
-      showTopNotification(context, '${gameAvatarById(id).name} ${l10n.storeEquipped}!',
+      showTopNotification(
+          context, '${gameAvatarById(id).name} ${l10n.storeEquipped}!',
           color: AppPalette.success);
     }
+  }
+
+  // ── Emoji store actions ──────────────────────────────────────────────────
+
+  Future<void> _buyEmoji(GameEmoji emoji) async {
+    if (_busy) return;
+    final l10n = AppL10n.of(context);
+    if (!_canPurchaseCosmetics()) {
+      showSignInRequiredDialog(context);
+      return;
+    }
+    // Free or already owned → treat the tap as an equip request.
+    if (emoji.isFree || _ownedEmojis.contains(emoji.id)) {
+      await _equipEmoji(emoji.id);
+      return;
+    }
+    if (_coins < emoji.priceCoins) {
+      _showInsufficientCoinsDialog(context, emoji.priceCoins, _coins);
+      return;
+    }
+    // Confirmation BEFORE any coin deduction.
+    final confirmed = await _showEmojiPurchaseConfirmDialog(
+      context: context,
+      emoji: emoji,
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _busy = true);
+    try {
+      final result = await WalletTransactionService.instance.applyDebit(
+        coins: emoji.priceCoins,
+        transactionId: 'store_emoji_${LocalStore.uid ?? 'offline'}_${emoji.id}',
+        source: 'emoji_purchase',
+        title: 'Emoji Purchase',
+        message: 'Emoji Purchase: ${emoji.id}',
+        itemType: 'emoji',
+        itemId: emoji.id,
+        assetPath: EmojiCatalog.assetPathOf(emoji.id),
+      );
+      if (!result.success) {
+        if (!mounted) return;
+        setState(() => _busy = false);
+        showTopNotification(context, 'Purchase failed — coins not deducted.',
+            color: AppPalette.danger);
+        return;
+      }
+      await MissionService.instance
+          .trackAmount('coins_spent', emoji.priceCoins);
+      await LocalStore.addOwnedEmoji(emoji.id);
+      // Auto-equip into a free slot if one is available.
+      if (_equippedEmojis.length < EmojiCatalog.maxEquipped) {
+        await LocalStore.equipEmoji(emoji.id);
+      }
+      await _load();
+      if (!mounted) return;
+      HapticFeedback.mediumImpact();
+      showTopNotification(context, l10n.emojiPurchased,
+          color: AppPalette.success);
+    } catch (e) {
+      if (kDebugMode) debugPrint('[STORE] emoji purchase error: $e');
+      if (mounted) {
+        showTopNotification(context, l10n.somethingWentWrong,
+            color: AppPalette.danger);
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<bool?> _showEmojiPurchaseConfirmDialog({
+    required BuildContext context,
+    required GameEmoji emoji,
+  }) {
+    final l10n = AppL10n.of(context);
+    final path = EmojiCatalog.assetPathOf(emoji.id);
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (_) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 480),
+          child: AppGlassCard(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 90,
+                  height: 90,
+                  child: path == null
+                      ? const Icon(Icons.emoji_emotions_outlined,
+                          color: Colors.white24, size: 48)
+                      : Image.asset(path,
+                          fit: BoxFit.contain,
+                          filterQuality: FilterQuality.medium),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  l10n.confirmPurchaseTitle,
+                  style: safeOrbitron(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1.5,
+                    color: AppPalette.text,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  l10n.emojiPurchaseLabel,
+                  style: safeOrbitron(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1,
+                    color: AppPalette.primary,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Image.asset('assets/coin/COIN.webp',
+                        height: 18, fit: BoxFit.contain),
+                    const SizedBox(width: 6),
+                    Text(
+                      '${emoji.priceCoins} coins',
+                      style: safeOrbitron(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                        color: const Color(0xFFFFD700),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    Expanded(
+                      child: AppPillButton(
+                        label: l10n.cancelBtn,
+                        fill: Colors.white.withOpacity(0.08),
+                        stroke: AppPalette.strokeStrong,
+                        onPressed: () => Navigator.pop(context, false),
+                        icon: Icons.close,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: AppPillButton(
+                        label: l10n.confirmBtn,
+                        fill: AppPalette.success,
+                        stroke: AppPalette.success.withOpacity(0.55),
+                        onPressed: () => Navigator.pop(context, true),
+                        icon: Icons.shopping_bag_rounded,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _equipEmoji(String id) async {
+    if (_busy) return;
+    final l10n = AppL10n.of(context);
+    // Guard the "slots full" case with a friendly message.
+    if (!_equippedEmojis.contains(id) &&
+        _equippedEmojis.length >= EmojiCatalog.maxEquipped) {
+      showTopNotification(context, l10n.emojiSlotsFull,
+          color: AppPalette.warning);
+      return;
+    }
+    await LocalStore.equipEmoji(id);
+    await _load();
+    if (!mounted) return;
+    HapticFeedback.selectionClick();
+    showTopNotification(context, l10n.emojiEquipped, color: AppPalette.success);
+  }
+
+  Future<void> _unequipEmoji(String id) async {
+    if (_busy) return;
+    await LocalStore.unequipEmoji(id);
+    await _load();
+    if (!mounted) return;
+    HapticFeedback.selectionClick();
+  }
+
+  Future<void> _equipEmojiToSlot(int slot, String id) async {
+    if (_busy) return;
+    await LocalStore.equipEmoji(id, slot: slot);
+    await _load();
+    if (!mounted) return;
+    HapticFeedback.selectionClick();
   }
 
   @override
@@ -669,6 +966,7 @@ class _StorePageState extends State<StorePage>
             onTabSelected: (i) => setState(() {
               _selectedTab = i;
               if (i == 1) _avatarTabVisited = true;
+              if (i == 3) _emojiTabVisited = true;
             }),
           ),
         ),
@@ -705,6 +1003,18 @@ class _StorePageState extends State<StorePage>
                     )
                   : const SizedBox.shrink(),
               const CoinsScreen(),
+              _emojiTabVisited
+                  ? EmojiStoreTab(
+                      ownedEmojis: _ownedEmojis,
+                      equippedEmojis: _equippedEmojis,
+                      busy: _busy,
+                      coins: _coins,
+                      onBuyEmoji: _buyEmoji,
+                      onEquipEmoji: _equipEmoji,
+                      onUnequipEmoji: _unequipEmoji,
+                      onEquipToSlot: _equipEmojiToSlot,
+                    )
+                  : const SizedBox.shrink(),
             ],
           ),
         ),
@@ -720,31 +1030,34 @@ class _StorePageState extends State<StorePage>
           child: Column(
             children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
+                padding: const EdgeInsets.fromLTRB(14, 6, 18, 10),
                 child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     AppIconButton(
                         icon: Icons.arrow_back,
                         onTap: () => navigateToHomeHub(context)),
-                    const Spacer(),
-                  ],
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(18, 4, 18, 14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _storeHeaderTitle(l10n),
-                      style: titleFont(context).copyWith(fontSize: 22),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      _storeHeaderSubtitle(l10n),
-                      style: bodyFont(context).copyWith(
-                        fontSize: 13,
-                        color: AppPalette.textMuted,
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 1),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _storeHeaderTitle(l10n),
+                              style: titleFont(context).copyWith(fontSize: 22),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              _storeHeaderSubtitle(l10n),
+                              style: bodyFont(context).copyWith(
+                                fontSize: 13,
+                                color: AppPalette.textMuted,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ],
@@ -771,84 +1084,58 @@ class _StoreTabBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppL10n.of(context);
-    final media = MediaQuery.sizeOf(context);
-    final metrics = UiMetrics.fromSize(media, MediaQuery.orientationOf(context));
-    Widget tab(int index, String label) {
-      final selected = selectedIndex == index;
-      return Expanded(
-        child: GestureDetector(
-          onTap: () => onTabSelected(index),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeInOut,
-            decoration: BoxDecoration(
-              gradient: selected
-                  ? const LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [AppPalette.homeSky, AppPalette.homeBlue],
-                    )
-                  : null,
-              color: selected ? null : Colors.transparent,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                color: selected
-                    ? AppPalette.homeStrokeStrong.withOpacity(0.70)
-                    : Colors.transparent,
-              ),
-              boxShadow: selected
-                  ? [
-                      BoxShadow(
-                        color: AppPalette.homeSky.withOpacity(0.18),
-                        blurRadius: 18,
-                        offset: const Offset(0, 10),
-                      ),
-                    ]
-                  : null,
-            ),
-            alignment: Alignment.center,
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              child: Text(
-                label,
-                textAlign: TextAlign.center,
-                style: safeOrbitron(
-                  fontSize: metrics.tabLabelSize,
-                  fontWeight: FontWeight.w700,
-                  color: selected ? Colors.white : AppPalette.textSubtle,
-                  letterSpacing: 1.0,
-                ),
-              ),
-            ),
-          ),
-        ),
-      );
-    }
+    // Category image tiles. The finished art (assets/e1..e4.webp) already
+    // carries its own neon border + label, so the tiles add no frame — only a
+    // subtle green/cyan highlight on the selected one.
+    //   e1 = XO/Colors (index 0), e3 = Avatars (index 1),
+    //   e2 = Emoji (index 3),      e4 = Coins   (index 2).
+    final tiles = <_StoreCategory>[
+      _StoreCategory(0, 'assets/e1.webp', l10n.xAndOColorsTab),
+      _StoreCategory(1, 'assets/e3.webp', l10n.avatarGalleryTab),
+      _StoreCategory(3, 'assets/e2.webp', l10n.emojiTabShort),
+      _StoreCategory(2, 'assets/e4.webp', l10n.buyCoins),
+    ];
 
     return Container(
-      height: metrics.tabBarHeight,
-      padding: const EdgeInsets.all(4),
+      height: 106,
+      padding: const EdgeInsets.fromLTRB(9, 9, 9, 8),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            AppPalette.panelElevated.withOpacity(0.96),
-            AppPalette.panelDeep.withOpacity(0.94),
-          ],
-        ),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppPalette.homeStroke.withOpacity(0.26)),
+        color: AppPalette.panel.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: AppPalette.primary.withValues(alpha: 0.24)),
+        boxShadow: [
+          BoxShadow(
+            color: AppPalette.primary.withValues(alpha: 0.08),
+            blurRadius: 18,
+          ),
+        ],
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          tab(0, l10n.xAndOColorsTab),
-          tab(1, l10n.avatarGalleryTab),
-          tab(2, l10n.buyCoins),
+          for (int i = 0; i < tiles.length; i++) ...[
+            if (i > 0) const SizedBox(width: 8),
+            Expanded(
+              child: StoreCategoryImageTile(
+                assetPath: tiles[i].assetPath,
+                selected: selectedIndex == tiles[i].index,
+                semanticLabel: tiles[i].label,
+                label: const ['XO', 'Avatar', 'Emoji', 'Coins'][i],
+                onTap: () => onTabSelected(tiles[i].index),
+              ),
+            ),
+          ],
         ],
       ),
     );
   }
+}
+
+class _StoreCategory {
+  final int index;
+  final String assetPath;
+  final String label;
+  const _StoreCategory(this.index, this.assetPath, this.label);
 }
 
 /// ==========================

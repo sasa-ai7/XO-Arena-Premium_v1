@@ -12,17 +12,16 @@ import '../../core/app_l10n.dart';
 import '../../core/language_switch_dialog.dart';
 import '../../core/app_theme.dart';
 import '../../core/keys.dart';
-import '../../models/game_avatar.dart';
 import '../../services/auth_service.dart';
 import '../../services/connectivity_service.dart';
 import '../../services/local_store.dart';
 import '../../services/fcm_service.dart';
 import '../../services/notification_service.dart';
-import '../../services/perf_mode_service.dart';
 import '../../services/sound_service.dart';
 import '../../services/user_repo.dart';
 import '../../widgets/app_ui.dart';
 import '../account_details_screen.dart';
+import '../legal/policy_page.dart';
 import '../store/store_page.dart';
 import '../../utils/navigation_utils.dart';
 import 'settings_widgets.dart';
@@ -41,10 +40,7 @@ class _SettingsPageState extends State<SettingsPage>
   String _email = "";
   String _provider = "email"; // "email" or "google"
   int _games = 0, _wins = 0, _losses = 0, _draws = 0;
-  int _coins = 0;
   int _lastLevel = 1;
-  int _completions = 0;
-  int _equippedAvatar = 0;
   bool _editingName = false;
   bool _dangerExpanded = false;
   bool _isMusicEnabled = true;
@@ -110,12 +106,9 @@ class _SettingsPageState extends State<SettingsPage>
       _wins = p.getInt(Keys.wins) ?? 0;
       _losses = p.getInt(Keys.losses) ?? 0;
       _draws = p.getInt(Keys.draws) ?? 0;
-      _coins = p.getInt(Keys.coins) ?? 0;
       _lastLevel = p.getInt(Keys.levelGameCurrentLevel) ?? 1;
       // If level is 0, show 1 (start level)
       if (_lastLevel == 0) _lastLevel = 1;
-      _completions = p.getInt(Keys.levelGameCompletions) ?? 0;
-      _equippedAvatar = LocalStore.equippedAvatarNotifier.value;
       _isMusicEnabled = SoundService().isMusicEnabled;
       _musicVolume = SoundService().musicVolume;
       _notificationsEnabled = p.getBool(Keys.notificationsEnabled) ?? false;
@@ -123,8 +116,8 @@ class _SettingsPageState extends State<SettingsPage>
     _usernameController.text = _username;
   }
 
-  // Controls REAL game notifications only (FCM): rewards, invites, etc.
-  // There is no longer a scheduled 9 PM/daily reminder.
+  // Controls game notifications: the daily 9 PM local play reminder plus real
+  // FCM messages (rewards, invites, etc.).
   Future<void> _setDailyRemindersEnabled(bool enabled) async {
     final prefs = await SharedPreferences.getInstance();
     if (enabled) {
@@ -138,10 +131,13 @@ class _SettingsPageState extends State<SettingsPage>
         return;
       }
       await prefs.setBool(Keys.notificationsEnabled, true);
+      // Schedule the local daily 9 PM reminder and register for FCM pushes.
+      await NotificationService().scheduleDailyPlayReminder();
       await FcmService.instance.registerToken();
       if (mounted) setState(() => _notificationsEnabled = true);
     } else {
       await prefs.setBool(Keys.notificationsEnabled, false);
+      await NotificationService().cancelDailyPlayReminder();
       await FcmService.instance.unregisterToken();
       if (mounted) setState(() => _notificationsEnabled = false);
     }
@@ -181,11 +177,13 @@ class _SettingsPageState extends State<SettingsPage>
       }
     }
 
+    if (!mounted) return;
     setState(() {
       _username = upperName;
       _editingName = false;
     });
-    showTopNotification(context, AppL10n.of(context).nameUpdated, color: AppPalette.success);
+    showTopNotification(context, AppL10n.of(context).nameUpdated,
+        color: AppPalette.success);
   }
 
   // Custom profile-photo upload was removed 2026-05-20 — the app now uses
@@ -323,8 +321,8 @@ class _SettingsPageState extends State<SettingsPage>
                                 return;
                               }
                               if (current == newPass) {
-                                setDialogState(() => errorMessage =
-                                    dl10n.passwordTooWeak);
+                                setDialogState(
+                                    () => errorMessage = dl10n.passwordTooWeak);
                                 return;
                               }
 
@@ -348,13 +346,12 @@ class _SettingsPageState extends State<SettingsPage>
                                     .reauthenticateWithCredential(credential);
                                 await user.updatePassword(newPass);
 
-                                if (!ctx.mounted) return;
+                                if (!ctx.mounted || !mounted) return;
                                 currentPassController.dispose();
                                 newPassController.dispose();
                                 confirmPassController.dispose();
                                 Navigator.pop(ctx);
-                                showTopNotification(
-                                    context, l10n.success,
+                                showTopNotification(context, l10n.success,
                                     color: AppPalette.success);
                               } on FirebaseAuthException catch (e) {
                                 String msg;
@@ -471,7 +468,6 @@ class _SettingsPageState extends State<SettingsPage>
       return;
     }
 
-    await UserRepo().clearLocalCache();
     await AuthService().signOut();
     if (!mounted) return;
     Navigator.of(context).pushNamedAndRemoveUntil('/login', (_) => false);
@@ -542,7 +538,8 @@ class _SettingsPageState extends State<SettingsPage>
                     if (!await launchUrl(uri,
                         mode: LaunchMode.externalApplication)) {
                       if (!mounted) return;
-                      showTopNotification(context, AppL10n.of(context).mailNotAvailable,
+                      showTopNotification(
+                          context, AppL10n.of(context).mailNotAvailable,
                           color: AppPalette.danger);
                     }
                   },
@@ -598,8 +595,8 @@ class _SettingsPageState extends State<SettingsPage>
                       const SizedBox(height: 8),
                       RadioListTile<String>(
                         contentPadding: EdgeInsets.zero,
-                        title: Text(dl10n.dontUseAnymore,
-                            style: bodyFont(ctx2)),
+                        title:
+                            Text(dl10n.dontUseAnymore, style: bodyFont(ctx2)),
                         value: "I don't use the app anymore",
                         groupValue: _deleteReason,
                         onChanged: (value) {
@@ -692,8 +689,7 @@ class _SettingsPageState extends State<SettingsPage>
                             focusedBorder: OutlineInputBorder(
                               borderRadius:
                                   BorderRadius.circular(AppPalette.radiusSmall),
-                              borderSide:
-                                  BorderSide(color: AppPalette.primary),
+                              borderSide: BorderSide(color: AppPalette.primary),
                             ),
                             filled: true,
                             fillColor: Colors.white.withValues(alpha: 0.05),
@@ -719,8 +715,7 @@ class _SettingsPageState extends State<SettingsPage>
                           }
                           if (_deleteReason == "Other" &&
                               _otherReasonText.trim().isEmpty) {
-                            showTopNotification(
-                                ctx2, dl10n.deleteReasonHint,
+                            showTopNotification(ctx2, dl10n.deleteReasonHint,
                                 color: AppPalette.danger);
                             return;
                           }
@@ -816,6 +811,7 @@ class _SettingsPageState extends State<SettingsPage>
     // Check if deletion is locked
     if (await _isDeletionLocked()) {
       final lockMessage = await _getLockMessage();
+      if (!mounted) return;
       if (lockMessage != null) {
         showTopNotification(context, lockMessage, color: AppPalette.danger);
       }
@@ -932,6 +928,7 @@ class _SettingsPageState extends State<SettingsPage>
     }
 
     final isOnline = await ConnectivityService().online;
+    if (!mounted) return;
     if (!isOnline) {
       showTopNotification(
           context, "Please connect to the internet to delete your account.",
@@ -976,7 +973,8 @@ class _SettingsPageState extends State<SettingsPage>
       if (!mounted) return;
       if (Navigator.of(context).canPop()) Navigator.of(context).pop();
 
-      showTopNotification(context, AppL10n.of(context).accountDeletedSuccessfully,
+      showTopNotification(
+          context, AppL10n.of(context).accountDeletedSuccessfully,
           color: AppPalette.success);
 
       if (!mounted) return;
@@ -1026,6 +1024,7 @@ class _SettingsPageState extends State<SettingsPage>
         errorMessage = "Could not delete account. Please try again.";
       }
 
+      if (!mounted) return;
       showTopNotification(context, errorMessage, color: AppPalette.danger);
     }
   }
@@ -1044,6 +1043,7 @@ class _SettingsPageState extends State<SettingsPage>
     }
 
     final isOnline = await ConnectivityService().online;
+    if (!mounted) return;
     if (!isOnline) {
       showTopNotification(
           context, 'Please connect to the internet to delete your account.',
@@ -1069,7 +1069,9 @@ class _SettingsPageState extends State<SettingsPage>
         }, SetOptions(merge: true));
         if (kDebugMode) debugPrint('[DELETE] deletion_feedback saved');
       } catch (e) {
-        if (kDebugMode) debugPrint('[DELETE] deletion_feedback failed non-fatal: $e');
+        if (kDebugMode) {
+          debugPrint('[DELETE] deletion_feedback failed non-fatal: $e');
+        }
       }
     }
 
@@ -1095,7 +1097,8 @@ class _SettingsPageState extends State<SettingsPage>
 
       if (!mounted) return;
       if (Navigator.of(context).canPop()) Navigator.of(context).pop();
-      showTopNotification(context, AppL10n.of(context).accountDeletedSuccessfully,
+      showTopNotification(
+          context, AppL10n.of(context).accountDeletedSuccessfully,
           color: AppPalette.success);
       if (!mounted) return;
       Navigator.of(context).pushNamedAndRemoveUntil('/login', (_) => false);
@@ -1228,104 +1231,16 @@ class _SettingsPageState extends State<SettingsPage>
 
       if (!mounted) return;
       if (Navigator.of(context).canPop()) Navigator.of(context).pop();
-      showTopNotification(context, AppL10n.of(context).accountDeletedSuccessfully,
+      showTopNotification(
+          context, AppL10n.of(context).accountDeletedSuccessfully,
           color: AppPalette.success);
       Navigator.of(context).pushNamedAndRemoveUntil('/login', (_) => false);
     } catch (e) {
       if (!mounted) return;
       if (Navigator.of(context).canPop()) Navigator.of(context).pop();
-      showTopNotification(
-          context, AppL10n.of(context).reauthFailedRetry,
+      showTopNotification(context, AppL10n.of(context).reauthFailedRetry,
           color: AppPalette.danger);
     }
-  }
-
-  void _showPolicies() {
-    if (!mounted) return;
-    showDialog(
-      context: context,
-      builder: (ctx) => Dialog(
-        backgroundColor: Colors.transparent,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
-          child: AppGlassCard(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(AppL10n.of(ctx).privacyAndTerms,
-                    style: titleFont(ctx).copyWith(fontSize: 18)),
-                const SizedBox(height: 10),
-                Text(
-                  "We store: name + email + (age optional) + stats + coins + transactions\n\n"
-                  "No cash-out, no real rewards, and no money transfers\n\n"
-                  "Coins are for in-game use only\n\n"
-                  "Any purchases, if offered, are processed through the platform's official billing system.\n\n"
-                  "There is a Delete Account option in Settings, which permanently deletes the data\n\n"
-                  "Contact: ${AppConfig.supportEmail}",
-                  style: bodyFont(ctx),
-                ),
-                const SizedBox(height: 16),
-                // Privacy Policy link
-                ListTile(
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  leading: const Icon(Icons.privacy_tip_outlined,
-                      color: AppPalette.primary),
-                  title: Text(AppL10n.of(ctx).privacyPolicyRow,
-                      style:
-                          bodyFont(ctx).copyWith(fontWeight: FontWeight.w700)),
-                  trailing: const Icon(Icons.open_in_new,
-                      size: 18, color: AppPalette.textMuted),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _openUrl(AppConfig.privacyPolicyUrl);
-                  },
-                ),
-                // Terms link
-                ListTile(
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  leading: const Icon(Icons.description_outlined,
-                      color: AppPalette.primary),
-                  title: Text(AppL10n.of(ctx).termsOfService,
-                      style:
-                          bodyFont(ctx).copyWith(fontWeight: FontWeight.w700)),
-                  trailing: const Icon(Icons.open_in_new,
-                      size: 18, color: AppPalette.textMuted),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _openUrl(AppConfig.termsUrl);
-                  },
-                ),
-                // Delete Account Info link
-                ListTile(
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  leading: const Icon(Icons.delete_forever_outlined,
-                      color: AppPalette.danger),
-                  title: Text(AppL10n.of(ctx).accountDeletionInfo,
-                      style:
-                          bodyFont(ctx).copyWith(fontWeight: FontWeight.w700)),
-                  trailing: const Icon(Icons.open_in_new,
-                      size: 18, color: AppPalette.textMuted),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _openUrl(AppConfig.accountDeletionUrl);
-                  },
-                ),
-                const SizedBox(height: 14),
-                AppPillButton(
-                  label: AppL10n.of(context).ok,
-                  fill: Colors.white.withValues(alpha: 0.08),
-                  stroke: AppPalette.strokeStrong,
-                  onPressed: () => Navigator.pop(ctx),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
   }
 
   Widget _sectionHeader(String text) {
@@ -1355,33 +1270,25 @@ class _SettingsPageState extends State<SettingsPage>
           children: [
             FadeTransition(
               opacity: _headerFade,
-              child: ValueListenableBuilder<int>(
-                valueListenable: LocalStore.equippedAvatarNotifier,
-                builder: (_, avatarId, __) {
-                  // Nullable resolver: 0 / unknown → no paid frame.
-                  final avatar = gameAvatarByIdOrNull(avatarId);
-                  return ProfileHeader(
-                    username: _username,
-                    email: _email,
-                    provider: _provider,
-                    games: _games,
-                    wins: _wins,
-                    losses: _losses,
-                    draws: _draws,
-                    topLevel: _lastLevel,
-                    avatar: avatar,
-                    editingName: _editingName,
-                    usernameController: _usernameController,
-                    // No camera tap: profile photo is synced from Google
-                    // Sign-In (2026-05). The helper text below explains it.
-                    onEditName: () => setState(() => _editingName = true),
-                    onCancelEdit: () {
-                      _usernameController.text = _username;
-                      setState(() => _editingName = false);
-                    },
-                    onSaveName: _saveName,
-                  );
+              child: ProfileHeader(
+                username: _username,
+                email: _email,
+                provider: _provider,
+                games: _games,
+                wins: _wins,
+                losses: _losses,
+                draws: _draws,
+                topLevel: _lastLevel,
+                editingName: _editingName,
+                usernameController: _usernameController,
+                // No camera tap: profile photo is synced from Google
+                // Sign-In (2026-05). The helper text below explains it.
+                onEditName: () => setState(() => _editingName = true),
+                onCancelEdit: () {
+                  _usernameController.text = _username;
+                  setState(() => _editingName = false);
                 },
+                onSaveName: _saveName,
               ),
             ),
             const SizedBox(height: 8),
@@ -1494,45 +1401,6 @@ class _SettingsPageState extends State<SettingsPage>
               ),
             ),
             const SizedBox(height: 12),
-            // ── PERFORMANCE SECTION ──────────────────────────────────────
-            AppGlassCard(
-              padding: const EdgeInsets.all(16),
-              borderColor: AppPalette.strokeSoft,
-              child: Row(
-                children: [
-                  const Icon(Icons.speed_rounded,
-                      color: Colors.white, size: 20),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(AppL10n.of(context).performanceModeLabel,
-                            style: safeOrbitron(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.white)),
-                        const SizedBox(height: 2),
-                        Text(AppL10n.of(context).performanceModeHint,
-                            style: safeInter(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w500,
-                                color: AppPalette.textMuted)),
-                      ],
-                    ),
-                  ),
-                  ValueListenableBuilder<bool>(
-                    valueListenable: PerfMode.enabled,
-                    builder: (_, on, __) => Switch(
-                      value: on,
-                      activeColor: AppPalette.primary,
-                      onChanged: (val) => PerfMode.setEnabled(val),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 12),
             // ── NOTIFICATIONS SECTION ────────────────────────────────────
             AppGlassCard(
               padding: const EdgeInsets.all(16),
@@ -1625,11 +1493,14 @@ class _SettingsPageState extends State<SettingsPage>
                         subtitle: AppL10n.of(ctx).switchToLabel,
                         onTap: () => confirmAndSwitchLanguage(ctx),
                         trailing: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 6),
                           decoration: BoxDecoration(
                             color: AppPalette.primary.withValues(alpha: 0.12),
                             borderRadius: BorderRadius.circular(999),
-                            border: Border.all(color: AppPalette.primary.withValues(alpha: 0.35)),
+                            border: Border.all(
+                                color:
+                                    AppPalette.primary.withValues(alpha: 0.35)),
                           ),
                           child: Text(
                             isAr ? 'en' : 'ع',
@@ -1702,21 +1573,30 @@ class _SettingsPageState extends State<SettingsPage>
                     icon: Icons.privacy_tip_outlined,
                     label: AppL10n.of(context).privacyPolicyRow,
                     subtitle: AppL10n.of(context).privacyPolicySubtitle,
-                    onTap: () => _openUrl(AppConfig.privacyPolicyUrl),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                          builder: (_) => const PolicyPage.privacy()),
+                    ),
                   ),
                   const SizedBox(height: 8),
                   SettingTile(
                     icon: Icons.description_outlined,
                     label: AppL10n.of(context).termsOfService,
                     subtitle: AppL10n.of(context).termsOfServiceSubtitle,
-                    onTap: () => _openUrl(AppConfig.termsUrl),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                          builder: (_) => const PolicyPage.terms()),
+                    ),
                   ),
                   const SizedBox(height: 8),
                   SettingTile(
                     icon: Icons.delete_forever_outlined,
                     label: AppL10n.of(context).accountDeletionInfo,
                     subtitle: AppL10n.of(context).accountDeletionInfoSubtitle,
-                    onTap: () => _openUrl(AppConfig.accountDeletionUrl),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                          builder: (_) => const PolicyPage.accountDeletion()),
+                    ),
                   ),
                 ],
               ),
@@ -1757,23 +1637,21 @@ class _SettingsPageState extends State<SettingsPage>
                       0.0,
                       constraints.maxWidth - coinWidth - 66.0,
                     );
-                    final coinWidget = GestureDetector(
-                      onTap: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => const StorePage(initialTab: 2),
-                          ),
-                        );
-                      },
-                      child: SizedBox(
-                        width: coinWidth,
-                        child: ValueListenableBuilder<int>(
-                          valueListenable: LocalStore.coinsNotifier,
-                          builder: (_, coins, __) => CoinPill(
-                            coins: coins,
-                            width: coinWidth,
-                          ),
-                        ),
+                    // Shared coin pill — same widget as Home/Missions/Online
+                    // so the balance display is visually identical everywhere
+                    // instead of the old two-line "BALANCE" block.
+                    final coinWidget = SizedBox(
+                      width: coinWidth,
+                      child: ArenaCoinBalance(
+                        compact: true,
+                        minWidth: coinWidth,
+                        onTap: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const StorePage(initialTab: 2),
+                            ),
+                          );
+                        },
                       ),
                     );
 
@@ -1792,7 +1670,8 @@ class _SettingsPageState extends State<SettingsPage>
                                 width: max(0.0, constraints.maxWidth - 56.0),
                                 child: Text(
                                   "SETTINGS",
-                                  style: titleFont(context).copyWith(fontSize: 18),
+                                  style:
+                                      titleFont(context).copyWith(fontSize: 18),
                                   overflow: TextOverflow.ellipsis,
                                 ),
                               ),
@@ -1834,4 +1713,3 @@ class _SettingsPageState extends State<SettingsPage>
     );
   }
 }
-

@@ -38,9 +38,10 @@ class PendingReferralReward {
       inviteeUid: (raw['inviteeUid'] ?? '').toString(),
       inviteeName: (raw['inviteeName'] ?? '').toString(),
       inviteePhotoURL: (raw['inviteePhotoURL'] ?? '').toString(),
-      coins: (raw['coins'] as num?)?.toInt() ??
-          ReferralService.kRewardPerFriend,
-      message: (raw['message'] ?? 'Your friend accepted your invite').toString(),
+      coins:
+          (raw['coins'] as num?)?.toInt() ?? ReferralService.kRewardPerFriend,
+      message:
+          (raw['message'] ?? 'Your friend accepted your invite').toString(),
       createdAt: ts is Timestamp ? ts.toDate() : null,
     );
   }
@@ -76,6 +77,12 @@ class PendingReferralRewardService {
         if (bx == null) return -1;
         return ax.compareTo(bx);
       });
+      // Client-fallback rewards cannot write into another user's ledger.
+      // Backfill as soon as the referrer opens/resumes home, without waiting
+      // for the popup to be dismissed.
+      for (final reward in list) {
+        await _ensureReferrerLedger(uid, reward);
+      }
       return list;
     } catch (e) {
       if (kDebugMode) {
@@ -102,6 +109,11 @@ class PendingReferralRewardService {
     } catch (e) {
       if (kDebugMode) debugPrint('[REFERRAL] markSeen failed: $e');
     }
+    await _ensureReferrerLedger(uid, reward);
+  }
+
+  Future<void> _ensureReferrerLedger(
+      String uid, PendingReferralReward reward) async {
     // Lazy referrer ledger write (idempotent via deterministic doc id).
     try {
       final ledgerId = 'ref_${reward.inviteeUid}_referrer';
@@ -112,12 +124,21 @@ class PendingReferralRewardService {
           .doc(ledgerId);
       final existing = await ledgerRef.get();
       if (!existing.exists) {
+        final user = await _fs.collection('users').doc(uid).get();
+        final wallet = user.data()?['Wallet'];
+        final after = wallet is Map ? (wallet['coins'] as num?)?.toInt() : null;
         await ledgerRef.set(<String, dynamic>{
           'uid': uid,
           'type': LedgerType.referralReferrerReward,
-          'source': 'pending_referral_claim',
+          'source': LedgerType.referralReferrerReward,
           'delta': reward.coins,
+          'coins': reward.coins,
+          if (after != null) 'before': after - reward.coins,
+          if (after != null) 'after': after,
           'transactionId': ledgerId,
+          'mode': 'online',
+          'status': 'synced',
+          'localCreatedAtMs': DateTime.now().millisecondsSinceEpoch,
           'title': 'Referral accepted',
           'message': reward.inviteeName.isEmpty
               ? '${reward.coins} coins received from a referral'
@@ -129,7 +150,9 @@ class PendingReferralRewardService {
         });
       }
     } catch (e) {
-      if (kDebugMode) debugPrint('[REFERRAL] referrer ledger backfill failed: $e');
+      if (kDebugMode) {
+        debugPrint('[REFERRAL] referrer ledger backfill failed: $e');
+      }
     }
   }
 }

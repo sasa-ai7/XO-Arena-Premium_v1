@@ -4,36 +4,38 @@
 /// Console. Coin packs are consumable and may be purchased repeatedly.
 /// Premium avatars are one-time, non-consumable entitlements.
 ///
-/// CATALOG_SYNC: 2026-05-25 — Apex product id migrated to Play Console value
+/// CATALOG_SYNC: 2026-07 — premium avatars repointed to the new WebP art.
+/// The two Google Play products are UNCHANGED (`xo_avatar_premium`,
+/// `xo_avatar_premium1`); only the catalog id / asset they unlock changed.
 /// • 10 coin packs (xo_arena_2000 … xo_arena_200000)
-/// • 2 premium avatars (xo_avatar_premium → Inferno, xo_avatar_premium1 → Apex)
+/// • 2 premium avatars (xo_avatar_premium → Golden Halo, xo_avatar_premium1 → Star Crown)
 class CoinsCatalog {
   // ── Avatar entitlements ───────────────────────────────────────────────────
 
-  /// Inferno (animated) — one-time premium avatar, $2.99 (orig $4.99).
+  /// Golden Halo — one-time premium avatar, $2.99 (orig $4.99).
   static const String premiumAvatarProductId = 'xo_avatar_premium';
 
-  /// Apex (animated) — one-time premium avatar, $3.99 (orig $5.99).
+  /// Star Crown — one-time premium avatar, $3.99 (orig $5.99).
   /// Product id matches Google Play Console (`xo_avatar_premium1`).
   static const String premiumAvatarApexProductId = 'xo_avatar_premium1';
 
-  /// Catalog id of the avatar unlocked by [premiumAvatarProductId] (Inferno).
-  static const int premiumAvatarId = 7;
+  /// Catalog id of the avatar unlocked by [premiumAvatarProductId] (Golden Halo).
+  static const int premiumAvatarId = 29;
 
-  /// Catalog id of the avatar unlocked by [premiumAvatarApexProductId] (Apex).
-  static const int premiumAvatarApexId = 10;
+  /// Catalog id of the avatar unlocked by [premiumAvatarApexProductId] (Star Crown).
+  static const int premiumAvatarApexId = 30;
 
-  /// Asset path for the original premium avatar (Inferno).
-  static const String premiumAvatarAsset = 'assets/avatar/Avatar__7.gif';
+  /// Asset path for the first premium avatar (Golden Halo).
+  static const String premiumAvatarAsset = 'assets/avatar/Avatar__29.webp';
 
-  /// Asset path for the second premium avatar (Apex).
-  static const String premiumAvatarApexAsset = 'assets/avatar/Avatar__10.gif';
+  /// Asset path for the second premium avatar (Star Crown).
+  static const String premiumAvatarApexAsset = 'assets/avatar/Avatar__30.webp';
 
-  /// Server-side entitlement id for Inferno avatar.
-  static const String premiumAvatarEntitlement = 'premium_avatar_7';
+  /// Server-side entitlement id for the first premium avatar.
+  static const String premiumAvatarEntitlement = 'premium_avatar_29';
 
-  /// Server-side entitlement id for Apex avatar.
-  static const String premiumAvatarApexEntitlement = 'premium_avatar_10';
+  /// Server-side entitlement id for the second premium avatar.
+  static const String premiumAvatarApexEntitlement = 'premium_avatar_30';
 
   /// Display prices for premium avatar offers, used as a fallback when
   /// Google Play does not return localized pricing for the product yet.
@@ -106,12 +108,17 @@ class CoinsCatalog {
     }
   }
 
-  /// Catalog avatar id for a server-side entitlement id.
+  /// Catalog avatar id for a server-side entitlement id. Legacy entitlement
+  /// strings (`premium_avatar_7` / `premium_avatar_10`) from the pre-2026-07
+  /// catalog are still recognised and resolve to the current premium avatars so
+  /// any earlier purchaser keeps a premium frame.
   static int? avatarIdForEntitlement(String entitlement) {
     switch (entitlement) {
       case premiumAvatarEntitlement:
+      case 'premium_avatar_7':
         return premiumAvatarId;
       case premiumAvatarApexEntitlement:
+      case 'premium_avatar_10':
         return premiumAvatarApexId;
       default:
         return null;
@@ -184,21 +191,21 @@ class CoinsCatalog {
     switch (productId) {
       case 'xo_arena_2000':
       case 'xo_arena_4000':
-        return 'assets/coin/COIN-2.png';
+        return 'assets/coin/COIN-2.webp';
       case 'xo_arena_6000':
       case 'xo_arena_8000':
-        return 'assets/coin/COIN-3.png';
+        return 'assets/coin/COIN-3.webp';
       case 'xo_arena_10000':
-        return 'assets/coin/COIN-9.png';
+        return 'assets/coin/COIN-9.webp';
       case 'xo_arena_20000':
       case 'xo_arena_30000':
       case 'xo_arena_50000':
-        return 'assets/coin/COIN-55.png';
+        return 'assets/coin/COIN-55.webp';
       case 'xo_arena_100000':
       case 'xo_arena_200000':
-        return 'assets/coin/COIN-44.png';
+        return 'assets/coin/COIN-44.webp';
       default:
-        return 'assets/coin/COIN.png';
+        return 'assets/coin/COIN.webp';
     }
   }
 

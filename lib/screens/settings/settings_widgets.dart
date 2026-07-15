@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import '../../core/app_theme.dart';
 import '../../widgets/app_ui.dart';
 import '../../widgets/full_avatar_display.dart';
-import '../../models/game_avatar.dart';
 
 class ProfileHeader extends StatelessWidget {
   final String username;
@@ -14,9 +13,9 @@ class ProfileHeader extends StatelessWidget {
   final int losses;
   final int draws;
   final int topLevel;
-  final GameAvatar? avatar;
   final bool editingName;
   final TextEditingController usernameController;
+
   /// When null, the camera-icon overlay is not rendered. Set to null since
   /// 2026-05 — profile photo now comes from Google Sign-In photoURL only.
   final VoidCallback? onCameraTap;
@@ -34,7 +33,6 @@ class ProfileHeader extends StatelessWidget {
     required this.losses,
     required this.draws,
     required this.topLevel,
-    required this.avatar,
     required this.editingName,
     required this.usernameController,
     this.onCameraTap,
@@ -46,17 +44,17 @@ class ProfileHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final avatarWidget = SizedBox(
-      width: 130,
-      height: 130,
+      width: 150,
+      height: 150,
       child: Stack(
+        clipBehavior: Clip.none,
         alignment: Alignment.center,
         children: [
           Hero(
             tag: 'profile_avatar',
-            child: FullAvatarDisplay(
-              size: 130,
-              avatar: avatar,
-              fallbackName: username,
+            child: ArenaProfileAvatar.current(
+              size: 150,
+              fallbackInitials: username,
             ),
           ),
           // Camera-icon overlay — only rendered if a tap handler was passed.
@@ -405,7 +403,10 @@ class DangerZoneCard extends StatelessWidget {
   final VoidCallback onDelete;
 
   const DangerZoneCard(
-      {super.key, required this.expanded, required this.onToggle, required this.onDelete});
+      {super.key,
+      required this.expanded,
+      required this.onToggle,
+      required this.onDelete});
 
   @override
   Widget build(BuildContext context) {
@@ -641,7 +642,8 @@ class SettingTile extends StatelessWidget {
   final VoidCallback? onTap;
 
   const SettingTile(
-      {super.key, required this.icon,
+      {super.key,
+      required this.icon,
       required this.label,
       this.subtitle,
       this.trailing,

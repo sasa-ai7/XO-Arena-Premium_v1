@@ -11,17 +11,21 @@ import '../../core/app_config.dart';
 import '../../core/app_l10n.dart';
 import '../../core/app_theme.dart';
 import '../../core/keys.dart';
+import '../../models/arena/arena_chat_signal.dart';
 import '../../models/arena/arena_room.dart';
 import '../../models/game_avatar.dart';
+import '../../services/arena/arena_chat_service.dart';
 import '../../services/arena/arena_bet_service.dart';
 import '../../services/arena/arena_match_summary.dart';
 import '../../services/arena/arena_presence_service.dart';
 import '../../services/arena/arena_repo.dart';
+import '../../services/local_store.dart';
 import '../../services/mission_service.dart';
 import '../../utils/board_utils.dart';
 import '../../widgets/app_ui.dart';
 import '../../widgets/arena_toast.dart';
 import '../games/game_page.dart' show CellContent;
+import 'widgets/arena_chat_widgets.dart';
 import 'widgets/arena_leave_dialog.dart';
 import 'widgets/arena_player_card.dart';
 import 'widgets/countdown_overlay.dart';
@@ -48,6 +52,10 @@ class _ArenaGamePageState extends State<ArenaGamePage>
   bool _refundApplied = false;
   Timer? _cleanupTimer;
   ArenaPresenceService? _presence;
+  ArenaChatService? _chatService;
+  StreamSubscription<Map<String, ArenaChatSignal>>? _chatSub;
+  Map<String, ArenaChatSignal> _chatSignals = const <String, ArenaChatSignal>{};
+  bool _showQuickEmojis = false;
 
   // Connection tracking — used to distinguish transient network loss from
   // a real room deletion. While disconnected we show a "Reconnecting…"
@@ -55,6 +63,8 @@ class _ArenaGamePageState extends State<ArenaGamePage>
   StreamSubscription<DatabaseEvent>? _connSub;
   bool _isConnected = true;
   bool _everConnected = false;
+  Timer? _disconnectTick;
+  bool _disconnectMutationPending = false;
 
   /// Per-resolution dedupe key includes `roundVersion` so a two-phase
   /// transition (round_end → playing) produces a fresh key after each
@@ -98,6 +108,7 @@ class _ArenaGamePageState extends State<ArenaGamePage>
   String _selfXSkin = 'default';
   String _selfOSkin = 'default';
   int _selfAvatarId = 0;
+  List<String> _equippedEmojis = const <String>[];
 
   String? get _uid => FirebaseAuth.instance.currentUser?.uid;
   bool get _isHost => _uid != null && _uid == _room.hostUid;
@@ -111,22 +122,51 @@ class _ArenaGamePageState extends State<ArenaGamePage>
           'bet=${_room.betAmount} prize=${_room.prizePool}');
     }
     _sub = ArenaRepo.instance.watchRoom(_room.roomCode).listen(
-          _onRoomChange,
-          onError: (Object e) {
-            // Treat stream errors as transient — do NOT forfeit.
-            if (mounted) setState(() => _isConnected = false);
-          },
-        );
+      _onRoomChange,
+      onError: (Object e) {
+        // Treat stream errors as transient — do NOT forfeit.
+        if (mounted) setState(() => _isConnected = false);
+      },
+    );
     _listenForConnectivity();
+    _disconnectTick = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      setState(() {});
+      _syncDisconnectState();
+    });
     _loadSelfCosmetics();
     _maybeStartCountdown();
     _maybeLockBet();
     WidgetsBinding.instance.addObserver(this);
     final selfUid = _uid;
     if (selfUid != null && selfUid.isNotEmpty) {
-      _presence =
-          ArenaPresenceService(code: _room.roomCode, selfUid: selfUid);
+      _presence = ArenaPresenceService(code: _room.roomCode, selfUid: selfUid);
       _presence!.start();
+      _startChat(selfUid);
+    }
+  }
+
+  void _startChat(String selfUid) {
+    final selfName = selfUid == _room.hostUid
+        ? _room.hostName
+        : (_room.guestName?.trim().isNotEmpty == true
+            ? _room.guestName!
+            : 'PLAYER');
+    try {
+      final service = ArenaChatService(
+        roomCode: _room.roomCode,
+        selfUid: selfUid,
+        selfName: selfName,
+      );
+      _chatService = service;
+      _chatSub = service.watchSignals().listen(
+        (signals) {
+          if (mounted) setState(() => _chatSignals = signals);
+        },
+        onError: (_) {},
+      );
+    } catch (_) {
+      _chatService = null;
     }
   }
 
@@ -134,16 +174,21 @@ class _ArenaGamePageState extends State<ArenaGamePage>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // Part 1: presence-only on background — no auto-leave/cancel/forfeit.
     // The presence service handles online→offline state automatically.
+    if (state == AppLifecycleState.resumed) {
+      _presence?.markOnlineNow();
+    }
   }
 
   Future<void> _loadSelfCosmetics() async {
     try {
       final p = await SharedPreferences.getInstance();
+      final emojis = await LocalStore.equippedEmojis();
       if (!mounted) return;
       setState(() {
         _selfXSkin = p.getString(Keys.selectedXSkin) ?? 'default';
         _selfOSkin = p.getString(Keys.selectedOSkin) ?? 'default';
-        _selfAvatarId = p.getInt(Keys.equippedAvatar) ?? 0;
+        _selfAvatarId = parseEquippedAvatarId(p.getInt(Keys.equippedAvatar));
+        _equippedEmojis = emojis;
       });
     } catch (_) {}
   }
@@ -167,12 +212,10 @@ class _ArenaGamePageState extends State<ArenaGamePage>
 
   GameAvatar? _avatarFor(String? uid) {
     if (uid == null || uid.isEmpty) return null;
-    if (uid == _uid) return gameAvatarByIdOrNull(_selfAvatarId);
+    if (uid == _uid) return gameAvatarFromStoredValue(_selfAvatarId);
     final entry = _room.players[uid];
     if (entry is Map) {
-      final raw = entry['selectedAvatar'];
-      final id = raw is num ? raw.toInt() : int.tryParse(raw?.toString() ?? '') ?? 0;
-      return gameAvatarByIdOrNull(id);
+      return gameAvatarFromStoredValue(entry['selectedAvatar']);
     }
     return null;
   }
@@ -190,6 +233,37 @@ class _ArenaGamePageState extends State<ArenaGamePage>
     return null;
   }
 
+  Future<void> _sendChatMessage(String text) async {
+    final service = _chatService;
+    if (service == null) return;
+    final signal = await service.sendMessage(text);
+    if (!mounted) return;
+    setState(() {
+      _chatSignals = <String, ArenaChatSignal>{
+        ..._chatSignals,
+        signal.senderUid: signal,
+      };
+    });
+  }
+
+  Future<void> _sendChatEmoji(String emoji) async {
+    final service = _chatService;
+    if (service == null) return;
+    await service.sendEmoji(emoji);
+  }
+
+  void _onChatError(Object error) {
+    if (!mounted) return;
+    // Cooldown / unsupported reactions are expected, non-actionable outcomes —
+    // stay silent rather than showing a scary error toast.
+    if (error is ArenaChatException &&
+        (error.failure == ArenaChatFailure.cooldown ||
+            error.failure == ArenaChatFailure.unsupportedEmoji)) {
+      return;
+    }
+    ArenaToast.error(context, AppL10n.of(context).networkIssueRetry);
+  }
+
   void _listenForConnectivity() {
     try {
       final connRef = FirebaseDatabase.instanceFor(
@@ -203,13 +277,19 @@ class _ArenaGamePageState extends State<ArenaGamePage>
           _isConnected = connected;
           if (connected) _everConnected = true;
         });
+        if (connected) {
+          _presence?.markOnlineNow();
+          _syncDisconnectState();
+        }
       });
     } catch (_) {}
   }
 
   Future<void> _maybeLockBet() async {
     final uid = _uid;
-    if (uid == null || !_room.betEnabled || !AppConfig.kEnableFriendRoomBetting) {
+    if (uid == null ||
+        !_room.betEnabled ||
+        !AppConfig.kEnableFriendRoomBetting) {
       return;
     }
     if (_betLockCheckRunning) return;
@@ -291,9 +371,11 @@ class _ArenaGamePageState extends State<ArenaGamePage>
       return;
     }
     setState(() => _room = room);
+    _syncDisconnectState();
     if (kDebugMode) {
       final filled = room.board.where((c) => c.isNotEmpty).length;
-      debugPrint('[ARENA_ROOM_SNAPSHOT] room=${room.roomCode} status=${room.status} '
+      debugPrint(
+          '[ARENA_ROOM_SNAPSHOT] room=${room.roomCode} status=${room.status} '
           'round=${room.currentRound} rv=${room.roundVersion} filled=$filled '
           'winner=${room.roundWinnerUid} result=${room.lastRoundResult}');
     }
@@ -355,7 +437,8 @@ class _ArenaGamePageState extends State<ArenaGamePage>
     if (selfUid == null) return;
     if (!_room.betEnabled || !_room.coinsLocked) return;
     if (kDebugMode) {
-      debugPrint('[ARENA_BET] refund-on-cancel room=${_room.roomCode} uid=$selfUid');
+      debugPrint(
+          '[ARENA_BET] refund-on-cancel room=${_room.roomCode} uid=$selfUid');
     }
     await ArenaBetService.refundOwnBet(room: _room, selfUid: selfUid);
   }
@@ -373,7 +456,8 @@ class _ArenaGamePageState extends State<ArenaGamePage>
     if (room.lastRoundResult != 'draw') return;
     if (room.status == 'finished') return;
     if (kDebugMode) {
-      debugPrint('[ARENA_DRAW] banner shown room=${room.roomCode} round=${room.currentRound}');
+      debugPrint(
+          '[ARENA_DRAW] banner shown room=${room.roomCode} round=${room.currentRound}');
     }
     setState(() {
       _drawBanner = _DrawBanner(stamp: endAt);
@@ -461,7 +545,8 @@ class _ArenaGamePageState extends State<ArenaGamePage>
   Future<void> _exitToArena() async {
     if (_hasExitedRoom) {
       if (kDebugMode) {
-        debugPrint('[ARENA] exit ignored — already exited room=${_room.roomCode}');
+        debugPrint(
+            '[ARENA] exit ignored — already exited room=${_room.roomCode}');
       }
       return;
     }
@@ -471,6 +556,9 @@ class _ArenaGamePageState extends State<ArenaGamePage>
     }
     await _sub?.cancel();
     _sub = null;
+    await _chatSub?.cancel();
+    _chatSub = null;
+    _chatService?.dispose();
     final uid = _uid;
     if (uid != null) {
       try {
@@ -486,12 +574,56 @@ class _ArenaGamePageState extends State<ArenaGamePage>
     WidgetsBinding.instance.removeObserver(this);
     _sub?.cancel();
     _connSub?.cancel();
+    _chatSub?.cancel();
+    _chatService?.dispose();
     _presence?.stop();
+    _disconnectTick?.cancel();
     // Keep the cleanup Timer alive past dispose so the host's room removal
     // still fires even after they leave the screen — it's intentionally not
     // cancelled here. If you want eager teardown, call cleanupTimer cancel
     // from a deliberate path (e.g. host taps Leave) before dispose runs.
     super.dispose();
+  }
+
+  Future<void> _syncDisconnectState() async {
+    if (!mounted || _disconnectMutationPending || !_isConnected) return;
+    final selfUid = _uid;
+    if (selfUid == null || _room.status == 'finished') return;
+    final opponentUid = _room.opponentOf(selfUid);
+    if (opponentUid.isEmpty) return;
+    final opponentState = _presence?.derive(_room, opponentUid);
+    final activeUid = _room.disconnectUid;
+
+    _disconnectMutationPending = true;
+    try {
+      if (opponentState == PresenceState.offline) {
+        if (activeUid == null || activeUid.isEmpty) {
+          await ArenaRepo.instance.startDisconnectGrace(
+            code: _room.roomCode,
+            disconnectedUid: opponentUid,
+          );
+          return;
+        }
+        final deadline = _room.disconnectDeadlineAt ?? 0;
+        if (activeUid == opponentUid &&
+            deadline > 0 &&
+            DateTime.now().millisecondsSinceEpoch >= deadline) {
+          await ArenaRepo.instance.finishRoomByDisconnectForfeit(
+            code: _room.roomCode,
+            disconnectedUid: opponentUid,
+            winnerUid: selfUid,
+          );
+        }
+      } else if (opponentState == PresenceState.online &&
+          activeUid == opponentUid) {
+        await ArenaRepo.instance.clearDisconnectGrace(
+          code: _room.roomCode,
+          reconnectedUid: opponentUid,
+        );
+      }
+    } finally {
+      _disconnectMutationPending = false;
+    }
   }
 
   // ── Move handling ─────────────────────────────────────────────────────
@@ -614,7 +746,8 @@ class _ArenaGamePageState extends State<ArenaGamePage>
             roundVersion: preVersion,
           );
           if (kDebugMode) {
-            debugPrint('[ARENA_PHASE_A] write success room=${capturedRoom.roomCode} '
+            debugPrint(
+                '[ARENA_PHASE_A] write success room=${capturedRoom.roomCode} '
                 'newVersion=$phaseAVersion result=$phaseAResult branch=tied_at_last');
           }
           _scheduleAdvanceToNextRound(
@@ -632,8 +765,9 @@ class _ArenaGamePageState extends State<ArenaGamePage>
           );
           return;
         }
-        final roomWinner =
-            scoreHost > scoreGuest ? capturedRoom.hostUid : (capturedRoom.guestUid ?? '');
+        final roomWinner = scoreHost > scoreGuest
+            ? capturedRoom.hostUid
+            : (capturedRoom.guestUid ?? '');
         await ArenaRepo.instance.finishMatchAtomic(
           code: capturedRoom.roomCode,
           currentRound: capturedRoom.currentRound,
@@ -647,7 +781,8 @@ class _ArenaGamePageState extends State<ArenaGamePage>
           finalResult: 'completed',
         );
         if (kDebugMode) {
-          debugPrint('[ARENA_PHASE_A] write success room=${capturedRoom.roomCode} '
+          debugPrint(
+              '[ARENA_PHASE_A] write success room=${capturedRoom.roomCode} '
               'newVersion=$phaseAVersion result=$phaseAResult branch=match_finished');
         }
       } else {
@@ -664,7 +799,8 @@ class _ArenaGamePageState extends State<ArenaGamePage>
           roundVersion: preVersion,
         );
         if (kDebugMode) {
-          debugPrint('[ARENA_PHASE_A] write success room=${capturedRoom.roomCode} '
+          debugPrint(
+              '[ARENA_PHASE_A] write success room=${capturedRoom.roomCode} '
               'newVersion=$phaseAVersion result=$phaseAResult branch=normal');
         }
         _scheduleAdvanceToNextRound(
@@ -764,9 +900,9 @@ class _ArenaGamePageState extends State<ArenaGamePage>
     final selfUid = _uid;
     if (selfUid == null) return;
     int coinsWon = 0;
-    final isLiveWinner = _room.roomWinnerUid != null
-        && _room.roomWinnerUid!.isNotEmpty
-        && _room.roomWinnerUid == selfUid;
+    final isLiveWinner = _room.roomWinnerUid != null &&
+        _room.roomWinnerUid!.isNotEmpty &&
+        _room.roomWinnerUid == selfUid;
     if (_room.betEnabled &&
         AppConfig.kEnableFriendRoomBetting &&
         isLiveWinner) {
@@ -800,9 +936,8 @@ class _ArenaGamePageState extends State<ArenaGamePage>
     }
 
     final opponentUid = _room.opponentOf(selfUid);
-    final opponentName = (selfUid == _room.hostUid)
-        ? (_room.guestName ?? '')
-        : _room.hostName;
+    final opponentName =
+        (selfUid == _room.hostUid) ? (_room.guestName ?? '') : _room.hostName;
     await ArenaMatchSummary.writeUserLogs(
       room: _room,
       uid: selfUid,
@@ -829,12 +964,12 @@ class _ArenaGamePageState extends State<ArenaGamePage>
     if (!mounted) return;
     final l10n = AppL10n.of(context);
     final selfUid = _uid;
-    final win = selfUid != null
-        && _room.roomWinnerUid != null
-        && _room.roomWinnerUid == selfUid;
-    final draw = _room.roomWinnerUid == null
-        || _room.roomWinnerUid!.isEmpty;
-    final forfeit = _room.result == 'forfeit';
+    final win = selfUid != null &&
+        _room.roomWinnerUid != null &&
+        _room.roomWinnerUid == selfUid;
+    final draw = _room.roomWinnerUid == null || _room.roomWinnerUid!.isEmpty;
+    final forfeit =
+        _room.result == 'forfeit' || _room.result == 'disconnect_forfeit';
     if (kDebugMode) {
       final overlayResult = draw ? 'draw' : (win ? 'win' : 'loss');
       debugPrint('[ARENA_OVERLAY] match_finished result=$overlayResult '
@@ -865,8 +1000,7 @@ class _ArenaGamePageState extends State<ArenaGamePage>
       barrierColor: Colors.black.withValues(alpha: 0.55),
       builder: (ctx) => Dialog(
         backgroundColor: Colors.transparent,
-        insetPadding:
-            const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
         child: Container(
           padding: const EdgeInsets.fromLTRB(22, 24, 22, 18),
           decoration: BoxDecoration(
@@ -947,8 +1081,7 @@ class _ArenaGamePageState extends State<ArenaGamePage>
                     _exitToArena();
                   },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor:
-                        AppPalette.primary.withValues(alpha: 0.16),
+                    backgroundColor: AppPalette.primary.withValues(alpha: 0.16),
                     foregroundColor: AppPalette.primary,
                     elevation: 0,
                     shape: RoundedRectangleBorder(
@@ -1045,11 +1178,7 @@ class _ArenaGamePageState extends State<ArenaGamePage>
         body: AppBackground(
           variant: AppBackgroundVariant.homeNeon,
           child: SafeArea(
-            // Force LTR for the entire gameplay UI so Arabic locale never
-            // mirrors the board, score bar (host/guest), or round numbering.
-            child: Directionality(
-              textDirection: TextDirection.ltr,
-              child: Stack(
+            child: Stack(
               children: [
                 _buildScaffold(context),
                 if (_showCountdown && _room.status == 'countdown')
@@ -1069,11 +1198,18 @@ class _ArenaGamePageState extends State<ArenaGamePage>
                 if (!_isConnected &&
                     _everConnected &&
                     _room.status != 'finished')
-                  const Positioned(
-                    top: 12,
-                    left: 12,
-                    right: 12,
-                    child: _ReconnectingBanner(),
+                  const Positioned.fill(
+                    child: _DisconnectWaitingOverlay(selfDisconnected: true),
+                  )
+                else if (_room.disconnectUid != null &&
+                    _room.disconnectUid!.isNotEmpty &&
+                    _room.disconnectUid != _uid &&
+                    _room.status != 'finished')
+                  Positioned.fill(
+                    child: _DisconnectWaitingOverlay(
+                      selfDisconnected: false,
+                      deadlineAtMs: _room.disconnectDeadlineAt,
+                    ),
                   ),
                 if (_roundEndBanner != null)
                   Positioned.fill(
@@ -1092,7 +1228,6 @@ class _ArenaGamePageState extends State<ArenaGamePage>
                     ),
                   ),
               ],
-            ),
             ),
           ),
         ),
@@ -1199,7 +1334,12 @@ class _ArenaGamePageState extends State<ArenaGamePage>
         ),
         const SizedBox(height: 6),
         _buildScoreBar(),
-        const SizedBox(height: 4),
+        _GameReactionRow(
+          hostSignal: _chatSignals[_room.hostUid],
+          guestSignal:
+              _room.guestUid == null ? null : _chatSignals[_room.guestUid!],
+        ),
+        const SizedBox(height: 3),
         // Compact turn hint — the active player's card already glows green,
         // this is just a textual reinforcement during the playing phase.
         if (_room.status == 'playing')
@@ -1223,6 +1363,36 @@ class _ArenaGamePageState extends State<ArenaGamePage>
             ),
           ),
         ),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 180),
+          child: _showQuickEmojis
+              ? Padding(
+                  key: const ValueKey<String>('game-quick-emojis'),
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+                  child: QuickEmojiBar(
+                    emojis: _equippedEmojis,
+                    enabled: _chatService != null && _isConnected,
+                    showLabel: false,
+                    decorated: false,
+                    onSelected: _sendChatEmoji,
+                    onError: _onChatError,
+                  ),
+                )
+              : const SizedBox.shrink(
+                  key: ValueKey<String>('game-quick-emojis-hidden'),
+                ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+          child: OnlineChatBar(
+            enabled: _chatService != null && _isConnected,
+            onSend: _sendChatMessage,
+            onEmojiPressed: () => setState(
+              () => _showQuickEmojis = !_showQuickEmojis,
+            ),
+            onError: _onChatError,
+          ),
+        ),
       ],
     );
   }
@@ -1232,8 +1402,9 @@ class _ArenaGamePageState extends State<ArenaGamePage>
     final guestSym =
         _room.guestUid == null ? '' : _room.symbolFor(_room.guestUid ?? '');
     final turnUid = _room.turnUid;
-    final hostActive =
-        _room.status == 'playing' && turnUid != null && turnUid == _room.hostUid;
+    final hostActive = _room.status == 'playing' &&
+        turnUid != null &&
+        turnUid == _room.hostUid;
     final guestActive = _room.status == 'playing' &&
         turnUid != null &&
         _room.guestUid != null &&
@@ -1326,21 +1497,62 @@ class _ArenaGamePageState extends State<ArenaGamePage>
         // Each symbol uses whichever player owns that mark on the board.
         final xSkin = _skinFor(_room.xUid, 'X');
         final oSkin = _skinFor(_room.oUid, 'O');
-        return SizedBox(
-          width: size,
-          height: size,
-          child: _BoardGrid(
-            key: ValueKey('board_${_room.roundVersion}_${_room.currentRoundIndex}_${_room.currentBoardSize}_${_room.board.join('|')}'),
-            board: _room.board,
-            boardSize: _room.currentBoardSize,
-            onTap: _onCellTap,
-            interactive: _room.status == 'playing' && _room.turnUid == _uid,
-            xSkin: xSkin,
-            oSkin: oSkin,
-            winningCells: _winningCells,
+        return Directionality(
+          // Board cell indices are protocol data and must never be mirrored.
+          textDirection: TextDirection.ltr,
+          child: SizedBox(
+            width: size,
+            height: size,
+            child: _BoardGrid(
+              key: ValueKey(
+                  'board_${_room.roundVersion}_${_room.currentRoundIndex}_${_room.currentBoardSize}_${_room.board.join('|')}'),
+              board: _room.board,
+              boardSize: _room.currentBoardSize,
+              onTap: _onCellTap,
+              interactive: _room.status == 'playing' && _room.turnUid == _uid,
+              xSkin: xSkin,
+              oSkin: oSkin,
+              winningCells: _winningCells,
+            ),
           ),
         );
       },
+    );
+  }
+}
+
+class _GameReactionRow extends StatelessWidget {
+  final ArenaChatSignal? hostSignal;
+  final ArenaChatSignal? guestSignal;
+
+  const _GameReactionRow({
+    required this.hostSignal,
+    required this.guestSignal,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: Row(
+        children: [
+          Expanded(
+            child: PlayerReactionBubble(
+              signal: hostSignal,
+              maxWidth: 160,
+              accent: AppPalette.primary,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: PlayerReactionBubble(
+              signal: guestSignal,
+              maxWidth: 160,
+              accent: AppPalette.accentPurple,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1353,6 +1565,7 @@ class _GameBetChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppL10n.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
       decoration: BoxDecoration(
@@ -1367,7 +1580,7 @@ class _GameBetChip extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Image.asset(
-            'assets/coin/COIN.png',
+            'assets/coin/COIN.webp',
             width: 13,
             height: 13,
             cacheWidth: 39,
@@ -1379,7 +1592,8 @@ class _GameBetChip extends StatelessWidget {
           ),
           const SizedBox(width: 4),
           Text(
-            'Bet ${room.betAmount} · Prize ${room.prizePool}',
+            '${l10n.betLabel} ${room.betAmount} · '
+            '${l10n.prizePoolLabel} ${room.prizePool}',
             style: const TextStyle(
               color: AppPalette.gold,
               fontSize: 11,
@@ -1423,7 +1637,7 @@ class _BoardGrid extends StatelessWidget {
     final cellRadius = matchBoardCellRadius(boardSize);
     final cellCount = boardSize * boardSize;
     return RepaintBoundary(
-      child: Container(
+        child: Container(
       padding: EdgeInsets.all(padding),
       decoration: BoxDecoration(
         color: AppPalette.panel,
@@ -1443,116 +1657,156 @@ class _BoardGrid extends StatelessWidget {
       child: Directionality(
         textDirection: TextDirection.ltr,
         child: GridView.builder(
-        physics: const NeverScrollableScrollPhysics(),
-        itemCount: cellCount,
-        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: boardSize,
-          mainAxisSpacing: spacing,
-          crossAxisSpacing: spacing,
-        ),
-        itemBuilder: (ctx, i) {
-          final v = i < board.length ? board[i] : '';
-          final empty = v.isEmpty;
-          final isWinning = winningCells.contains(i);
-          return Material(
-            color: Colors.transparent,
-            borderRadius: BorderRadius.circular(cellRadius),
-            child: InkWell(
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: cellCount,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: boardSize,
+            mainAxisSpacing: spacing,
+            crossAxisSpacing: spacing,
+          ),
+          itemBuilder: (ctx, i) {
+            final v = i < board.length ? board[i] : '';
+            final empty = v.isEmpty;
+            final isWinning = winningCells.contains(i);
+            return Material(
+              color: Colors.transparent,
               borderRadius: BorderRadius.circular(cellRadius),
-              onTap: empty && interactive ? () => onTap(i) : null,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 240),
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: isWinning
-                      ? AppPalette.success.withValues(alpha: 0.22)
-                      : AppPalette.panelDeep,
-                  borderRadius: BorderRadius.circular(cellRadius),
-                  border: Border.all(
+              child: InkWell(
+                borderRadius: BorderRadius.circular(cellRadius),
+                onTap: empty && interactive ? () => onTap(i) : null,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 240),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
                     color: isWinning
-                        ? AppPalette.success
-                        : AppPalette.strokeSoft,
-                    width: isWinning ? 2.2 : 1,
+                        ? AppPalette.success.withValues(alpha: 0.22)
+                        : AppPalette.panelDeep,
+                    borderRadius: BorderRadius.circular(cellRadius),
+                    border: Border.all(
+                      color: isWinning
+                          ? AppPalette.success
+                          : AppPalette.strokeSoft,
+                      width: isWinning ? 2.2 : 1,
+                    ),
+                    boxShadow: isWinning
+                        ? [
+                            BoxShadow(
+                              color: AppPalette.success.withValues(alpha: 0.55),
+                              blurRadius: 28,
+                              spreadRadius: 2,
+                            ),
+                          ]
+                        : null,
                   ),
-                  boxShadow: isWinning
-                      ? [
-                          BoxShadow(
-                            color:
-                                AppPalette.success.withValues(alpha: 0.55),
-                            blurRadius: 28,
-                            spreadRadius: 2,
-                          ),
-                        ]
-                      : null,
+                  child: empty
+                      ? const SizedBox.shrink()
+                      : CellContent(
+                          v: v,
+                          xColor: AppPalette.danger,
+                          oColor: AppPalette.accentBlue,
+                          boardSize: boardSize,
+                          xSkin: xSkin,
+                          oSkin: oSkin,
+                        ),
                 ),
-                child: empty
-                    ? const SizedBox.shrink()
-                    : CellContent(
-                        v: v,
-                        xColor: AppPalette.danger,
-                        oColor: AppPalette.accentBlue,
-                        boardSize: boardSize,
-                        xSkin: xSkin,
-                        oSkin: oSkin,
-                      ),
               ),
-            ),
-          );
-        },
-      ),
+            );
+          },
+        ),
       ),
     ));
   }
 }
 
-class _ReconnectingBanner extends StatelessWidget {
-  const _ReconnectingBanner();
+class _DisconnectWaitingOverlay extends StatelessWidget {
+  final bool selfDisconnected;
+  final int? deadlineAtMs;
+
+  const _DisconnectWaitingOverlay({
+    required this.selfDisconnected,
+    this.deadlineAtMs,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final l10n = AppL10n.of(context);
-    return IgnorePointer(
-      ignoring: true,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: AppPalette.panel.withValues(alpha: 0.92),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: AppPalette.gold.withValues(alpha: 0.6),
-            width: 1,
+    return AbsorbPointer(
+      absorbing: true,
+      child: ColoredBox(
+        color: Colors.black.withValues(alpha: 0.42),
+        child: Center(
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 32),
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 22),
+            decoration: BoxDecoration(
+              color: AppPalette.panel.withValues(alpha: 0.96),
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(
+                color: AppPalette.gold.withValues(alpha: 0.68),
+              ),
+              boxShadow: <BoxShadow>[
+                BoxShadow(
+                  color: AppPalette.gold.withValues(alpha: 0.25),
+                  blurRadius: 28,
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                const SizedBox(
+                  width: 28,
+                  height: 28,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.5,
+                    color: AppPalette.gold,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  selfDisconnected ? 'Connection lost' : 'Waiting for opponent',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: AppPalette.text,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 17,
+                    letterSpacing: 0.6,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  selfDisconnected ? 'Trying to reconnect…' : 'Reconnecting…',
+                  style: const TextStyle(color: AppPalette.textMuted),
+                ),
+                if (!selfDisconnected) ...<Widget>[
+                  const SizedBox(height: 12),
+                  Text(
+                    _countdown(deadlineAtMs),
+                    style: const TextStyle(
+                      color: AppPalette.gold,
+                      fontFamily: 'Orbitron',
+                      fontSize: 24,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 2,
+                    ),
+                  ),
+                ],
+              ],
+            ),
           ),
-          boxShadow: [
-            BoxShadow(
-              color: AppPalette.gold.withValues(alpha: 0.25),
-              blurRadius: 18,
-            ),
-          ],
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: AppPalette.gold,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Text(
-              l10n.reconnectingShort,
-              style: const TextStyle(
-                color: AppPalette.text,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0.4,
-              ),
-            ),
-          ],
         ),
       ),
     );
+  }
+
+  static String _countdown(int? deadlineAtMs) {
+    final remaining =
+        ((deadlineAtMs ?? 0) - DateTime.now().millisecondsSinceEpoch)
+            .clamp(0, 2 * 60 * 1000);
+    final seconds = (remaining / 1000).ceil();
+    final minutesPart = seconds ~/ 60;
+    final secondsPart = seconds % 60;
+    return '${minutesPart.toString().padLeft(2, '0')}:'
+        '${secondsPart.toString().padLeft(2, '0')}';
   }
 }
 
@@ -1574,6 +1828,7 @@ class _DrawBannerView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppL10n.of(context);
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 32),
       padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 18),
@@ -1609,7 +1864,7 @@ class _DrawBannerView extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            'ROUND DRAW',
+            l10n.roundDrawTitle,
             style: TextStyle(
               color: AppPalette.gold,
               fontSize: 20,
@@ -1625,9 +1880,9 @@ class _DrawBannerView extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 4),
-          const Text(
-            'Replay this round',
-            style: TextStyle(
+          Text(
+            l10n.replayRoundMessage,
+            style: const TextStyle(
               color: AppPalette.text,
               fontSize: 13,
               fontWeight: FontWeight.w700,
@@ -1647,8 +1902,7 @@ class _RoundEndBannerView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppL10n.of(context);
-    final color =
-        banner.isSelfWinner ? AppPalette.success : AppPalette.danger;
+    final color = banner.isSelfWinner ? AppPalette.success : AppPalette.danger;
     final label =
         banner.isSelfWinner ? l10n.roundWonBanner : l10n.roundLostBanner;
     return Container(
@@ -1724,7 +1978,7 @@ class _PrizeWonBadge extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Image.asset(
-            'assets/coin/COIN.png',
+            'assets/coin/COIN.webp',
             width: 22,
             height: 22,
             errorBuilder: (_, __, ___) => const Icon(

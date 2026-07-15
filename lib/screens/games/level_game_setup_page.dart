@@ -24,11 +24,12 @@ class _LevelGameSetupPageState extends State<LevelGameSetupPage> {
   int _currentLevel = 1;
   bool _loading = true;
   PlayerSymbol _symbol = PlayerSymbol.x;
+  final DateTime _openedAt = DateTime.now();
 
   @override
   void initState() {
     super.initState();
-    _loadLevel();
+    Future.microtask(_loadLevel);
   }
 
   Future<void> _loadLevel() async {
@@ -48,6 +49,10 @@ class _LevelGameSetupPageState extends State<LevelGameSetupPage> {
           _currentLevel = level;
           _loading = false;
         });
+        if (kDebugMode) {
+          final ms = DateTime.now().difference(_openedAt).inMilliseconds;
+          debugPrint('[PERF] level_open_ms=$ms');
+        }
       }
     } catch (e) {
       // If any error occurs, fallback to level 1 and hide loading
@@ -296,7 +301,7 @@ class _RewardInfo extends StatelessWidget {
             ),
           ),
           Image.asset(
-            'assets/coin/COIN.png',
+            'assets/coin/COIN.webp',
             width: 20,
             height: 20,
           ),

@@ -41,8 +41,7 @@ class _ColorPickerSheetState extends State<_ColorPickerSheet> {
       decoration: BoxDecoration(
         color: AppPalette.panelDeep,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-        border: Border.all(
-            color: _accent.withOpacity(0.20), width: 1),
+        border: Border.all(color: _accent.withOpacity(0.20), width: 1),
       ),
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
       child: Column(
@@ -212,7 +211,8 @@ class ColorsTab extends StatefulWidget {
   final Future<void> Function(String) onSelectOSkin;
   final int coins;
 
-  const ColorsTab({super.key, 
+  const ColorsTab({
+    super.key,
     required this.ownedX,
     required this.ownedO,
     required this.selectedXIndex,
@@ -238,11 +238,13 @@ class ColorsTab extends StatefulWidget {
 class _ColorsTabState extends State<ColorsTab> {
   int _subTab = 0; // 0 = X, 1 = O
 
-  Color get _xColor =>
-      NeonColors.xColors[widget.selectedXIndex.clamp(0, NeonColors.xColors.length - 1)];
-  Color get _oColor =>
-      NeonColors.oColors[widget.selectedOIndex.clamp(0, NeonColors.oColors.length - 1)];
+  Color get _xColor => NeonColors
+      .xColors[widget.selectedXIndex.clamp(0, NeonColors.xColors.length - 1)];
+  Color get _oColor => NeonColors
+      .oColors[widget.selectedOIndex.clamp(0, NeonColors.oColors.length - 1)];
 
+  // Retained for the optional color-palette mode.
+  // ignore: unused_element
   void _openColorPicker(BuildContext context) {
     showModalBottomSheet(
       context: context,
@@ -250,8 +252,10 @@ class _ColorsTabState extends State<ColorsTab> {
       isScrollControlled: true,
       builder: (_) => _ColorPickerSheet(
         isX: _subTab == 0,
-        ownedColors: _subTab == 0 ? widget.ownedX.toSet() : widget.ownedO.toSet(),
-        selectedIndex: _subTab == 0 ? widget.selectedXIndex : widget.selectedOIndex,
+        ownedColors:
+            _subTab == 0 ? widget.ownedX.toSet() : widget.ownedO.toSet(),
+        selectedIndex:
+            _subTab == 0 ? widget.selectedXIndex : widget.selectedOIndex,
         onBuy: _subTab == 0 ? widget.onBuyX : widget.onBuyO,
         coins: widget.coins,
       ),
@@ -263,7 +267,8 @@ class _ColorsTabState extends State<ColorsTab> {
     final isX = _subTab == 0;
     final accent = isX ? AppPalette.homeCyan : AppPalette.accentPurple;
     final skins = isX ? xSkinCatalog : oSkinCatalog;
-    final ownedSkins = isX ? widget.ownedXSkins.toSet() : widget.ownedOSkins.toSet();
+    final ownedSkins =
+        isX ? widget.ownedXSkins.toSet() : widget.ownedOSkins.toSet();
     final selectedSkin = isX ? widget.selectedXSkin : widget.selectedOSkin;
     final totalSkins = skins.length - 1; // exclude default
     final ownedCount = ownedSkins.where((id) => id != 'default').length;
@@ -354,7 +359,8 @@ class _ColorsTabState extends State<ColorsTab> {
                   itemCount: skins.length,
                   itemBuilder: (ctx, i) {
                     final skin = skins[i];
-                    final owned = ownedSkins.contains(skin.id) || skin.isDefault;
+                    final owned =
+                        ownedSkins.contains(skin.id) || skin.isDefault;
                     final selected = selectedSkin == skin.id;
                     return SkinCard(
                       skin: skin,
@@ -386,6 +392,8 @@ class _ColorsTabState extends State<ColorsTab> {
   }
 }
 
+// Retained for the optional color-palette mode.
+// ignore: unused_element
 class _ColorTile extends StatelessWidget {
   final int index;
   final bool isX;
@@ -474,7 +482,7 @@ class _ColorTile extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Image.asset(
-                    'assets/coin/COIN.png',
+                    'assets/coin/COIN.webp',
                     height: 14,
                     fit: BoxFit.contain,
                   ),
@@ -495,4 +503,3 @@ class _ColorTile extends StatelessWidget {
     );
   }
 }
-

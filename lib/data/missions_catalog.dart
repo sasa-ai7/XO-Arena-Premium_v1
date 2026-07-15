@@ -1,11 +1,16 @@
 import '../models/mission.dart';
 
-/// Approved Missions catalog (coins-only).
+/// Approved Missions catalog.
 ///
-/// Daily total (all 7) = 400 coins. Weekly total (all 12 × 3 tiers) = 47,200.
-/// Full week incl. daily = 50,000. Do NOT add reward sources beyond these.
+/// RECURRING budget (unchanged): daily total (all 7) = 400 coins, weekly total
+/// (all 12 × 3 tiers) = 47,200, full week incl. daily = 50,000. Do NOT change
+/// the recurring reward sources beyond these.
 ///
-/// Mission ids are unique across daily/weekly even when they share an
+/// One-time [kMilestoneMissions] (below) sit OUTSIDE this recurring budget —
+/// they pay out once ever (9,000 coins total + one free avatar) and never
+/// reset, so they do not inflate the weekly economy.
+///
+/// Mission ids are unique across daily/weekly/milestone even when they share an
 /// `eventKey` (e.g. a single AI-easy win increments BOTH `daily_ai_easy` and
 /// `weekly_ai_easy`).
 
@@ -243,5 +248,78 @@ const List<MissionDef> kWeeklyMissions = [
   ),
 ];
 
-/// All missions (daily first, then weekly).
-final List<MissionDef> kAllMissions = [...kDailyMissions, ...kWeeklyMissions];
+// ── Milestones (one-time achievements — never reset) ───────────────────────
+//
+// These pay out ONCE, so they do not touch the recurring daily(400)/weekly
+// (47,200) budget. Coin total across all milestones = 9,000 one-time, plus the
+// free `Avatar__7` frame from the 7-day login streak.
+const List<MissionDef> kMilestoneMissions = [
+  MissionDef(
+    id: 'milestone_login_7day',
+    type: MissionType.milestone,
+    eventKey: 'login_streak',
+    route: MissionRoute.none,
+    titleAr: 'افتح اللعبة 7 أيام',
+    titleEn: 'Open the game for 7 days',
+    target: 7,
+    rewardCoins: 0,
+    rewardAvatarId: 7, // free Avatar__7 (Riot) frame
+  ),
+  MissionDef(
+    id: 'milestone_spend_coins',
+    type: MissionType.milestone,
+    eventKey: 'coins_spent',
+    route: MissionRoute.store,
+    titleAr: 'أنفق 10,000 عملة',
+    titleEn: 'Spend 10,000 coins',
+    target: 10000,
+    rewardCoins: 3000,
+  ),
+  MissionDef(
+    id: 'milestone_buy_theme',
+    type: MissionType.milestone,
+    eventKey: 'theme_bought',
+    route: MissionRoute.store,
+    titleAr: 'اشترِ أي ثيم X أو O',
+    titleEn: 'Buy any X or O theme',
+    target: 1,
+    rewardCoins: 2000,
+  ),
+  MissionDef(
+    id: 'milestone_buy_premium_avatar',
+    type: MissionType.milestone,
+    eventKey: 'premium_avatar_bought',
+    route: MissionRoute.store,
+    titleAr: 'اشترِ أفاتار مميز',
+    titleEn: 'Buy a premium avatar',
+    target: 1,
+    rewardCoins: 2500,
+  ),
+  MissionDef(
+    id: 'milestone_equip_avatar',
+    type: MissionType.milestone,
+    eventKey: 'avatar_equipped',
+    route: MissionRoute.store,
+    titleAr: 'جهّز إطار أفاتار',
+    titleEn: 'Equip an avatar frame',
+    target: 1,
+    rewardCoins: 500,
+  ),
+  MissionDef(
+    id: 'milestone_invite_friend',
+    type: MissionType.milestone,
+    eventKey: 'friend_invited',
+    route: MissionRoute.none,
+    titleAr: 'ادعُ صديقاً',
+    titleEn: 'Invite a friend',
+    target: 1,
+    rewardCoins: 1000,
+  ),
+];
+
+/// All missions (daily, then weekly, then one-time milestones).
+final List<MissionDef> kAllMissions = [
+  ...kDailyMissions,
+  ...kWeeklyMissions,
+  ...kMilestoneMissions,
+];

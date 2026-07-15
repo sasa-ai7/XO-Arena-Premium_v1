@@ -125,4 +125,66 @@ void main() {
       expect(preview!.claimableCount, greaterThan(0));
     });
   });
+
+  group('milestones', () {
+    test('catalog: 6 one-time milestones, all included in kAllMissions', () {
+      expect(kMilestoneMissions.length, 6);
+      for (final m in kMilestoneMissions) {
+        expect(m.type, MissionType.milestone);
+        expect(kAllMissions.contains(m), isTrue);
+      }
+    });
+
+    test('7-day login milestone grants the free Avatar__7 frame', () {
+      final m =
+          kMilestoneMissions.firstWhere((m) => m.id == 'milestone_login_7day');
+      expect(m.target, 7);
+      expect(m.rewardAvatarId, 7);
+      expect(m.rewardCoins, 0); // avatar-only reward
+    });
+
+    test('login streak is armed to 1 on first launch', () {
+      // _applyResets ran in init(): first-ever day → streak 1.
+      expect(svc.viewFor('milestone_login_7day')!.progress, 1);
+    });
+
+    test('trackAmount accumulates coins_spent and caps at target', () async {
+      await svc.trackAmount('coins_spent', 4000);
+      expect(svc.viewFor('milestone_spend_coins')!.progress, 4000);
+      await svc.trackAmount('coins_spent', 4000);
+      expect(svc.viewFor('milestone_spend_coins')!.progress, 8000);
+      // Overshoot caps at the 10,000 target.
+      await svc.trackAmount('coins_spent', 9999);
+      expect(svc.viewFor('milestone_spend_coins')!.progress, 10000);
+      expect(svc.viewFor('milestone_spend_coins')!.dailyCompleted, isTrue);
+    });
+
+    test('trackAmount ignores non-positive amounts', () async {
+      await svc.trackAmount('coins_spent', 0);
+      await svc.trackAmount('coins_spent', -50);
+      expect(svc.viewFor('milestone_spend_coins')!.progress, 0);
+    });
+
+    test('single-tick milestones complete on their event', () async {
+      await svc.trackEvent('theme_bought');
+      expect(svc.viewFor('milestone_buy_theme')!.dailyClaimable, isTrue);
+
+      await svc.trackEvent('avatar_equipped');
+      expect(svc.viewFor('milestone_equip_avatar')!.progress, 1);
+
+      await svc.trackEvent('premium_avatar_bought');
+      expect(svc.viewFor('milestone_buy_premium_avatar')!.progress, 1);
+
+      await svc.trackEvent('friend_invited');
+      expect(svc.viewFor('milestone_invite_friend')!.progress, 1);
+    });
+
+    test('milestone tick is capped (not exploitable by repeat events)',
+        () async {
+      for (var i = 0; i < 5; i++) {
+        await svc.trackEvent('avatar_equipped');
+      }
+      expect(svc.viewFor('milestone_equip_avatar')!.progress, 1);
+    });
+  });
 }

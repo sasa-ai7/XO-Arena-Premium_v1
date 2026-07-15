@@ -65,7 +65,7 @@ class AppConfig {
   /// settles bets atomically at end-of-match.
   static const bool kEnableFriendRoomBetting = true;
 
-  /// Enable the referral system (9-digit invite codes + 100 coins/friend).
+  /// Enable the referral system (9-digit invite codes + 1000 coins/friend).
   static const bool kEnableReferralRewards = true;
 
   /// Support account email for the game. Used for Contact Support and policies.

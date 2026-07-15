@@ -9,6 +9,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import 'core/app_l10n.dart';
 import 'core/app_theme.dart';
+import 'core/firebase_bootstrap.dart';
 import 'core/startup.dart';
 import 'firebase_options.dart';
 import 'screens/admin/admin_home_screen.dart';
@@ -19,7 +20,7 @@ import 'screens/maintenance_screen.dart';
 import 'screens/welcome_screen.dart';
 import 'services/fcm_service.dart';
 import 'services/local_store.dart';
-import 'services/perf_mode_service.dart';
+import 'services/online_reconnect_controller.dart';
 import 'widgets/weak_connection_overlay.dart';
 
 /// App Check is intentionally DISABLED until Firebase Blaze + App Check
@@ -54,10 +55,6 @@ Future<void> main() async {
 
     WidgetsFlutterBinding.ensureInitialized();
 
-    // Load the Performance Mode flag early (non-blocking) so low-end-device
-    // visual reductions apply as soon as the first screens build.
-    unawaited(PerfMode.init());
-
     // Hard kill switch for google_fonts: never fetch from fonts.gstatic.com
     // at runtime. All text uses locally bundled Inter / Orbitron families
     // registered in pubspec.yaml. Leaving this enabled previously caused
@@ -75,44 +72,41 @@ Future<void> main() async {
       }
     };
 
-    try {
-      await Firebase.initializeApp(
-        options: DefaultFirebaseOptions.currentPlatform,
-      );
-    } catch (error, stackTrace) {
-      if (kDebugMode) {
-        debugPrint('[main] Firebase initialization failed: $error');
-        debugPrintStack(stackTrace: stackTrace);
-      }
-      if (shouldShowMaintenanceScreen(error)) {
-        runAppInStartupZone(const MaintenanceScreen());
-        return;
-      }
-    }
-
-    // App Check stays disabled until Firebase Blaze + Play Integrity are ready.
-    // The Google Play client-only IAP flow does not depend on App Check, so we
-    // deliberately do NOT call FirebaseAppCheck.instance.activate() here.
-    if (kDebugMode) {
-      debugPrint(
-          '[main] App Check disabled until Blaze/App Check setup is ready. '
-          '(kEnableAppCheck=$kEnableAppCheck)');
-    }
-
-    // Register the FCM background isolate handler before the app starts so
-    // pushes (e.g. the referral reward) received while the app is terminated
-    // or backgrounded are handled. The handler is a top-level function in
-    // fcm_service.dart; FcmService.init() (called once Home mounts) wires the
-    // foreground/opened-app listeners and token registration.
-    try {
-      FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
-    } catch (error) {
-      if (kDebugMode) {
-        debugPrint('[FCM] background handler registration failed: $error');
-      }
-    }
-
+    final firebaseReady = Completer<void>();
+    FirebaseBootstrap.configure(firebaseReady.future);
     runAppInStartupZone(const NewYorkXOApp());
+
+    // Paint the existing Intro screen before invoking FlutterFire's native
+    // initialization. Startup route resolution awaits [FirebaseBootstrap], so
+    // auth state remains correct while the first visible frame is no longer
+    // withheld by plugin/network setup.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future<void>.delayed(const Duration(milliseconds: 300), () async {
+        try {
+          await Firebase.initializeApp(
+            options: DefaultFirebaseOptions.currentPlatform,
+          );
+          FirebaseMessaging.onBackgroundMessage(
+              firebaseMessagingBackgroundHandler);
+          OnlineReconnectController.instance.init();
+          if (kDebugMode) {
+            debugPrint(
+                '[main] App Check disabled until Blaze/App Check setup is ready. '
+                '(kEnableAppCheck=$kEnableAppCheck)');
+          }
+        } catch (error, stackTrace) {
+          if (kDebugMode) {
+            debugPrint('[main] Firebase initialization failed: $error');
+            debugPrintStack(stackTrace: stackTrace);
+          }
+          if (shouldShowMaintenanceScreen(error)) {
+            runAppInStartupZone(const MaintenanceScreen());
+          }
+        } finally {
+          if (!firebaseReady.isCompleted) firebaseReady.complete();
+        }
+      });
+    });
   }, (error, stackTrace) {
     if (kDebugMode) {
       debugPrint('[main] Unhandled zone error: $error');

@@ -15,6 +15,7 @@ import '../../services/game_reward_service.dart';
 import '../../services/local_store.dart';
 import '../../services/mission_service.dart';
 import '../../services/sound_service.dart';
+import '../../services/wallet_transaction_service.dart';
 import '../../utils/ai_engine.dart';
 import '../../utils/board_utils.dart';
 import '../../widgets/app_ui.dart';
@@ -282,16 +283,26 @@ class _GamePageState extends State<GamePage> {
       } else {
         // Client wallet is the single source of truth (see GameRewardService
         // + LocalStore.grantMatchRewardCF docs). The CF is stats-only.
+        // Credit + ledger row go through the canonical transaction service so
+        // the wallet can never move without a history entry.
         balanceBefore = LocalStore.coinsNotifier.value;
-        await LocalStore.updateCoins(coinsToAdd);
+        final result = await WalletTransactionService.instance.applyCredit(
+          coins: coinsToAdd,
+          transactionId: 'ai_${_matchId}_reward',
+          source: 'ai_reward',
+          title: 'AI Match Reward',
+          message: 'AI Match Reward',
+          matchId: _matchId,
+        );
         balanceAfter = LocalStore.coinsNotifier.value;
-        _rewardApplied = true;
+        _rewardApplied = result.success;
         if (kDebugMode) {
           debugPrint(
             '[AI_REWARD] matchId=$_matchId mode=$modeStr applied amount=$coinsToAdd '
             'before=$balanceBefore newCoins=$balanceAfter',
           );
-          debugPrint('[WALLET] mode=$modeStr delta=$coinsToAdd before=$balanceBefore after=$balanceAfter');
+          debugPrint(
+              '[WALLET] mode=$modeStr delta=$coinsToAdd before=$balanceBefore after=$balanceAfter');
         }
       }
     }
@@ -317,9 +328,8 @@ class _GamePageState extends State<GamePage> {
             ? Icons.emoji_events_outlined
             : Icons.sentiment_dissatisfied_outlined,
         coinsAdded: isWin ? coinsToAdd : 0,
-        rewardText: isWin && coinsToAdd > 0
-            ? l10n.addedCoins(coinsToAdd)
-            : null,
+        rewardText:
+            isWin && coinsToAdd > 0 ? l10n.addedCoins(coinsToAdd) : null,
       );
     }
 
@@ -331,7 +341,8 @@ class _GamePageState extends State<GamePage> {
 
     // Missions tracking (local-only; never credits coins here). Guarded by the
     // _isResolvingResult re-entry gate above + per-matchId dedupe in the service.
-    MissionService.instance.trackEvent('any_match_completed', matchId: _matchId);
+    MissionService.instance
+        .trackEvent('any_match_completed', matchId: _matchId);
     if (resultStr == 'win') {
       MissionService.instance.trackEvent('any_match_won', matchId: _matchId);
     }
@@ -339,7 +350,8 @@ class _GamePageState extends State<GamePage> {
       MissionService.instance
           .trackEvent('friend_match_completed', matchId: _matchId);
     } else {
-      MissionService.instance.trackEvent('ai_match_completed', matchId: _matchId);
+      MissionService.instance
+          .trackEvent('ai_match_completed', matchId: _matchId);
       if (resultStr == 'win') {
         MissionService.instance
             .trackEvent('ai_win_${widget.difficulty.name}', matchId: _matchId);
@@ -347,7 +359,8 @@ class _GamePageState extends State<GamePage> {
     }
 
     if (!isFriendMode) {
-      _persistAIResult(resultStr, coinsToAdd, balanceBefore: balanceBefore, balanceAfter: balanceAfter);
+      _persistAIResult(resultStr, coinsToAdd,
+          balanceBefore: balanceBefore, balanceAfter: balanceAfter);
     }
 
     if (FirebaseAuth.instance.currentUser == null) {
@@ -372,20 +385,11 @@ class _GamePageState extends State<GamePage> {
   }) async {
     await LocalStore.addResult(result: resultStr);
     await LocalStore.grantMatchRewardCF(matchId: _matchId, result: resultStr);
-    if (coinsToAdd > 0) {
-      if (kDebugMode) {
-        debugPrint('[REWARD] ai difficulty=${widget.difficulty.name} reward=$coinsToAdd');
-      }
-      await LocalStore.addTopupHistory(
-        usd: 0.0,
-        coins: coinsToAdd,
-        type: 'win',
-        source: 'ai_match_win',
-        description: 'AI Match Reward',
-        transactionId: _matchId,
-        balanceBefore: balanceBefore,
-        balanceAfter: balanceAfter,
-      );
+    // The coin reward + its ledger row were already recorded atomically by
+    // WalletTransactionService.applyCredit in _handleResult.
+    if (coinsToAdd > 0 && kDebugMode) {
+      debugPrint(
+          '[REWARD] ai difficulty=${widget.difficulty.name} reward=$coinsToAdd');
     }
   }
 
@@ -634,82 +638,40 @@ class _GamePageState extends State<GamePage> {
             child: Directionality(
               textDirection: TextDirection.ltr,
               child: LayoutBuilder(
-              builder: (context, constraints) {
-                final landscape = constraints.maxWidth > constraints.maxHeight;
-                final buttonHeight = landscape ? 48.0 : 52.0;
+                builder: (context, constraints) {
+                  final landscape =
+                      constraints.maxWidth > constraints.maxHeight;
+                  final buttonHeight = landscape ? 48.0 : 52.0;
 
-                Widget buildHeaderCard() {
-                  return AppGlassCard(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 10,
-                    ),
-                    child: LayoutBuilder(
-                      builder: (context, headerConstraints) {
-                        final stackedHeader = headerConstraints.maxWidth < 360;
-                        final coinWidth = clampDouble(
-                          headerConstraints.maxWidth * (stackedHeader ? 0.48 : 0.30),
-                          stackedHeader ? 118.0 : 132.0,
-                          stackedHeader ? 156.0 : 176.0,
-                        );
-                        final titleWidth = max(
-                          0.0,
-                          headerConstraints.maxWidth - coinWidth - 66.0,
-                        );
-                        final titleBlock = Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              headerLabel,
-                              style: sectionFont(context).copyWith(fontSize: 12),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              '${_boardConfig.label} • ${_boardConfig.winLength} in a row',
-                              style: bodyFont(context).copyWith(
-                                fontSize: 12,
-                                color: AppPalette.textMuted,
-                              ),
-                            ),
-                          ],
-                        );
-
-                        final coinWidget = SizedBox(
-                          width: coinWidth,
-                          child: ValueListenableBuilder<int>(
-                            valueListenable: LocalStore.coinsNotifier,
-                            builder: (_, coins, __) => CoinPill(
-                              coins: coins,
-                              width: coinWidth,
-                            ),
-                          ),
-                        );
-
-                        if (stackedHeader) {
-                          return Column(
+                  Widget buildHeaderCard() {
+                    return AppGlassCard(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
+                      ),
+                      child: LayoutBuilder(
+                        builder: (context, headerConstraints) {
+                          final stackedHeader =
+                              headerConstraints.maxWidth < 360;
+                          final coinWidth = clampDouble(
+                            headerConstraints.maxWidth *
+                                (stackedHeader ? 0.48 : 0.30),
+                            stackedHeader ? 118.0 : 132.0,
+                            stackedHeader ? 156.0 : 176.0,
+                          );
+                          final titleWidth = max(
+                            0.0,
+                            headerConstraints.maxWidth - coinWidth - 66.0,
+                          );
+                          final titleBlock = Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Row(
-                                children: [
-                                  AppIconButton(
-                                    icon: Icons.arrow_back,
-                                    onTap: _showExitConfirmation,
-                                  ),
-                                  const SizedBox(width: 12),
-                                  SizedBox(
-                                    width: max(0.0, headerConstraints.maxWidth - 56.0),
-                                    child: Text(
-                                      headerLabel,
-                                      style: sectionFont(context)
-                                          .copyWith(fontSize: 12),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                ],
+                              Text(
+                                headerLabel,
+                                style:
+                                    sectionFont(context).copyWith(fontSize: 12),
                               ),
-                              const SizedBox(height: 10),
-                              coinWidget,
-                              const SizedBox(height: 10),
+                              const SizedBox(height: 4),
                               Text(
                                 '${_boardConfig.label} • ${_boardConfig.winLength} in a row',
                                 style: bodyFont(context).copyWith(
@@ -719,278 +681,354 @@ class _GamePageState extends State<GamePage> {
                               ),
                             ],
                           );
-                        }
 
-                        return Row(
-                          children: [
-                            AppIconButton(
-                              icon: Icons.arrow_back,
-                              onTap: _showExitConfirmation,
-                            ),
-                            const SizedBox(width: 12),
-                            SizedBox(width: titleWidth, child: titleBlock),
-                            const SizedBox(width: 10),
-                            coinWidget,
-                          ],
-                        );
-                      },
-                    ),
-                  );
-                }
-
-                Widget buildStatusCard() {
-                  return AppGlassCard(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 10,
-                    ),
-                    borderColor: statusColor.withValues(alpha: 0.28),
-                    child: Center(
-                      child: gameOver
-                          ? Text(
-                              winner.isEmpty ? 'DRAW' : '$winner WINS',
-                              style: safeOrbitron(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w900,
-                                letterSpacing: 1.4,
-                                color: statusColor,
+                          final coinWidget = SizedBox(
+                            width: coinWidth,
+                            child: ValueListenableBuilder<int>(
+                              valueListenable: LocalStore.coinsNotifier,
+                              builder: (_, coins, __) => CoinPill(
+                                coins: coins,
+                                width: coinWidth,
                               ),
-                            )
-                          : Wrap(
-                              alignment: WrapAlignment.center,
-                              crossAxisAlignment: WrapCrossAlignment.center,
-                              spacing: 10,
-                              runSpacing: 8,
+                            ),
+                          );
+
+                          if (stackedHeader) {
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(
-                                  l10n.nextTurnLabel,
-                                  style: sectionFont(context)
-                                      .copyWith(fontSize: 12),
-                                ),
-                                TurnPill(
-                                  text: currentTurn,
-                                  color: currentTurn == 'X'
-                                      ? _xPiece
-                                      : _oPiece,
-                                ),
-                                if (isAIMoving) ...[
-                                  const SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
+                                Row(
+                                  children: [
+                                    AppIconButton(
+                                      icon: Icons.arrow_back,
+                                      onTap: _showExitConfirmation,
                                     ),
+                                    const SizedBox(width: 12),
+                                    SizedBox(
+                                      width: max(0.0,
+                                          headerConstraints.maxWidth - 56.0),
+                                      child: Text(
+                                        headerLabel,
+                                        style: sectionFont(context)
+                                            .copyWith(fontSize: 12),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 10),
+                                coinWidget,
+                                const SizedBox(height: 10),
+                                Text(
+                                  '${_boardConfig.label} • ${_boardConfig.winLength} in a row',
+                                  style: bodyFont(context).copyWith(
+                                    fontSize: 12,
+                                    color: AppPalette.textMuted,
                                   ),
-                                  Text(
-                                    l10n.aiThinking,
-                                    style: sectionFont(context)
-                                        .copyWith(fontSize: 11),
-                                  ),
-                                ],
+                                ),
                               ],
-                            ),
-                    ),
-                  );
-                }
+                            );
+                          }
 
-                Widget buildBoard(BoxConstraints boardConstraints) {
-                  final boardViewport = matchBoardViewportSizeForBounds(
-                    boardSize: _boardConfig.boardSize,
-                    maxWidth: boardConstraints.maxWidth,
-                    maxHeight: boardConstraints.maxHeight,
-                  );
-                  if (boardViewport <= 0) {
-                    return const SizedBox.shrink();
-                  }
-
-                  return SizedBox(
-                    width: boardViewport,
-                    height: boardViewport,
-                    child: AppGlassCard(
-                      padding: EdgeInsets.all(boardPadding),
-                      borderColor:
-                          AppPalette.strokeStrong.withValues(alpha: 0.55),
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [
-                          AppPalette.panelSoft.withValues(alpha: 0.98),
-                          AppPalette.panelDeep.withValues(alpha: 0.99),
-                        ],
-                      ),
-                      child: Directionality(
-                        textDirection: TextDirection.ltr,
-                        // Isolate board repaints from the rest of the page so a
-                        // move/win-glow only repaints the board layer.
-                        child: RepaintBoundary(
-                          child: GridView.builder(
-                        physics: const NeverScrollableScrollPhysics(),
-                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: _boardConfig.boardSize,
-                          crossAxisSpacing: boardSpacing,
-                          mainAxisSpacing: boardSpacing,
-                        ),
-                        itemCount: _boardConfig.cellCount,
-                        itemBuilder: (context, i) {
-                          final isWinCell = winningLine.contains(i);
-                          final cellAccent = board[i] == 'X' ? _xPiece : _oPiece;
-                          return InkWell(
-                            borderRadius: BorderRadius.circular(cellRadius),
-                            onTap: () => _makeMove(i),
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 160),
-                              decoration: BoxDecoration(
-                                borderRadius:
-                                    BorderRadius.circular(cellRadius),
-                                gradient: LinearGradient(
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                  colors: isWinCell
-                                      ? [
-                                          cellAccent.withValues(alpha: 0.18),
-                                          AppPalette.panelElevated
-                                              .withValues(alpha: 0.98),
-                                        ]
-                                      : [
-                                          AppPalette.panelSoft
-                                              .withValues(alpha: 0.94),
-                                          AppPalette.panelDeep
-                                              .withValues(alpha: 0.98),
-                                        ],
-                                ),
-                                border: Border.all(
-                                  color: isWinCell
-                                      ? cellAccent.withValues(alpha: 0.85)
-                                      : AppPalette.strokeSoft,
-                                  width: isWinCell ? 2.2 : 1.0,
-                                ),
-                                boxShadow: isWinCell
-                                    ? [
-                                        BoxShadow(
-                                          color: cellAccent.withValues(
-                                            alpha: 0.20,
-                                          ),
-                                          blurRadius: 16,
-                                          spreadRadius: 1,
-                                          offset: const Offset(0, 8),
-                                        ),
-                                      ]
-                                    : [
-                                        BoxShadow(
-                                          color: Colors.black.withValues(
-                                            alpha: 0.16,
-                                          ),
-                                          blurRadius: 12,
-                                          spreadRadius: -5,
-                                        ),
-                                      ],
+                          return Row(
+                            children: [
+                              AppIconButton(
+                                icon: Icons.arrow_back,
+                                onTap: _showExitConfirmation,
                               ),
-                              child: Center(
-                                child: CellContent(
-                                  v: board[i],
-                                  xColor: _xPiece,
-                                  oColor: _oPiece,
-                                  boardSize: _boardConfig.boardSize,
-                                  xSkin: _xSkin,
-                                  oSkin: _oSkin,
-                                ),
-                              ),
-                            ),
+                              const SizedBox(width: 12),
+                              SizedBox(width: titleWidth, child: titleBlock),
+                              const SizedBox(width: 10),
+                              coinWidget,
+                            ],
                           );
                         },
                       ),
-                      ),
-                      ),
-                    ),
-                  );
-                }
+                    );
+                  }
 
-                Widget buildFooter() {
-                  return ConstrainedBox(
-                    constraints: BoxConstraints(
-                      maxWidth: landscape ? 340 : 560,
-                    ),
-                    child: LayoutBuilder(
-                      builder: (context, footerConstraints) {
-                        final stackButtons = footerConstraints.maxWidth < 360;
-                        if (stackButtons) {
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              AppPillButton(
-                                label: AppL10n.of(context).restartBtn,
-                                minHeight: buttonHeight,
-                                fill: Colors.white.withOpacity(0.08),
-                                stroke: AppPalette.strokeStrong,
-                                onPressed: isAIMoving ? null : _resetGame,
-                                icon: Icons.refresh,
+                  Widget buildStatusCard() {
+                    return AppGlassCard(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
+                      ),
+                      borderColor: statusColor.withValues(alpha: 0.28),
+                      child: Center(
+                        child: gameOver
+                            ? Text(
+                                winner.isEmpty ? 'DRAW' : '$winner WINS',
+                                style: safeOrbitron(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 1.4,
+                                  color: statusColor,
+                                ),
+                              )
+                            : Wrap(
+                                alignment: WrapAlignment.center,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                spacing: 10,
+                                runSpacing: 8,
+                                children: [
+                                  Text(
+                                    l10n.nextTurnLabel,
+                                    style: sectionFont(context)
+                                        .copyWith(fontSize: 12),
+                                  ),
+                                  TurnPill(
+                                    text: currentTurn,
+                                    color:
+                                        currentTurn == 'X' ? _xPiece : _oPiece,
+                                  ),
+                                  if (isAIMoving) ...[
+                                    const SizedBox(
+                                      width: 16,
+                                      height: 16,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    ),
+                                    Text(
+                                      l10n.aiThinking,
+                                      style: sectionFont(context)
+                                          .copyWith(fontSize: 11),
+                                    ),
+                                  ],
+                                ],
                               ),
-                              const SizedBox(height: 12),
-                              AppPillButton(
-                                label: l10n.homeBtn,
-                                minHeight: buttonHeight,
-                                fill:
-                                    AppPalette.goldDeep.withValues(alpha: 0.95),
-                                onPressed: _showExitConfirmation,
-                                icon: Icons.home_outlined,
-                              ),
-                            ],
-                          );
-                        }
+                      ),
+                    );
+                  }
 
-                        return Row(
-                          children: [
-                            Expanded(
-                              child: AppPillButton(
-                                label: AppL10n.of(context).restartBtn,
-                                minHeight: buttonHeight,
-                                fill: Colors.white.withOpacity(0.08),
-                                stroke: AppPalette.strokeStrong,
-                                onPressed: isAIMoving ? null : _resetGame,
-                                icon: Icons.refresh,
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: AppPillButton(
-                                label: l10n.homeBtn,
-                                minHeight: buttonHeight,
-                                fill:
-                                    AppPalette.goldDeep.withValues(alpha: 0.95),
-                                onPressed: _showExitConfirmation,
-                                icon: Icons.home_outlined,
-                              ),
-                            ),
+                  Widget buildBoard(BoxConstraints boardConstraints) {
+                    final boardViewport = matchBoardViewportSizeForBounds(
+                      boardSize: _boardConfig.boardSize,
+                      maxWidth: boardConstraints.maxWidth,
+                      maxHeight: boardConstraints.maxHeight,
+                    );
+                    if (boardViewport <= 0) {
+                      return const SizedBox.shrink();
+                    }
+
+                    return SizedBox(
+                      width: boardViewport,
+                      height: boardViewport,
+                      child: AppGlassCard(
+                        padding: EdgeInsets.all(boardPadding),
+                        borderColor:
+                            AppPalette.strokeStrong.withValues(alpha: 0.55),
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            AppPalette.panelSoft.withValues(alpha: 0.98),
+                            AppPalette.panelDeep.withValues(alpha: 0.99),
                           ],
-                        );
-                      },
-                    ),
-                  );
-                }
-
-                if (landscape) {
-                  return Row(
-                    children: [
-                      Expanded(
-                        flex: 5,
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(14, 8, 10, 16),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              buildHeaderCard(),
-                              const SizedBox(height: 10),
-                              buildStatusCard(),
-                              const Spacer(),
-                              buildFooter(),
-                            ],
+                        ),
+                        child: Directionality(
+                          textDirection: TextDirection.ltr,
+                          // Isolate board repaints from the rest of the page so a
+                          // move/win-glow only repaints the board layer.
+                          child: RepaintBoundary(
+                            child: GridView.builder(
+                              physics: const NeverScrollableScrollPhysics(),
+                              gridDelegate:
+                                  SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: _boardConfig.boardSize,
+                                crossAxisSpacing: boardSpacing,
+                                mainAxisSpacing: boardSpacing,
+                              ),
+                              itemCount: _boardConfig.cellCount,
+                              itemBuilder: (context, i) {
+                                final isWinCell = winningLine.contains(i);
+                                final cellAccent =
+                                    board[i] == 'X' ? _xPiece : _oPiece;
+                                return InkWell(
+                                  borderRadius:
+                                      BorderRadius.circular(cellRadius),
+                                  onTap: () => _makeMove(i),
+                                  child: AnimatedContainer(
+                                    duration: const Duration(milliseconds: 160),
+                                    decoration: BoxDecoration(
+                                      borderRadius:
+                                          BorderRadius.circular(cellRadius),
+                                      gradient: LinearGradient(
+                                        begin: Alignment.topLeft,
+                                        end: Alignment.bottomRight,
+                                        colors: isWinCell
+                                            ? [
+                                                cellAccent.withValues(
+                                                    alpha: 0.18),
+                                                AppPalette.panelElevated
+                                                    .withValues(alpha: 0.98),
+                                              ]
+                                            : [
+                                                AppPalette.panelSoft
+                                                    .withValues(alpha: 0.94),
+                                                AppPalette.panelDeep
+                                                    .withValues(alpha: 0.98),
+                                              ],
+                                      ),
+                                      border: Border.all(
+                                        color: isWinCell
+                                            ? cellAccent.withValues(alpha: 0.85)
+                                            : AppPalette.strokeSoft,
+                                        width: isWinCell ? 2.2 : 1.0,
+                                      ),
+                                      boxShadow: isWinCell
+                                          ? [
+                                              BoxShadow(
+                                                color: cellAccent.withValues(
+                                                  alpha: 0.20,
+                                                ),
+                                                blurRadius: 16,
+                                                spreadRadius: 1,
+                                                offset: const Offset(0, 8),
+                                              ),
+                                            ]
+                                          : [
+                                              BoxShadow(
+                                                color: Colors.black.withValues(
+                                                  alpha: 0.16,
+                                                ),
+                                                blurRadius: 12,
+                                                spreadRadius: -5,
+                                              ),
+                                            ],
+                                    ),
+                                    child: Center(
+                                      child: CellContent(
+                                        v: board[i],
+                                        xColor: _xPiece,
+                                        oColor: _oPiece,
+                                        boardSize: _boardConfig.boardSize,
+                                        xSkin: _xSkin,
+                                        oSkin: _oSkin,
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
                           ),
                         ),
                       ),
+                    );
+                  }
+
+                  Widget buildFooter() {
+                    return ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: landscape ? 340 : 560,
+                      ),
+                      child: LayoutBuilder(
+                        builder: (context, footerConstraints) {
+                          final stackButtons = footerConstraints.maxWidth < 360;
+                          if (stackButtons) {
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                AppPillButton(
+                                  label: AppL10n.of(context).restartBtn,
+                                  minHeight: buttonHeight,
+                                  fill: Colors.white.withOpacity(0.08),
+                                  stroke: AppPalette.strokeStrong,
+                                  onPressed: isAIMoving ? null : _resetGame,
+                                  icon: Icons.refresh,
+                                ),
+                                const SizedBox(height: 12),
+                                AppPillButton(
+                                  label: l10n.homeBtn,
+                                  minHeight: buttonHeight,
+                                  fill: AppPalette.goldDeep
+                                      .withValues(alpha: 0.95),
+                                  onPressed: _showExitConfirmation,
+                                  icon: Icons.home_outlined,
+                                ),
+                              ],
+                            );
+                          }
+
+                          return Row(
+                            children: [
+                              Expanded(
+                                child: AppPillButton(
+                                  label: AppL10n.of(context).restartBtn,
+                                  minHeight: buttonHeight,
+                                  fill: Colors.white.withOpacity(0.08),
+                                  stroke: AppPalette.strokeStrong,
+                                  onPressed: isAIMoving ? null : _resetGame,
+                                  icon: Icons.refresh,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: AppPillButton(
+                                  label: l10n.homeBtn,
+                                  minHeight: buttonHeight,
+                                  fill: AppPalette.goldDeep
+                                      .withValues(alpha: 0.95),
+                                  onPressed: _showExitConfirmation,
+                                  icon: Icons.home_outlined,
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                    );
+                  }
+
+                  if (landscape) {
+                    return Row(
+                      children: [
+                        Expanded(
+                          flex: 5,
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(14, 8, 10, 16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                buildHeaderCard(),
+                                const SizedBox(height: 10),
+                                buildStatusCard(),
+                                const Spacer(),
+                                buildFooter(),
+                              ],
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 6,
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(10, 12, 14, 16),
+                            child: LayoutBuilder(
+                              builder: (context, boardConstraints) {
+                                return Center(
+                                  child: buildBoard(boardConstraints),
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  }
+
+                  return Column(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
+                        child: buildHeaderCard(),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 14),
+                        child: buildStatusCard(),
+                      ),
                       Expanded(
-                        flex: 6,
                         child: Padding(
-                          padding: const EdgeInsets.fromLTRB(10, 12, 14, 16),
+                          padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
                           child: LayoutBuilder(
                             builder: (context, boardConstraints) {
                               return Center(
@@ -1000,40 +1038,14 @@ class _GamePageState extends State<GamePage> {
                           ),
                         ),
                       ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                        child: buildFooter(),
+                      ),
                     ],
                   );
-                }
-
-                return Column(
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
-                      child: buildHeaderCard(),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 14),
-                      child: buildStatusCard(),
-                    ),
-                    Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-                        child: LayoutBuilder(
-                          builder: (context, boardConstraints) {
-                            return Center(
-                              child: buildBoard(boardConstraints),
-                            );
-                          },
-                        ),
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                      child: buildFooter(),
-                    ),
-                  ],
-                );
-              },
-            ),
+                },
+              ),
             ),
           ),
         ),
@@ -1077,7 +1089,8 @@ class CellContent extends StatelessWidget {
   final String xSkin;
   final String oSkin;
 
-  const CellContent({super.key, 
+  const CellContent({
+    super.key,
     required this.v,
     required this.xColor,
     required this.oColor,
@@ -1099,7 +1112,7 @@ class CellContent extends StatelessWidget {
               width: sz,
               height: sz,
               child: Image.asset(
-                'assets/x/$xSkin.png',
+                'assets/x/$xSkin.webp',
                 fit: BoxFit.contain,
                 errorBuilder: (_, __, ___) => CustomPaint(
                   size: Size(sz, sz),
@@ -1123,7 +1136,7 @@ class CellContent extends StatelessWidget {
               width: sz,
               height: sz,
               child: Image.asset(
-                'assets/o/$oSkin.png',
+                'assets/o/$oSkin.webp',
                 fit: BoxFit.contain,
                 errorBuilder: (_, __, ___) {
                   final sw = _strokeFor(sz);
@@ -1178,7 +1191,8 @@ class EndDialog extends StatelessWidget {
   final int coinsAdded;
   final String? rewardText;
 
-  const EndDialog({super.key, 
+  const EndDialog({
+    super.key,
     required this.title,
     required this.subtitle,
     required this.icon,
@@ -1238,7 +1252,7 @@ class EndDialog extends StatelessWidget {
                 ),
                 child: Center(
                   child: isLoss
-                      ? Image.asset('assets/game/skull.png',
+                      ? Image.asset('assets/game/skull.webp',
                           width: 44, height: 44)
                       : Icon(
                           icon,
@@ -1295,7 +1309,7 @@ class EndDialog extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Image.asset(
-                        'assets/coin/dollar.png',
+                        'assets/coin/dollar.webp',
                         height: 28,
                         fit: BoxFit.contain,
                       ),
@@ -1353,7 +1367,8 @@ class ContinueDialog extends StatefulWidget {
   final VoidCallback onContinue;
   final VoidCallback onDecline;
 
-  const ContinueDialog({super.key, 
+  const ContinueDialog({
+    super.key,
     required this.level,
     required this.cost,
     required this.currentCoins,
@@ -1394,7 +1409,8 @@ class _ContinueDialogState extends State<ContinueDialog> {
   @override
   Widget build(BuildContext context) {
     final canAfford = widget.currentCoins >= widget.cost;
-    final timerColor = _seconds > 2 ? AppPalette.goldHighlight : AppPalette.danger;
+    final timerColor =
+        _seconds > 2 ? AppPalette.goldHighlight : AppPalette.danger;
 
     return Dialog(
       backgroundColor: Colors.transparent,
@@ -1470,7 +1486,8 @@ class _ContinueDialogState extends State<ContinueDialog> {
               ),
               const SizedBox(height: 16),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                 decoration: BoxDecoration(
                   color: AppPalette.gold.withOpacity(0.12),
                   borderRadius: BorderRadius.circular(999),
@@ -1479,14 +1496,17 @@ class _ContinueDialogState extends State<ContinueDialog> {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Image.asset('assets/coin/COIN.png', height: 18, fit: BoxFit.contain),
+                    Image.asset('assets/coin/COIN.webp',
+                        height: 18, fit: BoxFit.contain),
                     const SizedBox(width: 8),
                     Text(
                       '${widget.cost} XO COINS',
                       style: safeOrbitron(
                         fontSize: 14,
                         fontWeight: FontWeight.w800,
-                        color: canAfford ? AppPalette.goldHighlight : AppPalette.danger,
+                        color: canAfford
+                            ? AppPalette.goldHighlight
+                            : AppPalette.danger,
                         letterSpacing: 1.0,
                       ),
                     ),
@@ -1497,7 +1517,8 @@ class _ContinueDialogState extends State<ContinueDialog> {
                 const SizedBox(height: 8),
                 Text(
                   'Not enough coins',
-                  style: bodyFont(context).copyWith(color: AppPalette.danger, fontSize: 12),
+                  style: bodyFont(context)
+                      .copyWith(color: AppPalette.danger, fontSize: 12),
                 ),
               ],
               const SizedBox(height: 18),
@@ -1549,4 +1570,3 @@ class _ContinueDialogState extends State<ContinueDialog> {
 ///   3. Exit to Home          — pops back to home screen.
 
 // Connection lost overlay → lib/widgets/connection_lost_match_overlay.dart
-

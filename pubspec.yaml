@@ -1,6 +1,6 @@
 name: xo_arena_neon_clash
 
-version: 1.0.26+50
+version: 1.0.29+54
 description: Arena - Premium multi-game neon platform
 publish_to: "none"
 
@@ -52,8 +52,13 @@ dependencies:
   # custom profile photo upload feature, which now uses Google photoURL only.
   cached_network_image: ^3.3.1
 
-  # Local notifications — foreground display of incoming FCM push messages.
+  # Local notifications — foreground display of incoming FCM push messages
+  # and the daily 9 PM local play reminder.
   flutter_local_notifications: ^17.2.3
+  # Timezone data for daily local scheduling (zonedSchedule requires a
+  # TZDateTime). The daily reminder is anchored to the device's current UTC
+  # offset, so no device-IANA-name lookup package is needed.
+  timezone: ^0.9.4
 
 dev_dependencies:
   flutter_test:
@@ -70,13 +75,19 @@ flutter:
     - assets/XO-BACK.png
     - assets/xo.webp
     - assets/avatar/
+    - assets/emoji/
     - assets/game/
+    - assets/online/
     - assets/coin/
     - assets/x/
     - assets/o/
     - assets/account/
     - assets/moh.png
     - assets/shop.png
+    - assets/e1.webp
+    - assets/e2.webp
+    - assets/e3.webp
+    - assets/e4.webp
 
   fonts:
     - family: Inter

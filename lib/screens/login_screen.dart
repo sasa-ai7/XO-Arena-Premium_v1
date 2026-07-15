@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' show ImageFilter;
 
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -160,31 +159,26 @@ class _LoginScreenState extends State<LoginScreen>
     FocusScope.of(context).unfocus();
     _setError(null);
     setState(() => _loading = true);
+    final navSw = Stopwatch()..start();
     try {
       final user = await _auth.signInWithGoogle();
       if (!mounted) return;
 
       if (user != null) {
-        final currentUser = _auth.currentUser;
-        if (currentUser != null) {
-          final firestore = FirebaseFirestore.instance;
-          final profileDoc =
-              await firestore.collection('users').doc(currentUser.uid).get();
-          if (!mounted) return;
-          final hasProfile = profileDoc.exists && profileDoc.data() != null;
-          if (!hasProfile) {
-            if (kDebugMode) {
-              debugPrint('[AUTH] New Google user detected');
-              debugPrint('[AUTH] Opening AccountCharacterSelectScreen');
-            }
-            Navigator.of(context).pushReplacement(
-              MaterialPageRoute(
-                  builder: (_) =>
-                      AccountCharacterSelectScreen(user: currentUser)),
-            );
-            return; // widget will be disposed — skip setState
+        // AuthService already determined new-vs-existing from its single
+        // Firestore read — no second read here.
+        if (_auth.lastSignInWasNewUser) {
+          if (kDebugMode) {
+            debugPrint('[AUTH] New Google user detected');
+            debugPrint('[AUTH] Opening AccountCharacterSelectScreen');
           }
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(
+                builder: (_) => AccountCharacterSelectScreen(user: user)),
+          );
+          return; // widget will be disposed — skip setState
         }
+        debugPrint('[PERF] login_navigation_ms=${navSw.elapsedMilliseconds}');
         Navigator.of(context)
             .pushNamedAndRemoveUntil('/home', (route) => false);
         return; // widget will be disposed — skip setState

@@ -12,6 +12,7 @@ import '../../core/keys.dart';
 import '../../models/arena/arena_room.dart';
 import '../local_store.dart';
 import '../wallet_ledger_types.dart';
+import '../wallet_transaction_service.dart';
 import 'arena_repo.dart';
 
 /// Coin-bet operations for friend rooms.
@@ -96,8 +97,7 @@ class ArenaBetService {
 
     try {
       final userRef = _fs.collection('users').doc(selfUid);
-      final ledgerRef =
-          userRef.collection('wallet_ledger').doc(transactionId);
+      final ledgerRef = userRef.collection('wallet_ledger').doc(transactionId);
       // Single Firestore transaction: ledger guard + balance check + debit.
       // Prevents a fresh device install (where SharedPrefs is empty) from
       // double-debiting if RTDB lockflag write was lost.
@@ -125,9 +125,14 @@ class ArenaBetService {
           'type': LedgerType.friendRoomBetEntry,
           'source': LedgerType.friendRoomBetEntry,
           'delta': -room.betAmount,
+          'coins': room.betAmount,
           'before': current,
           'after': newBalance,
           'transactionId': transactionId,
+          'title': 'Friend Room Bet Entry',
+          'mode': 'online',
+          'status': 'synced',
+          'localCreatedAtMs': DateTime.now().millisecondsSinceEpoch,
           'roomCode': room.roomCode,
           'matchId': room.matchId,
           'createdAt': FieldValue.serverTimestamp(),
@@ -153,20 +158,23 @@ class ArenaBetService {
       await p.setInt(Keys.coins, result['after']!);
       LocalStore.coinsNotifier.value = result['after']!;
 
-      // Idempotent ledger entry (also marks transactionId as processed).
-      await LocalStore.addTopupHistory(
-        usd: 0,
-        coins: room.betAmount,
-        type: 'loss',
-        description: 'Friend Room Bet Entry',
+      // Mirror the already-committed remote ledger row locally — the Firestore
+      // transaction above wrote both Wallet.coins and the wallet_ledger doc, so
+      // this only refreshes the local history cache (idempotent upload no-ops).
+      await WalletTransactionService.instance.recordExistingRemoteLedgerLocally(
+        uid: selfUid,
+        delta: -room.betAmount,
         transactionId: transactionId,
+        source: LedgerType.friendRoomBetEntry,
+        title: 'Friend Room Bet Entry',
+        message: 'Friend Room Bet Entry',
         balanceBefore: result['before'],
         balanceAfter: result['after'],
-        source: 'friend_room_bet_entry',
       );
       await _roomsRef.child('${room.roomCode}/betLocks/$selfUid').set(true);
       if (kDebugMode) {
-        debugPrint('[ARENA_BET] debit success uid=$selfUid amount=${room.betAmount}');
+        debugPrint(
+            '[ARENA_BET] debit success uid=$selfUid amount=${room.betAmount}');
         debugPrint(
             '[ARENA_BET] locked bet uid=$selfUid amount=${room.betAmount} prizePool=${room.betAmount * 2}');
       }
@@ -195,7 +203,8 @@ class ArenaBetService {
     final guestLocked = locks[guestUid] == true;
     if (!hostLocked || !guestLocked) {
       if (kDebugMode) {
-        debugPrint('[ARENA_BET] waiting for bet locks host=$hostLocked guest=$guestLocked code=${room.roomCode}');
+        debugPrint(
+            '[ARENA_BET] waiting for bet locks host=$hostLocked guest=$guestLocked code=${room.roomCode}');
       }
       return false;
     }
@@ -207,7 +216,8 @@ class ArenaBetService {
       'updatedAt': ServerValue.timestamp,
     });
     if (kDebugMode) {
-      debugPrint('[ARENA_BET] both bets locked code=${room.roomCode} prizePool=${room.betAmount * 2}');
+      debugPrint(
+          '[ARENA_BET] both bets locked code=${room.roomCode} prizePool=${room.betAmount * 2}');
     }
     return true;
   }
@@ -250,14 +260,16 @@ class ArenaBetService {
         room.betLocks[room.hostUid] != true ||
         room.betLocks[guestUid] != true) {
       if (kDebugMode) {
-        debugPrint('[ARENA_BET] payout blocked: both bet locks are not confirmed');
+        debugPrint(
+            '[ARENA_BET] payout blocked: both bet locks are not confirmed');
       }
       return false;
     }
     if (room.prizePool <= 0) return false;
 
     if (kDebugMode) {
-      debugPrint('[ARENA_BET] payout check room=${room.roomCode} self=$selfUid');
+      debugPrint(
+          '[ARENA_BET] payout check room=${room.roomCode} self=$selfUid');
     }
 
     final liveRef = _roomsRef.child(room.roomCode);
@@ -265,8 +277,7 @@ class ArenaBetService {
     // ── Live RTDB read — never trust the in-memory ArenaRoom snapshot. ────
     Map<Object?, Object?>? live;
     try {
-      final liveSnap =
-          await liveRef.get().timeout(const Duration(seconds: 5));
+      final liveSnap = await liveRef.get().timeout(const Duration(seconds: 5));
       final raw = liveSnap.value;
       if (raw is Map) {
         live = Map<Object?, Object?>.from(raw);
@@ -316,6 +327,16 @@ class ArenaBetService {
     }
 
     final transactionId = '${room.matchId}_prize_$selfUid';
+    final resultReason = (live['finalResult'] ??
+            live['result'] ??
+            room.finalResult ??
+            room.result)
+        ?.toString();
+    final prizeSource = resultReason == 'disconnect_forfeit' ||
+            resultReason == 'forfeit' ||
+            (liveLeftByUid != null && liveLeftByUid.isNotEmpty)
+        ? LedgerType.disconnectForfeitPrize
+        : LedgerType.friendRoomPrize;
     if (await _alreadyApplied(transactionId)) {
       // Same-device replay — wallet was credited locally on a previous run.
       // Repair the RTDB flag silently and report success so the caller still
@@ -364,8 +385,7 @@ class ArenaBetService {
             (map['roomWinnerUid'] ?? map['winnerUid'])?.toString();
         final loserUid = map['loserUid']?.toString();
         final leftByUid = map['leftByUid']?.toString();
-        final paid =
-            map['payoutApplied'] == true || map['prizePaid'] == true;
+        final paid = map['payoutApplied'] == true || map['prizePaid'] == true;
         if (status != 'finished') return Transaction.abort();
         if (winnerUid == null || winnerUid.isEmpty || winnerUid != selfUid) {
           return Transaction.abort();
@@ -399,8 +419,7 @@ class ArenaBetService {
     //    if this Firestore write fails the loser can never claim the prize.
     try {
       final userRef = _fs.collection('users').doc(selfUid);
-      final ledgerRef =
-          userRef.collection('wallet_ledger').doc(transactionId);
+      final ledgerRef = userRef.collection('wallet_ledger').doc(transactionId);
       final result = await _fs.runTransaction<Map<String, int>?>((txn) async {
         final ledgerSnap = await txn.get(ledgerRef);
         if (ledgerSnap.exists) return null; // already paid cross-device
@@ -418,11 +437,16 @@ class ArenaBetService {
         txn.set(ledgerRef, <String, dynamic>{
           'uid': selfUid,
           'type': LedgerType.friendRoomPrize,
-          'source': LedgerType.friendRoomPrize,
+          'source': prizeSource,
           'delta': room.prizePool,
+          'coins': room.prizePool,
           'before': current,
           'after': newBalance,
           'transactionId': transactionId,
+          'title': 'Friend Room Prize',
+          'mode': 'online',
+          'status': 'synced',
+          'localCreatedAtMs': DateTime.now().millisecondsSinceEpoch,
           'roomCode': room.roomCode,
           'matchId': room.matchId,
           'createdAt': FieldValue.serverTimestamp(),
@@ -451,15 +475,15 @@ class ArenaBetService {
       await p.setInt(Keys.coins, result['after']!);
       LocalStore.coinsNotifier.value = result['after']!;
 
-      await LocalStore.addTopupHistory(
-        usd: 0,
-        coins: room.prizePool,
-        type: 'win',
-        description: 'Friend Room Prize',
+      await WalletTransactionService.instance.recordExistingRemoteLedgerLocally(
+        uid: selfUid,
+        delta: room.prizePool,
         transactionId: transactionId,
+        source: prizeSource,
+        title: 'Friend Room Prize',
+        message: 'Friend Room Prize',
         balanceBefore: result['before'],
         balanceAfter: result['after'],
-        source: 'friend_room_prize',
       );
       if (kDebugMode) {
         debugPrint(
@@ -486,7 +510,10 @@ class ArenaBetService {
 
     try {
       final userRef = _fs.collection('users').doc(selfUid);
+      final ledgerRef = userRef.collection('wallet_ledger').doc(transactionId);
       final result = await _fs.runTransaction<Map<String, int>?>((txn) async {
+        final ledger = await txn.get(ledgerRef);
+        if (ledger.exists) return null;
         final snap = await txn.get(userRef);
         final wallet = (snap.data()?['Wallet'] as Map?) ?? const {};
         final current = (wallet['coins'] as num?)?.toInt() ?? 0;
@@ -498,6 +525,23 @@ class ArenaBetService {
           },
           SetOptions(merge: true),
         );
+        txn.set(ledgerRef, <String, dynamic>{
+          'uid': selfUid,
+          'type': LedgerType.friendRoomRefund,
+          'source': LedgerType.friendRoomRefund,
+          'delta': room.betAmount,
+          'coins': room.betAmount,
+          'before': current,
+          'after': newBalance,
+          'transactionId': transactionId,
+          'title': 'Friend Room Refund',
+          'roomCode': room.roomCode,
+          'matchId': room.matchId,
+          'mode': 'online',
+          'status': 'synced',
+          'localCreatedAtMs': DateTime.now().millisecondsSinceEpoch,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
         return <String, int>{
           'before': current,
           'after': newBalance,
@@ -507,15 +551,15 @@ class ArenaBetService {
       final p = await SharedPreferences.getInstance();
       await p.setInt(Keys.coins, result['after']!);
       LocalStore.coinsNotifier.value = result['after']!;
-      await LocalStore.addTopupHistory(
-        usd: 0,
-        coins: room.betAmount,
-        type: 'win',
-        description: 'Friend Room Refund',
+      await WalletTransactionService.instance.recordExistingRemoteLedgerLocally(
+        uid: selfUid,
+        delta: room.betAmount,
         transactionId: transactionId,
+        source: LedgerType.friendRoomRefund,
+        title: 'Friend Room Refund',
+        message: 'Friend Room Refund',
         balanceBefore: result['before'],
         balanceAfter: result['after'],
-        source: 'friend_room_refund',
       );
       if (kDebugMode) {
         debugPrint(
@@ -526,4 +570,3 @@ class ArenaBetService {
     }
   }
 }
-

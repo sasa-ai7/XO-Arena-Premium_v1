@@ -25,42 +25,32 @@ class AvatarDimension {
         'r': radiusRatio,
       };
 
-  factory AvatarDimension.fromJson(Map<String, dynamic> json) => AvatarDimension(
+  factory AvatarDimension.fromJson(Map<String, dynamic> json) =>
+      AvatarDimension(
         centerDxRatio: (json['x'] as num).toDouble(),
         centerDyRatio: (json['y'] as num).toDouble(),
         radiusRatio: (json['r'] as num).toDouble(),
       );
 }
 
-/// Hand-tuned dimension overrides for animated GIF avatars whose transparent
-/// hole is hard to detect automatically (antialiased edges, multi-frame codecs).
+/// Hand-tuned dimension overrides for frames whose transparent hole is hard to
+/// detect automatically (off-centre openings, antialiased edges, low-res art).
 ///
-/// Values re-tuned 2026-05 so the inner profile photo sits centered and large
-/// enough to read clearly inside each GIF's transparent hole — matching the
-/// visual weight of the static PNG avatars. If you re-tune these, also bump
-/// [_cacheKeyPrefix] so devices on the old cache pick up the new values.
-///
-/// 2026-05-21: Avatar__7 (Inferno) and Avatar__8 (Celestial) were removed
-/// from the catalog — only Avatar__10 (Apex) remains as an animated avatar.
-/// See [kRemovedAvatarIds] in lib/models/game_avatar.dart for the fallback
-/// contract.
-const Map<String, AvatarDimension> _gifDimensionOverrides = {
-  'assets/avatar/Avatar__10.gif': AvatarDimension(
-    centerDxRatio: 0.50,
-    centerDyRatio: 0.50,
-    radiusRatio: 0.34,
-  ),
-};
+/// The automatic flood-fill detector (see [AvatarAnalyzerService.analyze])
+/// reads the real alpha channel and handles every centred-ring frame, so this
+/// map is normally empty. Add an `assets/avatar/Avatar__N.webp` entry only if a
+/// specific frame composites wrong, then bump [_cacheKeyPrefix] so installs on
+/// the old cache pick up the new value.
+const Map<String, AvatarDimension> _assetDimensionOverrides = {};
 
 class AvatarAnalyzerService {
   static final Map<String, AvatarDimension> _memoryCache = {};
-  // Bump suffix when [_gifDimensionOverrides] or fallback math changes so
+  static final Map<String, Future<AvatarDimension>> _inFlight = {};
+  // Bump suffix when [_assetDimensionOverrides] or fallback math changes so
   // existing installs ignore their stale cached dimensions and pick up the
   // new values on next launch.
-  // v5 (2026-05-21): Avatar__7 and Avatar__8 removed from the catalog;
-  // their stale SharedPreferences entries are now harmless but a prefix
-  // bump keeps the cache schema versioned.
-  static const String _cacheKeyPrefix = 'avatar_dim_v5_';
+  // v7: catalog rebuilt around the new WebP frame art (old .png/.gif dims dropped).
+  static const String _cacheKeyPrefix = 'avatar_dim_v7_';
   static SharedPreferences? _prefs;
   static Future<void>? _initFuture;
 
@@ -79,8 +69,27 @@ class AvatarAnalyzerService {
     if (_memoryCache.containsKey(assetPath)) {
       return _memoryCache[assetPath]!;
     }
+    final existing = _inFlight[assetPath];
+    if (existing != null) return existing;
+    final future = _analyzeUncached(
+      assetPath,
+      defaultProfileSizeRatio: defaultProfileSizeRatio,
+      defaultVerticalOffsetRatio: defaultVerticalOffsetRatio,
+    );
+    _inFlight[assetPath] = future;
+    try {
+      return await future;
+    } finally {
+      _inFlight.remove(assetPath);
+    }
+  }
 
-    final override = _gifDimensionOverrides[assetPath];
+  static Future<AvatarDimension> _analyzeUncached(
+    String assetPath, {
+    required double defaultProfileSizeRatio,
+    required double defaultVerticalOffsetRatio,
+  }) async {
+    final override = _assetDimensionOverrides[assetPath];
     if (override != null) {
       _memoryCache[assetPath] = override;
       if (kDebugMode) {
@@ -112,14 +121,14 @@ class AvatarAnalyzerService {
     // Default fallback values based on original manual ratios
     final fallback = AvatarDimension(
       centerDxRatio: 0.5,
-      centerDyRatio: 0.5 - defaultVerticalOffsetRatio,
+      centerDyRatio: 0.5,
       radiusRatio: defaultProfileSizeRatio / 2,
     );
 
     try {
       final ByteData data = await rootBundle.load(assetPath);
       final Uint8List bytes = data.buffer.asUint8List();
-      
+
       // Decode image
       final ui.Codec codec = await ui.instantiateImageCodec(
         bytes,
@@ -127,8 +136,9 @@ class AvatarAnalyzerService {
       );
       final ui.FrameInfo frameInfo = await codec.getNextFrame();
       final ui.Image image = frameInfo.image;
-      
-      final ByteData? rgbaData = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+
+      final ByteData? rgbaData =
+          await image.toByteData(format: ui.ImageByteFormat.rawRgba);
       if (rgbaData == null) return fallback;
 
       final int width = image.width;
@@ -139,7 +149,7 @@ class AvatarAnalyzerService {
       // Start near the center and flood fill.
       int startX = width ~/ 2;
       int startY = height ~/ 2;
-      
+
       bool isTransparent(int x, int y) {
         if (x < 0 || x >= width || y < 0 || y >= height) return false;
         final index = (y * width + x) * 4;
@@ -167,7 +177,8 @@ class AvatarAnalyzerService {
           radius++;
         }
         if (!found) {
-          if (kDebugMode) print('No transparent hole found for $assetPath, using fallback.');
+          if (kDebugMode)
+            print('No transparent hole found for $assetPath, using fallback.');
           return fallback;
         }
       }
@@ -186,7 +197,7 @@ class AvatarAnalyzerService {
         final p = queue.removeLast();
         final x = p.x;
         final y = p.y;
-        
+
         if (x < minX) minX = x;
         if (x > maxX) maxX = x;
         if (y < minY) minY = y;
@@ -194,18 +205,23 @@ class AvatarAnalyzerService {
 
         // check neighbors
         for (final offset in const [
-          Point(1, 0), Point(-1, 0), Point(0, 1), Point(0, -1)
+          Point(1, 0),
+          Point(-1, 0),
+          Point(0, 1),
+          Point(0, -1)
         ]) {
           final nx = x + offset.x;
           final ny = y + offset.y;
           final idx = ny * width + nx;
-          
+
           if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
             if (!visited.contains(idx) && isTransparent(nx, ny)) {
               // Bound it within 90% of image size to avoid leaking to outer transparent regions
               // if there's a gap.
-              bool withinLimits = nx > width * 0.05 && nx < width * 0.95 &&
-                                  ny > height * 0.05 && ny < height * 0.95;
+              bool withinLimits = nx > width * 0.05 &&
+                  nx < width * 0.95 &&
+                  ny > height * 0.05 &&
+                  ny < height * 0.95;
               if (withinLimits) {
                 visited.add(idx);
                 queue.add(Point(nx, ny));
@@ -237,7 +253,6 @@ class AvatarAnalyzerService {
             'r=${dim.radiusRatio.toStringAsFixed(3)}');
       }
       return dim;
-
     } catch (e) {
       if (kDebugMode) print('Failed to analyze avatar $assetPath: $e');
       return fallback;
@@ -246,9 +261,9 @@ class AvatarAnalyzerService {
 
   static Future<void> preAnalyzeAll() async {
     await init();
-    // Clear stale cached dimensions for overridden GIF avatars so the
-    // hand-tuned values take precedence on next analysis pass.
-    for (final path in _gifDimensionOverrides.keys) {
+    // Clear stale cached dimensions for overridden avatars so the hand-tuned
+    // values take precedence on next analysis pass.
+    for (final path in _assetDimensionOverrides.keys) {
       final key = '$_cacheKeyPrefix$path';
       _prefs?.remove(key);
       _memoryCache.remove(path);

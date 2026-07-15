@@ -13,7 +13,8 @@ class ModeHeroCard extends StatelessWidget {
   final Color accent;
   final Widget? trailing;
 
-  const ModeHeroCard({super.key, 
+  const ModeHeroCard({
+    super.key,
     required this.eyebrow,
     required this.title,
     required this.subtitle,
@@ -128,7 +129,8 @@ class ModeInfoChip extends StatelessWidget {
   final String label;
   final Color color;
 
-  const ModeInfoChip({super.key, 
+  const ModeInfoChip({
+    super.key,
     required this.icon,
     required this.label,
     this.color = AppPalette.primary,
@@ -169,7 +171,8 @@ class SummaryMetricTile extends StatelessWidget {
   final String value;
   final Color accent;
 
-  const SummaryMetricTile({super.key, 
+  const SummaryMetricTile({
+    super.key,
     required this.icon,
     required this.label,
     required this.value,
@@ -286,8 +289,12 @@ class BigModeCard extends StatefulWidget {
   final Color accent;
   final Color accentSecondary;
   final VoidCallback onTap;
+  final bool wide;
+  final Alignment imageAlignment;
+  final Alignment textAlignment;
 
-  const BigModeCard({super.key, 
+  const BigModeCard({
+    super.key,
     required this.title,
     required this.subtitle,
     required this.badge,
@@ -295,6 +302,9 @@ class BigModeCard extends StatefulWidget {
     required this.accent,
     required this.accentSecondary,
     required this.onTap,
+    this.wide = false,
+    this.imageAlignment = Alignment.center,
+    this.textAlignment = Alignment.bottomLeft,
   });
 
   @override
@@ -346,17 +356,17 @@ class _BigModeCardState extends State<BigModeCard> {
           ),
           borderRadius: BorderRadius.circular(30),
           border: Border.all(
-            color: widget.accent.withOpacity(_pressed ? 0.62 : 0.36),
+            color: widget.accent.withValues(alpha: _pressed ? 0.62 : 0.36),
             width: _pressed ? 1.4 : 1.2,
           ),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.34),
+              color: Colors.black.withValues(alpha: 0.34),
               blurRadius: 24,
               offset: const Offset(0, 18),
             ),
             BoxShadow(
-              color: _glowColor.withOpacity(_pressed ? 0.18 : 0.12),
+              color: _glowColor.withValues(alpha: _pressed ? 0.18 : 0.12),
               blurRadius: _pressed ? 28 : 22,
               spreadRadius: -6,
               offset: const Offset(0, 8),
@@ -367,8 +377,8 @@ class _BigModeCardState extends State<BigModeCard> {
           color: Colors.transparent,
           child: InkWell(
             borderRadius: BorderRadius.circular(30),
-            splashColor: widget.accent.withOpacity(0.08),
-            highlightColor: widget.accent.withOpacity(0.04),
+            splashColor: widget.accent.withValues(alpha: 0.08),
+            highlightColor: widget.accent.withValues(alpha: 0.04),
             onHighlightChanged: (pressed) {
               if (_pressed != pressed) {
                 setState(() => _pressed = pressed);
@@ -381,6 +391,19 @@ class _BigModeCardState extends State<BigModeCard> {
                 builder: (context, constraints) {
                   final compact =
                       constraints.maxWidth < 220 || constraints.maxHeight < 220;
+                  if (widget.wide) {
+                    return _WideModeCardBody(
+                      title: widget.title,
+                      subtitle: widget.subtitle,
+                      badge: widget.badge,
+                      assetPath: widget.assetPath,
+                      accent: widget.accent,
+                      accentSecondary: widget.accentSecondary,
+                      imageAlignment: widget.imageAlignment,
+                      textAlignment: widget.textAlignment,
+                      pressed: _pressed,
+                    );
+                  }
 
                   return Stack(
                     children: [
@@ -408,9 +431,10 @@ class _BigModeCardState extends State<BigModeCard> {
                               begin: Alignment.topLeft,
                               end: Alignment.bottomCenter,
                               colors: [
-                                Colors.white.withOpacity(_pressed ? 0.07 : 0.04),
+                                Colors.white
+                                    .withValues(alpha: _pressed ? 0.07 : 0.04),
                                 Colors.transparent,
-                                Colors.black.withOpacity(0.10),
+                                Colors.black.withValues(alpha: 0.10),
                               ],
                             ),
                           ),
@@ -433,10 +457,12 @@ class _BigModeCardState extends State<BigModeCard> {
                                     vertical: compact ? 5 : 6,
                                   ),
                                   decoration: BoxDecoration(
-                                    color: widget.accent.withOpacity(0.12),
+                                    color:
+                                        widget.accent.withValues(alpha: 0.12),
                                     borderRadius: BorderRadius.circular(999),
                                     border: Border.all(
-                                      color: widget.accent.withOpacity(0.28),
+                                      color:
+                                          widget.accent.withValues(alpha: 0.28),
                                     ),
                                   ),
                                   child: Row(
@@ -450,8 +476,8 @@ class _BigModeCardState extends State<BigModeCard> {
                                           color: widget.accent,
                                           boxShadow: [
                                             BoxShadow(
-                                              color:
-                                                  widget.accent.withOpacity(0.45),
+                                              color: widget.accent
+                                                  .withValues(alpha: 0.45),
                                               blurRadius: 8,
                                             ),
                                           ],
@@ -473,7 +499,8 @@ class _BigModeCardState extends State<BigModeCard> {
                                 Icon(
                                   Icons.arrow_outward_rounded,
                                   size: compact ? 16 : 18,
-                                  color: AppPalette.homeBody.withOpacity(0.72),
+                                  color: AppPalette.homeBody
+                                      .withValues(alpha: 0.72),
                                 ),
                               ],
                             ),
@@ -490,12 +517,13 @@ class _BigModeCardState extends State<BigModeCard> {
                                     begin: Alignment.topLeft,
                                     end: Alignment.bottomRight,
                                     colors: [
-                                      Colors.white.withOpacity(0.05),
-                                      Colors.white.withOpacity(0.02),
+                                      Colors.white.withValues(alpha: 0.05),
+                                      Colors.white.withValues(alpha: 0.02),
                                     ],
                                   ),
                                   border: Border.all(
-                                    color: widget.accent.withOpacity(0.14),
+                                    color:
+                                        widget.accent.withValues(alpha: 0.14),
                                   ),
                                 ),
                                 child: Image.asset(
@@ -518,7 +546,8 @@ class _BigModeCardState extends State<BigModeCard> {
                                     return Center(
                                       child: Icon(
                                         _fallbackIconForAsset(widget.assetPath),
-                                        color: widget.accent.withOpacity(0.6),
+                                        color: widget.accent
+                                            .withValues(alpha: 0.6),
                                         size: 44,
                                       ),
                                     );
@@ -553,7 +582,8 @@ class _BigModeCardState extends State<BigModeCard> {
                                           height: 1.05,
                                           shadows: [
                                             Shadow(
-                                              color: widget.accent.withOpacity(0.18),
+                                              color: widget.accent
+                                                  .withValues(alpha: 0.18),
                                               blurRadius: 16,
                                             ),
                                           ],
@@ -597,8 +627,184 @@ class _BigModeCardState extends State<BigModeCard> {
   }
 }
 
+class _WideModeCardBody extends StatelessWidget {
+  final String title;
+  final String subtitle;
+  final String badge;
+  final String assetPath;
+  final Color accent;
+  final Color accentSecondary;
+  final Alignment imageAlignment;
+  final Alignment textAlignment;
+  final bool pressed;
+
+  const _WideModeCardBody({
+    required this.title,
+    required this.subtitle,
+    required this.badge,
+    required this.assetPath,
+    required this.accent,
+    required this.accentSecondary,
+    required this.imageAlignment,
+    required this.textAlignment,
+    required this.pressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Image.asset(
+          assetPath,
+          fit: BoxFit.cover,
+          alignment: imageAlignment,
+          cacheWidth: 900,
+          errorBuilder: (context, error, stack) {
+            if (kDebugMode) {
+              debugPrint('[ASSET] load_failed path=$assetPath error=$error');
+            }
+            return DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    accent.withValues(alpha: 0.18),
+                    accentSecondary.withValues(alpha: 0.10),
+                    AppPalette.homePanelDeep,
+                  ],
+                ),
+              ),
+              child: Center(
+                child: Icon(
+                  _fallbackIconForAsset(assetPath),
+                  color: accent.withValues(alpha: 0.7),
+                  size: 54,
+                ),
+              ),
+            );
+          },
+        ),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: AlignmentDirectional.centerStart,
+              end: AlignmentDirectional.centerEnd,
+              colors: [
+                AppPalette.bgDepth.withValues(alpha: 0.90),
+                AppPalette.bgDepth.withValues(alpha: 0.62),
+                AppPalette.bgDepth.withValues(alpha: 0.10),
+              ],
+              stops: const [0.0, 0.42, 1.0],
+            ),
+          ),
+        ),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Colors.white.withValues(alpha: pressed ? 0.08 : 0.04),
+                Colors.transparent,
+                AppPalette.bgDepth.withValues(alpha: 0.38),
+              ],
+            ),
+          ),
+        ),
+        Positioned(
+          top: 12,
+          left: 14,
+          child: _ModeBadge(label: badge, accent: accent),
+        ),
+        Align(
+          alignment: textAlignment,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 250),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 18, 18, 18),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: AlignmentDirectional.centerStart,
+                    child: Text(
+                      title,
+                      maxLines: 1,
+                      style: homeTitleFont(context, fontSize: 25),
+                    ),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    subtitle,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: homeBodyFont(
+                      context,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                      color: AppPalette.homeBody,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ModeBadge extends StatelessWidget {
+  final String label;
+  final Color accent;
+
+  const _ModeBadge({required this.label, required this.accent});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppPalette.bgDepth.withValues(alpha: 0.55),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: accent.withValues(alpha: 0.48)),
+        boxShadow: [
+          BoxShadow(
+            color: accent.withValues(alpha: 0.16),
+            blurRadius: 16,
+            spreadRadius: -4,
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(_badgeIcon(label), color: accent, size: 13),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: homeLabelFont(context, fontSize: 8.5, color: accent),
+          ),
+        ],
+      ),
+    );
+  }
+
+  IconData _badgeIcon(String value) {
+    final lower = value.toLowerCase();
+    if (lower.contains('ai')) return Icons.smart_toy_rounded;
+    if (lower.contains('reward')) return Icons.emoji_events_rounded;
+    if (lower.contains('hot')) return Icons.local_fire_department_rounded;
+    return Icons.auto_awesome_rounded;
+  }
+}
+
 // ── Extracted game screens (see imports at top) ──────────
 
 // Store screens → lib/screens/store/store_page.dart
 // Coins history → lib/screens/coins_history_page.dart
-

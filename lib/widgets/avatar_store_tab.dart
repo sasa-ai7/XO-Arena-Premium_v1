@@ -41,8 +41,12 @@ class AvatarStoreTab extends StatelessWidget {
         );
 
         final ownedSet = Set<int>.from(ownedAvatars);
-        final nonGifAvatars = kGameAvatars.where((a) => !a.isGif).toList();
-        final gifAvatars = kGameAvatars.where((a) => a.isGif).toList();
+        // Coin avatars first, then the premium (real-money) avatars in their
+        // own gold section.
+        final coinAvatars =
+            kGameAvatars.where((a) => !a.isPremiumIap).toList();
+        final premiumAvatars =
+            kGameAvatars.where((a) => a.isPremiumIap).toList();
 
         final gridDelegate = SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 2,
@@ -58,7 +62,7 @@ class AvatarStoreTab extends StatelessWidget {
               sliver: SliverGrid(
                 delegate: SliverChildBuilderDelegate(
                   (context, index) {
-                    final avatar = nonGifAvatars[index];
+                    final avatar = coinAvatars[index];
                     final owned = ownedSet.contains(avatar.id);
                     final equipped = equippedAvatar == avatar.id;
                     final meta = _AvatarPresentation.forAvatar(avatar);
@@ -75,7 +79,7 @@ class AvatarStoreTab extends StatelessWidget {
                       onEquipAvatar: onEquipAvatar,
                     );
                   },
-                  childCount: nonGifAvatars.length,
+                  childCount: coinAvatars.length,
                 ),
                 gridDelegate: gridDelegate,
               ),
@@ -101,7 +105,7 @@ class AvatarStoreTab extends StatelessWidget {
                           Icon(Icons.auto_awesome, color: AppPalette.gold, size: 12),
                           const SizedBox(width: 6),
                           Text(
-                            AppL10n.of(context).legendaryAnimated,
+                            AppL10n.of(context).premiumFramesLabel,
                             style: safeOrbitron(
                               fontSize: 9,
                               fontWeight: FontWeight.w900,
@@ -136,7 +140,7 @@ class AvatarStoreTab extends StatelessWidget {
               sliver: SliverGrid(
                 delegate: SliverChildBuilderDelegate(
                   (context, index) {
-                    final avatar = gifAvatars[index];
+                    final avatar = premiumAvatars[index];
                     final owned = ownedSet.contains(avatar.id);
                     final equipped = equippedAvatar == avatar.id;
                     final meta = _AvatarPresentation.forAvatar(avatar);
@@ -154,7 +158,7 @@ class AvatarStoreTab extends StatelessWidget {
                       isGoldCard: true,
                     );
                   },
-                  childCount: gifAvatars.length,
+                  childCount: premiumAvatars.length,
                 ),
                 gridDelegate: gridDelegate,
               ),
@@ -282,12 +286,16 @@ class _AvatarCard extends StatelessWidget {
                   ),
                   LayoutBuilder(
                     builder: (context, previewConstraints) {
-                      final previewSize = (previewConstraints.biggest.shortestSide * 1.03)
-                          .clamp(120.0, 280.0);
+                      // Fill the card preview area generously so the frame +
+                      // photo read large and centered.
+                      final previewSize =
+                          (previewConstraints.biggest.shortestSide * 1.18)
+                              .clamp(140.0, 300.0);
                       return Center(
                         child: FullAvatarDisplay(
                           size: previewSize,
                           avatar: avatar,
+                          showFrame: true,
                         ),
                       );
                     },
@@ -344,7 +352,7 @@ class _AvatarCard extends StatelessWidget {
 
 Future<bool?> showAvatarPurchaseDialog(BuildContext context, GameAvatar avatar) {
   final meta = _AvatarPresentation.forAvatar(avatar);
-  final isGif = avatar.isGif;
+  final isPremium = avatar.isPremiumIap;
   return showGeneralDialog<bool>(
     context: context,
     barrierDismissible: true,
@@ -372,8 +380,8 @@ Future<bool?> showAvatarPurchaseDialog(BuildContext context, GameAvatar avatar) 
               child: AppGlassCard(
                 padding: const EdgeInsets.all(24),
                 radius: 30,
-                backgroundColor: isGif ? const Color(0xFF1A1200) : null,
-                borderColor: isGif
+                backgroundColor: isPremium ? const Color(0xFF1A1200) : null,
+                borderColor: isPremium
                     ? AppPalette.gold.withOpacity(0.50)
                     : meta.color.withOpacity(0.34),
                 boxShadow: [
@@ -383,7 +391,7 @@ Future<bool?> showAvatarPurchaseDialog(BuildContext context, GameAvatar avatar) 
                     offset: const Offset(0, 18),
                   ),
                   BoxShadow(
-                    color: isGif
+                    color: isPremium
                         ? AppPalette.gold.withOpacity(0.18)
                         : meta.color.withOpacity(0.14),
                     blurRadius: 26,
@@ -393,11 +401,12 @@ Future<bool?> showAvatarPurchaseDialog(BuildContext context, GameAvatar avatar) 
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    _RarityBadge(meta: meta, isGold: isGif),
+                    _RarityBadge(meta: meta, isGold: isPremium),
                     const SizedBox(height: 16),
                     FullAvatarDisplay(
-                      size: 128,
+                      size: 152,
                       avatar: avatar,
+                      showFrame: true,
                     ),
                     const SizedBox(height: 14),
                     Text(
@@ -405,7 +414,7 @@ Future<bool?> showAvatarPurchaseDialog(BuildContext context, GameAvatar avatar) 
                       style: safeOrbitron(
                         fontSize: 18,
                         fontWeight: FontWeight.w800,
-                        color: isGif ? AppPalette.goldHighlight : Colors.white,
+                        color: isPremium ? AppPalette.goldHighlight : Colors.white,
                         letterSpacing: 1.6,
                       ),
                     ),
@@ -427,7 +436,7 @@ Future<bool?> showAvatarPurchaseDialog(BuildContext context, GameAvatar avatar) 
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Image.asset(
-                            'assets/coin/COIN.png',
+                            'assets/coin/COIN.webp',
                             height: 18,
                             fit: BoxFit.contain,
                           ),
@@ -566,11 +575,11 @@ class _AvatarActionButton extends StatelessWidget {
 
     return AppPillButton(
       label: l10n.buyWithPrice(formatCoins(avatar.price)),
-      fill: isGold ? AppPalette.goldDeep : AppPalette.goldDeep,
-      stroke: AppPalette.goldHighlight.withOpacity(0.54),
+      fill: AppPalette.success,
+      stroke: AppPalette.success.withOpacity(0.55),
       onPressed: busy ? null : () => onBuyAvatar(avatar),
       leading: Image.asset(
-        'assets/coin/COIN.png',
+        'assets/coin/COIN.webp',
         height: 14,
         fit: BoxFit.contain,
       ),
@@ -656,61 +665,71 @@ class _AvatarPresentation {
   });
 
   factory _AvatarPresentation.forAvatar(GameAvatar avatar) {
-    switch (avatar.id) {
+    final subtitle = _subtitleFor(avatar.id);
+    if (avatar.isPremiumIap) {
+      return _AvatarPresentation(
+        rarity: 'Premium',
+        subtitle: subtitle,
+        color: AppPalette.gold,
+      );
+    }
+    // Rarity tier derived from the coin price, reusing the existing palette.
+    if (avatar.price >= 18000) {
+      return _AvatarPresentation(
+        rarity: 'Legendary',
+        subtitle: subtitle,
+        color: AppPalette.rarityLegendary,
+      );
+    }
+    return _AvatarPresentation(
+      rarity: 'Epic',
+      subtitle: subtitle,
+      color: AppPalette.rarityEpic,
+    );
+  }
+
+  static String _subtitleFor(int id) {
+    switch (id) {
       case 1:
-        return const _AvatarPresentation(
-          rarity: 'Legendary',
-          subtitle: 'Elite collector arena frame',
-          color: AppPalette.rarityLegendary,
-        );
+        return 'Hooded assassin frame';
       case 2:
-        return const _AvatarPresentation(
-          rarity: 'Legendary',
-          subtitle: 'Synchronized arena presence',
-          color: AppPalette.rarityLegendary,
-        );
+        return 'Sweetheart arena frame';
       case 3:
-        return const _AvatarPresentation(
-          rarity: 'Legendary',
-          subtitle: 'Apex strength embodied',
-          color: AppPalette.rarityLegendary,
-        );
+        return 'Soul-bound reaper frame';
       case 4:
-        return const _AvatarPresentation(
-          rarity: 'Epic',
-          subtitle: 'Cryo-tuned arena skin',
-          color: AppPalette.rarityEpic,
-        );
+        return 'Frost samurai frame';
       case 5:
-        return const _AvatarPresentation(
-          rarity: 'Legendary',
-          subtitle: 'Powerful atmospheric frame',
-          color: AppPalette.rarityLegendary,
-        );
+        return 'Cherry blossom frame';
       case 6:
-        return const _AvatarPresentation(
-          rarity: 'Legendary',
-          subtitle: 'Shadow-tier premium collectible',
-          color: AppPalette.rarityLegendary,
-        );
+        return 'Corsair treasure frame';
+      case 7:
+        return 'Street riot frame';
+      case 8:
+        return 'Autumn fox frame';
       case 9:
-        return const _AvatarPresentation(
-          rarity: 'Legendary',
-          subtitle: 'Cosmic shadow collector',
-          color: AppPalette.rarityLegendary,
-        );
+        return 'Champion crown frame';
       case 10:
-        return const _AvatarPresentation(
-          rarity: 'Animated',
-          subtitle: 'Reactive premium arena frame',
-          color: AppPalette.rarityAnimated,
-        );
+        return 'Cosmic explorer frame';
+      case 11:
+        return 'Hex charm frame';
+      case 12:
+        return 'Honey bear frame';
+      case 13:
+        return 'Rose garden frame';
+      case 14:
+        return 'Golden laurel frame';
+      case 15:
+        return 'Onyx dragon frame';
+      case 16:
+        return 'Ember dragon frame';
+      case 17:
+        return 'Shadow ronin frame';
+      case 29:
+        return 'Exclusive golden halo — premium';
+      case 30:
+        return 'Exclusive star crown — premium';
       default:
-        return const _AvatarPresentation(
-          rarity: 'Legendary',
-          subtitle: 'Premium collectible frame',
-          color: AppPalette.rarityLegendary,
-        );
+        return 'Premium collectible frame';
     }
   }
 }

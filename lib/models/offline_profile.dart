@@ -60,8 +60,8 @@ class OfflinePlayerProfile {
 
   /// Asset path for the character image (NEVER uses Google/Firebase URL).
   String get avatarAssetPath => characterType == 'female'
-      ? 'assets/account/feminine.png'
-      : 'assets/account/man.png';
+      ? 'assets/account/feminine.webp'
+      : 'assets/account/man.webp';
 
   factory OfflinePlayerProfile.defaults({
     String id = '',

@@ -11,6 +11,7 @@ import '../core/keys.dart';
 import 'local_store.dart';
 import '../models/user_data.dart';
 import 'audit_service.dart';
+import 'app_mode_service.dart';
 import 'connectivity_service.dart';
 import 'session_service.dart';
 import 'user_repo.dart';
@@ -41,6 +42,11 @@ class AuthService {
   /// Set to true if Firestore/sync failed after a successful auth. Caller should show "Logged in but failed to sync profile".
   bool lastSyncFailed = false;
 
+  /// True when the most recent [signInWithGoogle] created (or found no profile
+  /// for) the account, so the UI must route to Complete-Profile instead of Home.
+  /// Lets the login screen skip a second Firestore read to re-check existence.
+  bool lastSignInWasNewUser = false;
+
   void _logException(Object e, StackTrace? st) {
     // Log error without exposing sensitive information
     if (kDebugMode) {
@@ -68,7 +74,8 @@ class AuthService {
     }
     if (e is PlatformException) {
       if (kDebugMode) {
-        debugPrint('[AUTH] PlatformException code=${e.code} message=${e.message} details=${e.details}');
+        debugPrint(
+            '[AUTH] PlatformException code=${e.code} message=${e.message} details=${e.details}');
       }
     }
   }
@@ -79,18 +86,24 @@ class AuthService {
     final details = (e.details?.toString() ?? '').toLowerCase();
     final merged = '$code $msg $details';
 
-    if (merged.contains('sign_in_canceled') || merged.contains('canceled') || merged.contains('cancelled')) {
+    if (merged.contains('sign_in_canceled') ||
+        merged.contains('canceled') ||
+        merged.contains('cancelled')) {
       return Exception('Sign-in cancelled.');
     }
 
-    if (merged.contains('10') || merged.contains('12500') || merged.contains('developer_error')) {
+    if (merged.contains('10') ||
+        merged.contains('12500') ||
+        merged.contains('developer_error')) {
       return Exception(
-        'Google Sign-In configuration error. Add this device SHA-1 to Firebase for com.xoarena.neonclash, download a fresh android/app/google-services.json, then rebuild and reinstall.'
-      );
+          'Google Sign-In configuration error. Add this device SHA-1 to Firebase for com.xoarena.neonclash, download a fresh android/app/google-services.json, then rebuild and reinstall.');
     }
 
-    if (merged.contains('network') || merged.contains('socket') || merged.contains('timeout')) {
-      return Exception('Google sign-in failed due to network issues. Please check your internet and try again.');
+    if (merged.contains('network') ||
+        merged.contains('socket') ||
+        merged.contains('timeout')) {
+      return Exception(
+          'Google sign-in failed due to network issues. Please check your internet and try again.');
     }
 
     return Exception('Google sign-in failed. Please try again.');
@@ -100,7 +113,8 @@ class AuthService {
   Exception _getUserFriendlyAuthError(FirebaseAuthException e) {
     switch (e.code) {
       case 'user-not-found':
-        return Exception('No account found with this email. Please sign up first.');
+        return Exception(
+            'No account found with this email. Please sign up first.');
       case 'wrong-password':
         return Exception('Incorrect password. Please try again.');
       case 'email-already-in-use':
@@ -110,17 +124,22 @@ class AuthService {
       case 'weak-password':
         return Exception('Password is too weak. Use at least 6 characters.');
       case 'network-request-failed':
-        return Exception('Network error. Please check your internet connection and try again.');
+        return Exception(
+            'Network error. Please check your internet connection and try again.');
       case 'too-many-requests':
-        return Exception('Too many attempts. Please wait a moment and try again.');
+        return Exception(
+            'Too many attempts. Please wait a moment and try again.');
       case 'operation-not-allowed':
-        return Exception('This sign-in method is not enabled. Please contact support.');
+        return Exception(
+            'This sign-in method is not enabled. Please contact support.');
       case 'user-disabled':
-        return Exception('This account has been disabled. Please contact support.');
+        return Exception(
+            'This account has been disabled. Please contact support.');
       case 'requires-recent-login':
         return Exception('Please sign in again to continue.');
       case 'account-exists-with-different-credential':
-        return Exception('This email is registered with Google. Please sign in with Google first, then you can link your password.');
+        return Exception(
+            'This email is registered with Google. Please sign in with Google first, then you can link your password.');
       case 'invalid-credential':
         return Exception('Invalid email or password. Please try again.');
       default:
@@ -132,20 +151,24 @@ class AuthService {
   Exception _getUserFriendlyFirestoreError(FirebaseException e) {
     switch (e.code) {
       case 'permission-denied':
-        return Exception('Permission denied. Please contact support if this persists.');
+        return Exception(
+            'Permission denied. Please contact support if this persists.');
       case 'unavailable':
-        return Exception('Service temporarily unavailable. Please try again later.');
+        return Exception(
+            'Service temporarily unavailable. Please try again later.');
       case 'deadline-exceeded':
-        return Exception('Request timed out. Please check your internet connection and try again.');
+        return Exception(
+            'Request timed out. Please check your internet connection and try again.');
       case 'network-request-failed':
-        return Exception('Network error. Please check your internet connection and try again.');
+        return Exception(
+            'Network error. Please check your internet connection and try again.');
       default:
         return Exception('An error occurred. Please try again.');
     }
   }
 
   /// Sign in with email and password. On success: save to Firestore, init UserRepo.
-  /// 
+  ///
   /// Handles both normal accounts and Google accounts that have been linked with email/password.
   /// If account exists with Google but not linked, shows appropriate error message.
   /// Throws exceptions with user-friendly messages on failure.
@@ -171,6 +194,9 @@ class AuthService {
       if (currentUser == null) {
         throw Exception('Sign-in failed. Please try again.');
       }
+
+      await FirebaseFirestore.instance.enableNetwork();
+      AppModeService.setMode(AppMode.online);
 
       try {
         if (kDebugMode) {
@@ -203,7 +229,7 @@ class AuthService {
           debugPrint('[AUTH] Sync failed but auth succeeded - returning user');
         }
       }
-      
+
       // Save login status to SharedPreferences for persistent login
       final p = await SharedPreferences.getInstance();
       await p.setBool(Keys.loggedIn, true);
@@ -227,9 +253,10 @@ class AuthService {
 
       // Handle account-exists-with-different-credential
       if (e.code == 'account-exists-with-different-credential') {
-        throw Exception('This email is registered with Google. Please sign in with Google first, then you can link your password.');
+        throw Exception(
+            'This email is registered with Google. Please sign in with Google first, then you can link your password.');
       }
-      
+
       throw _getUserFriendlyAuthError(e);
     } on FirebaseException catch (e) {
       _logException(e, null);
@@ -237,7 +264,8 @@ class AuthService {
     } catch (e, st) {
       _logException(e, st);
       if (e is Exception) rethrow;
-      throw Exception('Sign-in failed. Please check your internet connection and try again.');
+      throw Exception(
+          'Sign-in failed. Please check your internet connection and try again.');
     }
   }
 
@@ -264,6 +292,9 @@ class AuthService {
       if (user == null) {
         throw Exception('Sign-up failed. Please try again.');
       }
+
+      await FirebaseFirestore.instance.enableNetwork();
+      AppModeService.setMode(AppMode.online);
 
       try {
         await user.updateDisplayName(username.trim());
@@ -314,7 +345,8 @@ class AuthService {
     } catch (e, st) {
       _logException(e, st);
       if (e is Exception) rethrow;
-      throw Exception('Sign-up failed. Please check your internet connection and try again.');
+      throw Exception(
+          'Sign-up failed. Please check your internet connection and try again.');
     }
   }
 
@@ -326,11 +358,10 @@ class AuthService {
   /// If this is the first time signing in with Google, the user will need to complete their profile.
   Future<User?> signInWithGoogle() async {
     lastSyncFailed = false;
+    lastSignInWasNewUser = false;
+    final sw = Stopwatch()..start();
+    debugPrint('[PERF] google_login_start');
     try {
-      if (kDebugMode) {
-        debugPrint('[AUTH] STEP 1: GoogleSignIn().signIn()');
-      }
-      
       // Reset stale session to force account picker on some Android devices.
       try {
         await _googleSignIn.signOut();
@@ -339,7 +370,7 @@ class AuthService {
       // Trigger the Google Sign-In flow.
       final GoogleSignInAccount? googleUser =
           await _googleSignIn.signIn().timeout(const Duration(seconds: 30));
-      
+
       if (googleUser == null) {
         // User cancelled the sign-in
         if (kDebugMode) {
@@ -348,13 +379,9 @@ class AuthService {
         throw Exception('Sign-in cancelled.');
       }
 
-      if (kDebugMode) {
-        debugPrint('[AUTH] STEP 1 OK: GoogleSignIn().signIn()');
-        debugPrint('[AUTH] STEP 2: Obtaining Google authentication credentials');
-      }
-
       // Obtain the auth details from the request
-      final GoogleSignInAuthentication googleAuth = await googleUser.authentication;
+      final GoogleSignInAuthentication googleAuth =
+          await googleUser.authentication;
 
       // Create a new credential
       final credential = GoogleAuthProvider.credential(
@@ -362,95 +389,88 @@ class AuthService {
         idToken: googleAuth.idToken,
       );
 
-      if (kDebugMode) {
-        debugPrint('[AUTH] STEP 2 OK: Google authentication credentials obtained');
-        debugPrint('[AUTH] STEP 3: signInWithCredential');
-      }
-
       // Sign in to Firebase with the Google credential
       final userCredential = await _auth.signInWithCredential(credential);
-      var user = userCredential.user;
+      final user = userCredential.user;
 
       if (user == null) {
         throw Exception('Google sign-in failed. Please try again.');
       }
+      // Guest startup disables Firestore network to protect the offline
+      // namespace. Authentication succeeded, so enable it for the one required
+      // profile-routing read. AppMode becomes online only once routing is safe.
+      await FirebaseFirestore.instance.enableNetwork();
+      debugPrint('[PERF] google_auth_done_ms=${sw.elapsedMilliseconds}');
 
       // Capture Google photo URL from the sign-in account before it goes
       // out of scope. FirebaseAuth.currentUser.photoURL can be null right
       // after signInWithCredential, but GoogleSignInAccount always has it.
       final googlePhotoUrl = googleUser.photoUrl;
 
-      if (kDebugMode) {
-        debugPrint('[AUTH] STEP 3 OK: signInWithCredential');
-        debugPrint('[AUTH] Google photoUrl: $googlePhotoUrl, Firebase photoURL: ${user.photoURL}');
-        debugPrint('[AUTH] STEP 4: Checking if profile exists in Firestore');
-      }
-
-      // Check if user profile exists in Firestore
-      final userDoc = await _firestore.collection('users').doc(user.uid).get();
-      final hasProfile = userDoc.exists && userDoc.data() != null;
-
-      if (!hasProfile) {
-        // First time Google sign-in - user needs to complete profile
-        if (kDebugMode) {
-          debugPrint('[AUTH] First time Google sign-in - profile does not exist');
-        }
-        // Save login status but don't sync yet (will be done after profile completion)
-        final p = await SharedPreferences.getInstance();
-        await p.setBool(Keys.loggedIn, true);
-        return user; // Return user so UI can navigate to Complete Profile Screen
-      }
-
-      // Existing user - sync data
+      // ── Single Firestore read for the whole login flow ───────────────────
+      // This one doc.get() both routes new-vs-existing AND seeds the local
+      // cache below. The login screen no longer re-reads it, and all writes
+      // (profile update, session, audit, referral) run in the background so
+      // navigation is not blocked on the network.
+      DocumentSnapshot<Map<String, dynamic>>? userDoc;
       try {
-        if (kDebugMode) {
-          debugPrint('[AUTH] STEP 5: saveUserToFirestore');
-        }
-        await _saveUserToFirestore(user, provider: 'google', photoUrl: googlePhotoUrl);
-        if (kDebugMode) {
-          debugPrint('[AUTH] STEP 5 OK: saveUserToFirestore');
-        }
-
-        if (kDebugMode) {
-          debugPrint('[AUTH] STEP 6: syncToLocalStore');
+        userDoc = await _firestore
+            .collection('users')
+            .doc(user.uid)
+            .get()
+            .timeout(const Duration(seconds: 5));
+      } on TimeoutException {
+        // Authentication already succeeded. Do not keep the login screen
+        // blocked on an optional full profile pull; use Firebase's new-user
+        // hint for routing and finish synchronization in the background.
+        if (userCredential.additionalUserInfo?.isNewUser ?? false) {
+          lastSignInWasNewUser = true;
+          AppModeService.setMode(AppMode.online);
+          return user;
         }
         await _syncToLocalStore(user, photoUrl: googlePhotoUrl);
+        unawaited(_postGoogleLoginBackground(user, googlePhotoUrl, sw));
+        AppModeService.setMode(AppMode.online);
         if (kDebugMode) {
-          debugPrint('[AUTH] STEP 6 OK: syncToLocalStore');
+          debugPrint('[PERF] profile pull deferred after 5s timeout');
         }
+        return user;
+      }
+      final hasProfile = userDoc.exists && userDoc.data() != null;
 
+      // Persist login flag immediately (cheap, local).
+      final p = await SharedPreferences.getInstance();
+      await p.setBool(Keys.loggedIn, true);
+
+      if (!hasProfile) {
+        // First time Google sign-in - user needs to complete profile.
+        lastSignInWasNewUser = true;
+        AppModeService.setMode(AppMode.online);
         if (kDebugMode) {
-          debugPrint('[AUTH] STEP 7: userRepo.initAfterAuth');
+          debugPrint(
+              '[AUTH] First time Google sign-in - profile does not exist');
         }
-        await UserRepo().initAfterAuth(user.uid);
-        if (kDebugMode) {
-          debugPrint('[AUTH] STEP 7 OK: userRepo.initAfterAuth');
-        }
+        return user; // UI navigates to Complete Profile Screen
+      }
+
+      // Existing user: seed LocalStore from the doc we already fetched so Home
+      // renders correct coins / cosmetics / photo immediately. This is the
+      // minimum data required before navigating.
+      try {
+        final data = UserData.fromFirestore(userDoc);
+        await UserRepo().applyUserDataToLocal(data);
+        await _syncToLocalStore(user, photoUrl: googlePhotoUrl);
       } catch (e, st) {
         lastSyncFailed = true;
         _logException(e, st);
-        if (kDebugMode) {
-          debugPrint('[AUTH] Sync failed but auth succeeded - returning user');
-        }
       }
+      debugPrint('[PERF] user_profile_ready_ms=${sw.elapsedMilliseconds}');
 
-      // Save login status to SharedPreferences for persistent login
-      final p = await SharedPreferences.getInstance();
-      await p.setBool(Keys.loggedIn, true);
-      if (kDebugMode) {
-        debugPrint('[AUTH] Login status saved to SharedPreferences');
-      }
+      // Everything below is non-critical — never block navigation on it.
+      unawaited(_postGoogleLoginBackground(user, googlePhotoUrl, sw));
 
-      // Write single-device session (non-fatal)
-      try {
-        await SessionService.writeSession(user.uid);
-      } catch (e) {
-        if (kDebugMode) {
-          debugPrint('[AUTH] Session write failed (non-fatal): $e');
-        }
-      }
+      AppModeService.setMode(AppMode.online);
 
-      AuditService.log('login', {'provider': 'google'});
       return user;
     } on FirebaseAuthException catch (e) {
       _logException(e, null);
@@ -467,27 +487,64 @@ class AuthService {
     } catch (e, st) {
       _logException(e, st);
       if (e is Exception) rethrow;
-      throw Exception('Google sign-in failed. Please check your internet connection and try again.');
+      throw Exception(
+          'Google sign-in failed. Please check your internet connection and try again.');
     }
+  }
+
+  /// Non-critical work that runs AFTER the user has already navigated to Home.
+  /// Updates the Firestore profile (lastLoginAt, photo, welcome gift), runs the
+  /// migration/referral init, writes the single-device session, and logs the
+  /// audit event. Failures here never affect the visible login.
+  Future<void> _postGoogleLoginBackground(
+      User user, String? googlePhotoUrl, Stopwatch sw) async {
+    try {
+      await _saveUserToFirestore(user,
+          provider: 'google', photoUrl: googlePhotoUrl);
+    } catch (e, st) {
+      lastSyncFailed = true;
+      _logException(e, st);
+    }
+    try {
+      // Migration + referral-code ensure + a fresh server pull (picks up any
+      // welcome-gift coins granted by _saveUserToFirestore above).
+      await UserRepo().initAfterAuth(user.uid);
+    } catch (e, st) {
+      _logException(e, st);
+    }
+    try {
+      await SessionService.writeSession(user.uid);
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint('[AUTH] Session write failed (non-fatal): $e');
+      }
+    }
+    AuditService.log('login', {'provider': 'google'});
+    debugPrint(
+        '[PERF] post_login_background_done_ms=${sw.elapsedMilliseconds}');
   }
 
   /// Link email/password credential to the current Google account.
   /// This allows users to sign in with either Google or email/password.
-  /// 
+  ///
   /// Throws user-friendly exceptions on failure.
-  Future<void> linkEmailPasswordCredential(String email, String password) async {
+  Future<void> linkEmailPasswordCredential(
+      String email, String password) async {
     final user = _auth.currentUser;
     if (user == null) {
       throw Exception('No user logged in. Please sign in first.');
     }
 
-    if (user.email == null || user.email!.toLowerCase() != email.trim().toLowerCase()) {
-      throw Exception('Email must match your Google account email (${user.email}).');
+    if (user.email == null ||
+        user.email!.toLowerCase() != email.trim().toLowerCase()) {
+      throw Exception(
+          'Email must match your Google account email (${user.email}).');
     }
 
     try {
       if (kDebugMode) {
-        debugPrint('[AUTH] Linking email/password credential to Google account');
+        debugPrint(
+            '[AUTH] Linking email/password credential to Google account');
       }
 
       final credential = EmailAuthProvider.credential(
@@ -507,17 +564,20 @@ class AuthService {
       } else if (e.code == 'credential-already-in-use') {
         throw Exception('This password is already linked to another account.');
       } else if (e.code == 'invalid-credential') {
-        throw Exception('Invalid email or password. Please check and try again.');
+        throw Exception(
+            'Invalid email or password. Please check and try again.');
       } else if (e.code == 'weak-password') {
         throw Exception('Password is too weak. Use at least 6 characters.');
       } else if (e.code == 'network-request-failed') {
-        throw Exception('Network error. Please check your internet connection and try again.');
+        throw Exception(
+            'Network error. Please check your internet connection and try again.');
       }
       throw _getUserFriendlyAuthError(e);
     } catch (e, st) {
       _logException(e, st);
       if (e is Exception) rethrow;
-      throw Exception('Failed to link email/password credential. Please try again.');
+      throw Exception(
+          'Failed to link email/password credential. Please try again.');
     }
   }
 
@@ -565,7 +625,8 @@ class AuthService {
       } catch (e) {
         // If linking fails, still save profile (user can link later)
         if (kDebugMode) {
-          debugPrint('[AUTH] Credential linking failed (non-fatal, continuing): $e');
+          debugPrint(
+              '[AUTH] Credential linking failed (non-fatal, continuing): $e');
         }
       }
 
@@ -658,7 +719,8 @@ class AuthService {
     } catch (e, st) {
       _logException(e, st);
       if (e is Exception) rethrow;
-      throw Exception('Failed to complete profile. Please check your internet connection and try again.');
+      throw Exception(
+          'Failed to complete profile. Please check your internet connection and try again.');
     }
   }
 
@@ -676,7 +738,8 @@ class AuthService {
       }
     } catch (e) {
       if (kDebugMode) {
-        debugPrint('[AUTH] signOut: Google Sign-In signOut failed (ignored): $e');
+        debugPrint(
+            '[AUTH] signOut: Google Sign-In signOut failed (ignored): $e');
       }
     }
 
@@ -689,15 +752,10 @@ class AuthService {
       }
     }
 
-    // Clear login status
-    final p = await SharedPreferences.getInstance();
-    await p.setBool(Keys.loggedIn, false);
-    if (kDebugMode) {
-      debugPrint('[AUTH] Login status cleared from SharedPreferences');
-    }
-
-    // Clear local cache (preserve justDeletedAccount if needed)
-    await UserRepo().clearLocalCache();
+    // Clear session/profile cache once. Durable per-user history and pending
+    // ledger uploads are deliberately preserved across every kind of logout.
+    await UserRepo().clearSessionCacheOnly();
+    await UserRepo().clearUserProfileCacheForLogout();
     await LocalStore.setProfilePhotoPath(null);
     await LocalStore.setProfilePhotoUrl(null);
     LocalStore.profilePhotoUrlNotifier.value = null;
@@ -724,11 +782,11 @@ class AuthService {
     if (user == null) {
       throw Exception('No user logged in.');
     }
-    
+
     if (user.email == null) {
       throw Exception('User email not found.');
     }
-    
+
     try {
       final credential = EmailAuthProvider.credential(
         email: user.email!,
@@ -736,7 +794,8 @@ class AuthService {
       );
       await user.reauthenticateWithCredential(credential);
       if (kDebugMode) {
-        debugPrint('[AUTH] reauthenticateWithPassword: Re-authentication successful');
+        debugPrint(
+            '[AUTH] reauthenticateWithPassword: Re-authentication successful');
       }
     } on FirebaseAuthException catch (e) {
       _logException(e, null);
@@ -761,7 +820,8 @@ class AuthService {
   Future<void> deleteAccountAndData({String? password}) async {
     final user = _auth.currentUser;
     if (user == null) {
-      throw Exception('No user logged in. Please sign in to delete your account.');
+      throw Exception(
+          'No user logged in. Please sign in to delete your account.');
     }
 
     final isOnline = await ConnectivityService().online;
@@ -794,15 +854,18 @@ class AuthService {
         throw Exception(
             'This account uses Google sign-in. Please re-authenticate with Google to delete your account.');
       }
-      if (kDebugMode) debugPrint('[DELETE] Starting reauthentication (password)');
+      if (kDebugMode)
+        debugPrint('[DELETE] Starting reauthentication (password)');
       try {
         await reauthenticateWithPassword(password);
-        if (kDebugMode) debugPrint('[DELETE] Password reauthentication success');
+        if (kDebugMode)
+          debugPrint('[DELETE] Password reauthentication success');
       } catch (e) {
         throw Exception('Incorrect password. Please try again.');
       }
     } else if (kDebugMode) {
-      debugPrint('[DELETE] No password provided — assuming Google reauth was done by caller');
+      debugPrint(
+          '[DELETE] No password provided — assuming Google reauth was done by caller');
     }
 
     // STEP 1: Read user doc for audit/feedback data (best-effort).
@@ -815,7 +878,8 @@ class AuthService {
       final wallet = data?['Wallet'];
       final stats = data?['Stats'];
       if (wallet is Map) finalBalance = (wallet['coins'] as num?)?.toInt() ?? 0;
-      if (stats is Map) totalGames = (stats['gamesPlayed'] as num?)?.toInt() ?? 0;
+      if (stats is Map)
+        totalGames = (stats['gamesPlayed'] as num?)?.toInt() ?? 0;
     } catch (_) {}
 
     // STEP 2: Write deletion feedback — non-fatal, must include uid for Firestore rules.
@@ -843,10 +907,21 @@ class AuthService {
     }
 
     // STEP 3: Delete subcollections.
+    await _firestore.collection('users').doc(uid).set(
+      <String, dynamic>{'deletionInProgress': true},
+      SetOptions(merge: true),
+    );
     if (kDebugMode) debugPrint('[DELETE] deleting subcollection transactions');
     await _deleteSubcollection(uid, 'transactions');
-    if (kDebugMode) debugPrint('[DELETE] deleting subcollection purchase_counts');
+    if (kDebugMode) debugPrint('[DELETE] deleting subcollection wallet_ledger');
+    await _deleteSubcollection(uid, 'wallet_ledger');
+    if (kDebugMode)
+      debugPrint('[DELETE] deleting subcollection purchase_counts');
     await _deleteSubcollection(uid, 'purchase_counts');
+    await _deleteSubcollection(uid, 'ownedAvatars');
+    await _deleteSubcollection(uid, 'onlineRoomHistory');
+    await _deleteSubcollection(uid, 'user_logs');
+    await _deleteSubcollection(uid, 'Arena');
 
     // STEP 4: Delete main user document.
     if (kDebugMode) debugPrint('[DELETE] deleting users/$uid');
@@ -931,10 +1006,13 @@ class AuthService {
   }
 
   Future<void> _saveUserToFirestore(User user,
-      {String? name, String? characterType,
-       bool? ageVerified, bool? minimumAgePassed,
-       bool ageVerifiedAtServer = false,
-       required String provider, String? photoUrl}) async {
+      {String? name,
+      String? characterType,
+      bool? ageVerified,
+      bool? minimumAgePassed,
+      bool ageVerifiedAtServer = false,
+      required String provider,
+      String? photoUrl}) async {
     try {
       final displayName =
           name ?? user.displayName ?? user.email?.split('@').first ?? 'Player';
@@ -994,13 +1072,14 @@ class AuthService {
       } else {
         // Existing user: update Profile and check for pending welcome gift.
         final existingData = existing.data() ?? {};
-        final existingProfile =
-            UserProfile.fromMap(existingData['Profile'] as Map<String, dynamic>?);
+        final existingProfile = UserProfile.fromMap(
+            existingData['Profile'] as Map<String, dynamic>?);
         final existingWallet =
             UserWallet.fromMap(existingData['Wallet'] as Map<String, dynamic>?);
 
         // Grant welcome gift if not yet claimed (e.g. account created before this field existed).
-        final shouldGrantWelcomeGift = existingProfile.welcomeGiftClaimed != true;
+        final shouldGrantWelcomeGift =
+            existingProfile.welcomeGiftClaimed != true;
 
         final mergedProfile = UserProfile(
           name: name ?? existingProfile.name,
@@ -1009,11 +1088,14 @@ class AuthService {
           createdAt: existingProfile.createdAt,
           lastLoginAt: now,
           updatedAt: now,
-          welcomeGiftClaimed: shouldGrantWelcomeGift ? true : existingProfile.welcomeGiftClaimed,
+          welcomeGiftClaimed: shouldGrantWelcomeGift
+              ? true
+              : existingProfile.welcomeGiftClaimed,
           photoURL: resolvedPhotoUrl ?? existingProfile.photoURL,
           characterType: characterType ?? existingProfile.characterType,
           ageVerified: ageVerified ?? existingProfile.ageVerified,
-          minimumAgePassed: minimumAgePassed ?? existingProfile.minimumAgePassed,
+          minimumAgePassed:
+              minimumAgePassed ?? existingProfile.minimumAgePassed,
           ageVerifiedAt: existingProfile.ageVerifiedAt,
         );
 
@@ -1025,7 +1107,8 @@ class AuthService {
           final newCoins = existingWallet.coins + 200;
           updates['Wallet'] = {'coins': newCoins};
           if (kDebugMode) {
-            debugPrint('[AUTH] Welcome gift granted: +200 coins (total: $newCoins)');
+            debugPrint(
+                '[AUTH] Welcome gift granted: +200 coins (total: $newCoins)');
           }
         }
 
@@ -1054,7 +1137,8 @@ class AuthService {
     }
   }
 
-  Future<void> _syncToLocalStore(User user, {String? name, String? photoUrl}) async {
+  Future<void> _syncToLocalStore(User user,
+      {String? name, String? photoUrl}) async {
     final displayName =
         name ?? user.displayName ?? user.email?.split('@').first ?? 'PLAYER';
     final p = await SharedPreferences.getInstance();
@@ -1099,8 +1183,10 @@ class AuthService {
       final snap = await docRef.get();
       final data = snap.data() ?? const <String, dynamic>{};
       final profile = data['Profile'];
-      final storedPhoto = (profile is Map) ? profile['photoURL'] as String? : null;
-      final storedName = (profile is Map) ? profile['displayName'] as String? : null;
+      final storedPhoto =
+          (profile is Map) ? profile['photoURL'] as String? : null;
+      final storedName =
+          (profile is Map) ? profile['displayName'] as String? : null;
       final photoChanged = storedPhoto != photoUrl;
       final nameChanged = displayName != null &&
           displayName.isNotEmpty &&

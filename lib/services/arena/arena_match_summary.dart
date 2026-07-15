@@ -36,6 +36,7 @@ class ArenaMatchSummary {
     switch (r) {
       case 'opponent_left':
       case 'forfeit':
+      case 'disconnect_forfeit':
         return 'opponent_left';
       case 'expired':
         return 'expired';
@@ -60,12 +61,12 @@ class ArenaMatchSummary {
     final selfUid = FirebaseAuth.instance.currentUser?.uid;
     if (selfUid == null) {
       if (kDebugMode) {
-        debugPrint('[ARENA] summary skipped — no signed-in user matchId=${room.matchId}');
+        debugPrint(
+            '[ARENA] summary skipped — no signed-in user matchId=${room.matchId}');
       }
       return;
     }
-    final isParticipant =
-        selfUid == room.hostUid || selfUid == room.guestUid;
+    final isParticipant = selfUid == room.hostUid || selfUid == room.guestUid;
     if (!isParticipant) {
       // Edge case — listener delivered a finished snapshot to a user who
       // isn't a participant. Firestore rules would reject either write, so
@@ -82,8 +83,8 @@ class ArenaMatchSummary {
         ? null
         : (winnerUid == room.hostUid ? room.guestUid : room.hostUid);
 
-    final roundsPlayed = (room.scoreHost + room.scoreGuest)
-        .clamp(0, room.roundsCount);
+    final roundsPlayed =
+        (room.scoreHost + room.scoreGuest).clamp(0, room.roundsCount);
     final data = <String, dynamic>{
       'roomCode': room.roomCode,
       'hostUid': room.hostUid,
@@ -127,8 +128,7 @@ class ArenaMatchSummary {
         .doc(selfUid)
         .collection('onlineRoomHistory')
         .doc(room.matchId);
-    final globalRef =
-        _fs.collection('online_room_history').doc(room.matchId);
+    final globalRef = _fs.collection('online_room_history').doc(room.matchId);
 
     final results = await Future.wait<bool>([
       writeDoc(selfRef),

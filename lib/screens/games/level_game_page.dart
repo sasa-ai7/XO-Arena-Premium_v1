@@ -14,6 +14,7 @@ import '../../services/game_reward_service.dart';
 import '../../services/local_store.dart';
 import '../../services/mission_service.dart';
 import '../../services/sound_service.dart';
+import '../../services/wallet_transaction_service.dart';
 import '../../utils/ai_engine.dart';
 import '../../utils/board_utils.dart';
 import '../../widgets/app_ui.dart';
@@ -67,6 +68,7 @@ class _LevelGamePageState extends State<LevelGamePage> {
 
   bool _isResolvingResult = false;
   bool _rewardApplied = false;
+  final Set<String> _persistedResultMatchIds = <String>{};
 
   String _newLevelMatchId() =>
       'level${_currentLevel}_${DateTime.now().millisecondsSinceEpoch}_${LocalStore.uid ?? 'guest'}';
@@ -82,6 +84,7 @@ class _LevelGamePageState extends State<LevelGamePage> {
     AuditService.log('match_started',
         {'matchType': 'level_campaign', 'level': widget.initialLevel});
     _updateLevelConfig();
+    board = List.filled(_boardSize * _boardSize, "");
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _initializeLevelMatch();
@@ -179,7 +182,6 @@ class _LevelGamePageState extends State<LevelGamePage> {
       debugPrint('[LEVEL_AI] level=$_currentLevel base=$baseDifficulty '
           'losses=$_consecutiveLossesOnLevel actual=$_difficulty');
     }
-    board = List.filled(_boardSize * _boardSize, "");
   }
 
   AIDifficulty _easeDifficulty(AIDifficulty base) {
@@ -266,7 +268,8 @@ class _LevelGamePageState extends State<LevelGamePage> {
   Future<void> _handleResult({bool draw = false}) async {
     if (_isResolvingResult) {
       if (kDebugMode) {
-        debugPrint('[LEVEL_REWARD] matchId=$_levelMatchId duplicate result blocked');
+        debugPrint(
+            '[LEVEL_REWARD] matchId=$_levelMatchId duplicate result blocked');
       }
       return;
     }
@@ -306,6 +309,8 @@ class _LevelGamePageState extends State<LevelGamePage> {
         'level': _currentLevel,
         'result': resultStr
       });
+      MissionService.instance
+          .trackEvent('any_match_completed', matchId: _levelMatchId);
       _persistLevelResult(resultStr, 0);
     } else {
       // Win → adaptive easing counter clears for the next level (both
@@ -329,19 +334,30 @@ class _LevelGamePageState extends State<LevelGamePage> {
       int balanceAfter = LocalStore.coinsNotifier.value;
       if (reward > 0 && !_rewardApplied) {
         balanceBefore = LocalStore.coinsNotifier.value;
-        await LocalStore.updateCoins(reward);
+        // Credit + ledger row via the canonical transaction service so the
+        // wallet can never move without a history entry.
+        final result = await WalletTransactionService.instance.applyCredit(
+          coins: reward,
+          transactionId: '${_levelMatchId}_reward',
+          source: 'level_reward',
+          title: 'Level Reward',
+          message: 'Level $_currentLevel Reward',
+          matchId: _levelMatchId,
+        );
         balanceAfter = LocalStore.coinsNotifier.value;
-        _rewardApplied = true;
+        _rewardApplied = result.success;
         if (kDebugMode) {
           debugPrint(
             '[LEVEL_REWARD] matchId=$_levelMatchId mode=$modeStr level=$_currentLevel '
             'applied amount=$reward before=$balanceBefore newCoins=$balanceAfter',
           );
-          debugPrint('[WALLET] mode=$modeStr delta=$reward before=$balanceBefore after=$balanceAfter');
+          debugPrint(
+              '[WALLET] mode=$modeStr delta=$reward before=$balanceBefore after=$balanceAfter');
         }
       } else if (reward > 0 && _rewardApplied) {
         if (kDebugMode) {
-          debugPrint('[LEVEL_REWARD] matchId=$_levelMatchId duplicate reward blocked');
+          debugPrint(
+              '[LEVEL_REWARD] matchId=$_levelMatchId duplicate reward blocked');
         }
       }
 
@@ -375,7 +391,10 @@ class _LevelGamePageState extends State<LevelGamePage> {
         'level': _currentLevel,
         'result': resultStr
       });
-      // Missions: a completed level (win branch only) = level_completed.
+      MissionService.instance
+          .trackEvent('any_match_completed', matchId: _levelMatchId);
+      MissionService.instance
+          .trackEvent('any_match_won', matchId: _levelMatchId);
       MissionService.instance
           .trackEvent('level_completed', matchId: _levelMatchId);
       _persistLevelResult(
@@ -393,27 +412,29 @@ class _LevelGamePageState extends State<LevelGamePage> {
   /// [LocalStore.updateCoins]; the CF only records the match for
   /// idempotency and increments `Stats.*` server-side.
   Future<void> _persistLevelResult(String resultStr, int reward,
-      {bool isLoss = false, int? nextLevel, int? balanceBefore, int? balanceAfter}) async {
+      {bool isLoss = false,
+      int? nextLevel,
+      int? balanceBefore,
+      int? balanceAfter}) async {
+    final matchId = _levelMatchId;
+    if (_persistedResultMatchIds.contains(matchId)) {
+      if (kDebugMode) {
+        debugPrint(
+            '[LEVEL_PERSIST] duplicate persist blocked matchId=$matchId');
+      }
+      return;
+    }
+    _persistedResultMatchIds.add(matchId);
     try {
       if (isLoss) {
         await LocalStore.resetLevelGame();
       }
       await LocalStore.addResult(result: resultStr);
-      await LocalStore.grantMatchRewardCF(matchId: _levelMatchId, result: resultStr);
-      if (reward > 0) {
-        if (kDebugMode) {
-          debugPrint('[REWARD] level=$_currentLevel reward=$reward');
-        }
-        await LocalStore.addTopupHistory(
-          usd: 0.0,
-          coins: reward,
-          type: 'win',
-          source: 'level_win',
-          description: 'Level $_currentLevel Reward',
-          transactionId: _levelMatchId,
-          balanceBefore: balanceBefore,
-          balanceAfter: balanceAfter,
-        );
+      await LocalStore.grantMatchRewardCF(matchId: matchId, result: resultStr);
+      // The coin reward + its ledger row were already recorded atomically by
+      // WalletTransactionService.applyCredit in _handleResult.
+      if (reward > 0 && kDebugMode) {
+        debugPrint('[REWARD] level=$_currentLevel reward=$reward');
       }
       if (nextLevel != null) {
         if (_currentLevel < 20) {
@@ -446,6 +467,8 @@ class _LevelGamePageState extends State<LevelGamePage> {
       'level': _currentLevel,
       'result': resultStr,
     });
+    MissionService.instance
+        .trackEvent('any_match_completed', matchId: _levelMatchId);
     _persistLevelResult(resultStr, 0, isLoss: true);
   }
 
@@ -497,21 +520,33 @@ class _LevelGamePageState extends State<LevelGamePage> {
     }
 
     _continueCount++;
-    final before = LocalStore.coinsNotifier.value;
-    await LocalStore.updateCoins(-cost); // mode-aware: offline → offline wallet; online → Firestore-synced
-    final after = LocalStore.coinsNotifier.value;
-    await LocalStore.addTopupHistory(
-      usd: 0.0,
-      coins: -cost,
-      type: 'spend',
-      description: 'Level $_currentLevel Continue',
-      balanceBefore: coinsBefore,
-      balanceAfter: coinsBefore - cost,
+    // Canonical, mode-aware, idempotent debit (offline → offline wallet;
+    // online → Firestore-synced). The wallet can never move without a ledger
+    // row, and an insufficient balance is rejected without side effects.
+    final result = await WalletTransactionService.instance.applyDebit(
+      coins: cost,
+      transactionId: 'level_${_levelMatchId}_continue_$_continueCount',
+      source: 'level_continue',
+      title: 'Continue',
+      message: 'Level $_currentLevel Continue',
+      matchId: _levelMatchId,
     );
+    if (!result.success) {
+      _continueCount--; // the spend did not happen — undo the increment
+      if (mounted) {
+        showTopNotification(
+          context,
+          'Not enough coins to continue.',
+          color: AppPalette.danger,
+        );
+      }
+      _isResolvingResult = false; // allow re-entry
+      return;
+    }
     if (kDebugMode) {
       debugPrint(
         '[LEVEL_CONTINUE] matchId=$_levelMatchId mode=$modeStr cost=$cost '
-        'before=$before newCoins=$after',
+        'before=${result.balanceBefore} newCoins=${result.balanceAfter}',
       );
     }
 
@@ -553,7 +588,9 @@ class _LevelGamePageState extends State<LevelGamePage> {
         icon: icon,
         coinsAdded: coinsAdded,
         rewardText: rewardText,
-        restartLabel: useNext ? AppL10n.of(context).nextBtn : AppL10n.of(context).replayBtn,
+        restartLabel: useNext
+            ? AppL10n.of(context).nextBtn
+            : AppL10n.of(context).replayBtn,
         restartIcon: useNext ? Icons.arrow_forward : Icons.refresh,
         onRestart: () {
           Navigator.pop(context);
@@ -751,313 +788,325 @@ class _LevelGamePageState extends State<LevelGamePage> {
             child: Directionality(
               textDirection: TextDirection.ltr,
               child: LayoutBuilder(
-              builder: (context, constraints) {
-                final landscape = constraints.maxWidth > constraints.maxHeight;
+                builder: (context, constraints) {
+                  final landscape =
+                      constraints.maxWidth > constraints.maxHeight;
 
-                Widget buildHeaderCard() {
-                  return AppGlassCard(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 10,
-                    ),
-                    child: LayoutBuilder(
-                      builder: (context, headerConstraints) {
-                        final stackedHeader = headerConstraints.maxWidth < 360;
-                        final coinWidth = clampDouble(
-                          headerConstraints.maxWidth * (stackedHeader ? 0.48 : 0.30),
-                          stackedHeader ? 118.0 : 132.0,
-                          stackedHeader ? 156.0 : 176.0,
-                        );
-                        final titleWidth = max(
-                          0.0,
-                          headerConstraints.maxWidth - coinWidth - 66.0,
-                        );
-                        final coinWidget = SizedBox(
-                          width: coinWidth,
-                          child: ValueListenableBuilder<int>(
-                            valueListenable: LocalStore.coinsNotifier,
-                            builder: (_, coins, __) => CoinPill(
-                              coins: coins,
-                              width: coinWidth,
+                  Widget buildHeaderCard() {
+                    return AppGlassCard(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
+                      ),
+                      child: LayoutBuilder(
+                        builder: (context, headerConstraints) {
+                          final stackedHeader =
+                              headerConstraints.maxWidth < 360;
+                          final coinWidth = clampDouble(
+                            headerConstraints.maxWidth *
+                                (stackedHeader ? 0.48 : 0.30),
+                            stackedHeader ? 118.0 : 132.0,
+                            stackedHeader ? 156.0 : 176.0,
+                          );
+                          final titleWidth = max(
+                            0.0,
+                            headerConstraints.maxWidth - coinWidth - 66.0,
+                          );
+                          final coinWidget = SizedBox(
+                            width: coinWidth,
+                            child: ValueListenableBuilder<int>(
+                              valueListenable: LocalStore.coinsNotifier,
+                              builder: (_, coins, __) => CoinPill(
+                                coins: coins,
+                                width: coinWidth,
+                              ),
                             ),
-                          ),
-                        );
+                          );
 
-                        final titleBlock = Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'LEVEL $_currentLevel',
-                              style: sectionFont(context),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              '$_boardSize×$_boardSize • $_winCondition in a row',
-                              style: bodyFont(context),
-                            ),
-                          ],
-                        );
-
-                        if (stackedHeader) {
-                          return Column(
+                          final titleBlock = Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Row(
-                                children: [
-                                  AppIconButton(
-                                    icon: Icons.arrow_back,
-                                    onTap: _showExitConfirmation,
-                                  ),
-                                  const SizedBox(width: 12),
-                                  SizedBox(
-                                    width: max(0.0, headerConstraints.maxWidth - 56.0),
-                                    child: Text(
-                                      'LEVEL $_currentLevel',
-                                      style: sectionFont(context),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                ],
+                              Text(
+                                'LEVEL $_currentLevel',
+                                style: sectionFont(context),
                               ),
-                              const SizedBox(height: 10),
-                              coinWidget,
-                              const SizedBox(height: 10),
+                              const SizedBox(height: 4),
                               Text(
                                 '$_boardSize×$_boardSize • $_winCondition in a row',
                                 style: bodyFont(context),
                               ),
                             ],
                           );
-                        }
 
-                        return Row(
-                          children: [
-                            AppIconButton(
-                              icon: Icons.arrow_back,
-                              onTap: _showExitConfirmation,
-                            ),
-                            const SizedBox(width: 12),
-                            SizedBox(width: titleWidth, child: titleBlock),
-                            const SizedBox(width: 10),
-                            coinWidget,
-                          ],
-                        );
-                      },
-                    ),
-                  );
-                }
-
-                Widget buildStatusCard() {
-                  return AppGlassCard(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 10,
-                    ),
-                    borderColor: statusColor.withValues(alpha: 0.28),
-                    child: Center(
-                      child: isAIMoving
-                          ? Wrap(
-                              alignment: WrapAlignment.center,
-                              crossAxisAlignment: WrapCrossAlignment.center,
-                              spacing: 8,
-                              runSpacing: 8,
+                          if (stackedHeader) {
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
+                                Row(
+                                  children: [
+                                    AppIconButton(
+                                      icon: Icons.arrow_back,
+                                      onTap: _showExitConfirmation,
+                                    ),
+                                    const SizedBox(width: 12),
+                                    SizedBox(
+                                      width: max(0.0,
+                                          headerConstraints.maxWidth - 56.0),
+                                      child: Text(
+                                        'LEVEL $_currentLevel',
+                                        style: sectionFont(context),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
                                 ),
+                                const SizedBox(height: 10),
+                                coinWidget,
+                                const SizedBox(height: 10),
                                 Text(
-                                  'AI thinking...',
+                                  '$_boardSize×$_boardSize • $_winCondition in a row',
                                   style: bodyFont(context),
                                 ),
                               ],
-                            )
-                          : Text(
-                              gameOver
-                                  ? (winner.isEmpty ? 'DRAW' : '$winner WINS')
-                                  : 'NEXT: $currentTurn',
-                              style: safeOrbitron(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w900,
-                                color: statusColor,
-                              ),
-                            ),
-                    ),
-                  );
-                }
+                            );
+                          }
 
-                Widget buildBoard(BoxConstraints boardConstraints) {
-                  final boardViewport = matchBoardViewportSizeForBounds(
-                    boardSize: _boardSize,
-                    maxWidth: boardConstraints.maxWidth,
-                    maxHeight: boardConstraints.maxHeight,
-                  );
-                  if (boardViewport <= 0) {
-                    return const SizedBox.shrink();
-                  }
-
-                  return SizedBox(
-                    width: boardViewport,
-                    height: boardViewport,
-                    child: AppGlassCard(
-                      padding: EdgeInsets.all(boardPadding),
-                      borderColor:
-                          AppPalette.strokeStrong.withValues(alpha: 0.55),
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: [
-                          AppPalette.panelSoft.withValues(alpha: 0.98),
-                          AppPalette.panelDeep.withValues(alpha: 0.99),
-                        ],
-                      ),
-                      child: Directionality(
-                        textDirection: TextDirection.ltr,
-                        child: GridView.builder(
-                        physics: const NeverScrollableScrollPhysics(),
-                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: _boardSize,
-                          mainAxisSpacing: boardSpacing,
-                          crossAxisSpacing: boardSpacing,
-                        ),
-                        itemCount: _boardSize * _boardSize,
-                        itemBuilder: (context, i) {
-                          final isWinning = winningLine.contains(i);
-                          final cellAccent = board[i] == 'X' ? _xPiece : _oPiece;
-                          return InkWell(
-                            onTap: () => _makeMove(i),
-                            borderRadius: BorderRadius.circular(cellRadius),
-                            child: Container(
-                              decoration: BoxDecoration(
-                                borderRadius:
-                                    BorderRadius.circular(cellRadius),
-                                gradient: LinearGradient(
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                  colors: isWinning
-                                      ? [
-                                          cellAccent.withValues(alpha: 0.18),
-                                          AppPalette.panelElevated
-                                              .withValues(alpha: 0.98),
-                                        ]
-                                      : [
-                                          AppPalette.panelSoft
-                                              .withValues(alpha: 0.94),
-                                          AppPalette.panelDeep
-                                              .withValues(alpha: 0.98),
-                                        ],
-                                ),
-                                border: Border.all(
-                                  color: isWinning
-                                      ? cellAccent.withValues(alpha: 0.85)
-                                      : AppPalette.strokeSoft,
-                                  width: isWinning ? 2 : 1,
-                                ),
-                                boxShadow: isWinning
-                                    ? [
-                                        BoxShadow(
-                                          color: cellAccent.withValues(
-                                            alpha: 0.20,
-                                          ),
-                                          blurRadius: 16,
-                                          spreadRadius: -2,
-                                        ),
-                                      ]
-                                    : [
-                                        BoxShadow(
-                                          color: Colors.black.withValues(
-                                            alpha: 0.16,
-                                          ),
-                                          blurRadius: 12,
-                                          spreadRadius: -5,
-                                        ),
-                                      ],
+                          return Row(
+                            children: [
+                              AppIconButton(
+                                icon: Icons.arrow_back,
+                                onTap: _showExitConfirmation,
                               ),
-                              child: Center(
-                                child: CellContent(
-                                  v: board[i],
-                                  xColor: _xPiece,
-                                  oColor: _oPiece,
-                                  boardSize: _boardSize,
-                                  xSkin: _xSkin,
-                                  oSkin: _oSkin,
-                                ),
-                              ),
-                            ),
+                              const SizedBox(width: 12),
+                              SizedBox(width: titleWidth, child: titleBlock),
+                              const SizedBox(width: 10),
+                              coinWidget,
+                            ],
                           );
                         },
                       ),
-                      ),
-                    ),
-                  );
-                }
+                    );
+                  }
 
-                return Stack(
-                  children: [
-                    if (landscape)
-                      Row(
-                        children: [
-                          Expanded(
-                            flex: 5,
-                            child: Padding(
-                              padding: const EdgeInsets.fromLTRB(14, 8, 10, 16),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  buildHeaderCard(),
-                                  const SizedBox(height: 10),
-                                  buildStatusCard(),
-                                ],
-                              ),
-                            ),
-                          ),
-                          Expanded(
-                            flex: 6,
-                            child: Padding(
-                              padding: const EdgeInsets.fromLTRB(10, 12, 14, 16),
-                              child: LayoutBuilder(
-                                builder: (context, boardConstraints) {
-                                  return Center(
-                                    child: buildBoard(boardConstraints),
-                                  );
-                                },
-                              ),
-                            ),
-                          ),
-                        ],
-                      )
-                    else
-                      Column(
-                        children: [
-                          Padding(
-                            padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
-                            child: buildHeaderCard(),
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 14),
-                            child: buildStatusCard(),
-                          ),
-                          Expanded(
-                            child: Padding(
-                              padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
-                              child: LayoutBuilder(
-                                builder: (context, boardConstraints) {
-                                  return Center(
-                                    child: buildBoard(boardConstraints),
-                                  );
-                                },
-                              ),
-                            ),
-                          ),
-                        ],
+                  Widget buildStatusCard() {
+                    return AppGlassCard(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
                       ),
-                  ],
-                );
-              },
-            ),
+                      borderColor: statusColor.withValues(alpha: 0.28),
+                      child: Center(
+                        child: isAIMoving
+                            ? Wrap(
+                                alignment: WrapAlignment.center,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                    ),
+                                  ),
+                                  Text(
+                                    'AI thinking...',
+                                    style: bodyFont(context),
+                                  ),
+                                ],
+                              )
+                            : Text(
+                                gameOver
+                                    ? (winner.isEmpty ? 'DRAW' : '$winner WINS')
+                                    : 'NEXT: $currentTurn',
+                                style: safeOrbitron(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w900,
+                                  color: statusColor,
+                                ),
+                              ),
+                      ),
+                    );
+                  }
+
+                  Widget buildBoard(BoxConstraints boardConstraints) {
+                    final boardViewport = matchBoardViewportSizeForBounds(
+                      boardSize: _boardSize,
+                      maxWidth: boardConstraints.maxWidth,
+                      maxHeight: boardConstraints.maxHeight,
+                    );
+                    if (boardViewport <= 0) {
+                      return const SizedBox.shrink();
+                    }
+
+                    return SizedBox(
+                      width: boardViewport,
+                      height: boardViewport,
+                      child: AppGlassCard(
+                        padding: EdgeInsets.all(boardPadding),
+                        borderColor:
+                            AppPalette.strokeStrong.withValues(alpha: 0.55),
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            AppPalette.panelSoft.withValues(alpha: 0.98),
+                            AppPalette.panelDeep.withValues(alpha: 0.99),
+                          ],
+                        ),
+                        child: Directionality(
+                          textDirection: TextDirection.ltr,
+                          child: GridView.builder(
+                            physics: const NeverScrollableScrollPhysics(),
+                            gridDelegate:
+                                SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: _boardSize,
+                              mainAxisSpacing: boardSpacing,
+                              crossAxisSpacing: boardSpacing,
+                            ),
+                            itemCount: _boardSize * _boardSize,
+                            itemBuilder: (context, i) {
+                              final isWinning = winningLine.contains(i);
+                              final cellAccent =
+                                  board[i] == 'X' ? _xPiece : _oPiece;
+                              return InkWell(
+                                onTap: () => _makeMove(i),
+                                borderRadius: BorderRadius.circular(cellRadius),
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    borderRadius:
+                                        BorderRadius.circular(cellRadius),
+                                    gradient: LinearGradient(
+                                      begin: Alignment.topLeft,
+                                      end: Alignment.bottomRight,
+                                      colors: isWinning
+                                          ? [
+                                              cellAccent.withValues(
+                                                  alpha: 0.18),
+                                              AppPalette.panelElevated
+                                                  .withValues(alpha: 0.98),
+                                            ]
+                                          : [
+                                              AppPalette.panelSoft
+                                                  .withValues(alpha: 0.94),
+                                              AppPalette.panelDeep
+                                                  .withValues(alpha: 0.98),
+                                            ],
+                                    ),
+                                    border: Border.all(
+                                      color: isWinning
+                                          ? cellAccent.withValues(alpha: 0.85)
+                                          : AppPalette.strokeSoft,
+                                      width: isWinning ? 2 : 1,
+                                    ),
+                                    boxShadow: isWinning
+                                        ? [
+                                            BoxShadow(
+                                              color: cellAccent.withValues(
+                                                alpha: 0.20,
+                                              ),
+                                              blurRadius: 16,
+                                              spreadRadius: -2,
+                                            ),
+                                          ]
+                                        : [
+                                            BoxShadow(
+                                              color: Colors.black.withValues(
+                                                alpha: 0.16,
+                                              ),
+                                              blurRadius: 12,
+                                              spreadRadius: -5,
+                                            ),
+                                          ],
+                                  ),
+                                  child: Center(
+                                    child: CellContent(
+                                      v: board[i],
+                                      xColor: _xPiece,
+                                      oColor: _oPiece,
+                                      boardSize: _boardSize,
+                                      xSkin: _xSkin,
+                                      oSkin: _oSkin,
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                    );
+                  }
+
+                  return Stack(
+                    children: [
+                      if (landscape)
+                        Row(
+                          children: [
+                            Expanded(
+                              flex: 5,
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.fromLTRB(14, 8, 10, 16),
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    buildHeaderCard(),
+                                    const SizedBox(height: 10),
+                                    buildStatusCard(),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              flex: 6,
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.fromLTRB(10, 12, 14, 16),
+                                child: LayoutBuilder(
+                                  builder: (context, boardConstraints) {
+                                    return Center(
+                                      child: buildBoard(boardConstraints),
+                                    );
+                                  },
+                                ),
+                              ),
+                            ),
+                          ],
+                        )
+                      else
+                        Column(
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
+                              child: buildHeaderCard(),
+                            ),
+                            Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 14),
+                              child: buildStatusCard(),
+                            ),
+                            Expanded(
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.fromLTRB(16, 10, 16, 16),
+                                child: LayoutBuilder(
+                                  builder: (context, boardConstraints) {
+                                    return Center(
+                                      child: buildBoard(boardConstraints),
+                                    );
+                                  },
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                    ],
+                  );
+                },
+              ),
             ),
           ),
         ),

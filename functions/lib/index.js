@@ -799,7 +799,7 @@ exports.deleteMyAccount = functions.https.onCall(async (data, context) => {
 // FUNCTION: redeemReferralCode
 // ============================================================
 //
-// Atomically credits the invitee (+100) and the referrer (+100), writes
+// Atomically credits the invitee (+1000) and the referrer (+1000), writes
 // idempotent wallet_ledger records for both sides, creates
 // /referrals/{inviteeUid}, and increments the referrer's
 // Referral.validReferralCount + Referral.totalReferralCoinsEarned.
@@ -808,7 +808,7 @@ exports.deleteMyAccount = functions.https.onCall(async (data, context) => {
 // different user's document; rules forbid that. The CF runs as admin.
 //
 // Idempotent: re-running with the same caller returns already-exists.
-const REFERRAL_REWARD = 100;
+const REFERRAL_REWARD = 1000;
 const REFERRAL_MAX_FRIENDS = 10;
 exports.redeemReferralCode = functions.https.onCall(async (data, context) => {
     var _a, _b, _c, _d, _e;
@@ -839,12 +839,14 @@ exports.redeemReferralCode = functions.https.onCall(async (data, context) => {
     const referrerLedgerId = `ref_${callerUid}_referrer`;
     const inviteeLedgerRef = inviteeRef.collection("wallet_ledger").doc(inviteeLedgerId);
     const referrerLedgerRef = referrerRef.collection("wallet_ledger").doc(referrerLedgerId);
+    const pendingRewardId = `${referrerUid}_${callerUid}`;
+    const pendingRewardRef = db.collection("pending_referral_rewards").doc(pendingRewardId);
     let newReferrerCount = 0;
     let inviteeAfter = 0;
     let referrerAfter = 0;
     try {
         await db.runTransaction(async (tx) => {
-            var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
+            var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v;
             const existingReferral = await tx.get(referralRef);
             if (existingReferral.exists) {
                 throw new functions.https.HttpsError("already-exists", "This invite code has already been redeemed.");
@@ -901,11 +903,17 @@ exports.redeemReferralCode = functions.https.onCall(async (data, context) => {
             tx.set(inviteeLedgerRef, {
                 uid: callerUid,
                 type: "referral_invitee_reward",
-                source: "redeemReferralCode",
+                source: "referral_invitee_reward",
                 delta: REFERRAL_REWARD,
+                coins: REFERRAL_REWARD,
                 before: inviteeBefore,
                 after: inviteeAfter,
                 transactionId: inviteeLedgerId,
+                mode: "online",
+                status: "synced",
+                localCreatedAtMs: Date.now(),
+                title: "Friend invite reward",
+                message: `You received ${REFERRAL_REWARD} coins from a friend`,
                 code,
                 referrerUid,
                 createdAt: now,
@@ -913,13 +921,36 @@ exports.redeemReferralCode = functions.https.onCall(async (data, context) => {
             tx.set(referrerLedgerRef, {
                 uid: referrerUid,
                 type: "referral_referrer_reward",
-                source: "redeemReferralCode",
+                source: "referral_referrer_reward",
                 delta: REFERRAL_REWARD,
+                coins: REFERRAL_REWARD,
                 before: referrerBefore,
                 after: referrerAfter,
                 transactionId: referrerLedgerId,
+                mode: "online",
+                status: "synced",
+                localCreatedAtMs: Date.now(),
+                title: "Referral accepted",
+                message: `A friend accepted your invite. You received ${REFERRAL_REWARD} coins.`,
                 code,
                 inviteeUid: callerUid,
+                createdAt: now,
+            });
+            const inviteeData = (_o = inviteeSnap.data()) !== null && _o !== void 0 ? _o : {};
+            const profile = ((_q = (_p = inviteeData.Profile) !== null && _p !== void 0 ? _p : inviteeData.profile) !== null && _q !== void 0 ? _q : {});
+            const inviteeName = String((_t = (_s = (_r = profile.name) !== null && _r !== void 0 ? _r : profile.displayName) !== null && _s !== void 0 ? _s : inviteeData.displayName) !== null && _t !== void 0 ? _t : "");
+            const inviteePhotoURL = String((_v = (_u = profile.photoURL) !== null && _u !== void 0 ? _u : inviteeData.photoURL) !== null && _v !== void 0 ? _v : "");
+            tx.set(pendingRewardRef, {
+                id: pendingRewardId,
+                type: "referral_accepted",
+                uid: referrerUid,
+                referrerUid,
+                inviteeUid: callerUid,
+                inviteeName,
+                inviteePhotoURL,
+                coins: REFERRAL_REWARD,
+                message: "Your friend accepted your invite",
+                seen: false,
                 createdAt: now,
             });
         });

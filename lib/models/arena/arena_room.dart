@@ -83,6 +83,12 @@ class ArenaRoom {
   /// `weak` is a derived state computed locally from staleness.
   final Map<String, Map<String, dynamic>> playersPresence;
 
+  /// Active two-minute reconnect grace window, if any.
+  final String? disconnectUid;
+  final int? disconnectStartedAt;
+  final int? disconnectDeadlineAt;
+  final bool disconnectResolved;
+
   /// Most recent round outcome marker, written by the host on every round
   /// resolution. Used by both clients to drive the round-end banner —
   /// especially the draw case where `roundWinnerUid` stays null and the
@@ -142,6 +148,10 @@ class ArenaRoom {
     required this.players,
     this.kickedUsers = const <String, Map<String, dynamic>>{},
     this.playersPresence = const <String, Map<String, dynamic>>{},
+    this.disconnectUid,
+    this.disconnectStartedAt,
+    this.disconnectDeadlineAt,
+    this.disconnectResolved = false,
     this.lastRoundResult,
     this.lastRoundEndAt,
     this.roundVersion = 0,
@@ -237,6 +247,12 @@ class ArenaRoom {
         'players': players,
         'kickedUsers': kickedUsers,
         'playersPresence': playersPresence,
+        if (disconnectUid != null) 'disconnectUid': disconnectUid,
+        if (disconnectStartedAt != null)
+          'disconnectStartedAt': disconnectStartedAt,
+        if (disconnectDeadlineAt != null)
+          'disconnectDeadlineAt': disconnectDeadlineAt,
+        'disconnectResolved': disconnectResolved,
         if (lastRoundResult != null) 'lastRoundResult': lastRoundResult,
         if (lastRoundEndAt != null) 'lastRoundEndAt': lastRoundEndAt,
         'roundVersion': roundVersion,
@@ -273,8 +289,10 @@ class ArenaRoom {
     final mapsRaw = raw['roundMaps'];
     List<String> roundMaps;
     if (mapsRaw is List) {
-      roundMaps =
-          mapsRaw.map((e) => (e ?? '').toString()).where((s) => s.isNotEmpty).toList();
+      roundMaps = mapsRaw
+          .map((e) => (e ?? '').toString())
+          .where((s) => s.isNotEmpty)
+          .toList();
     } else if (mapsRaw is Map) {
       final entries = <int, String>{};
       mapsRaw.forEach((k, v) {
@@ -285,7 +303,8 @@ class ArenaRoom {
         ..sort((a, b) => a.key.compareTo(b.key));
       roundMaps = sorted.map((e) => e.value).toList();
     } else {
-      roundMaps = List<String>.filled(roundsCount, '${boardSizeRaw}x$boardSizeRaw');
+      roundMaps =
+          List<String>.filled(roundsCount, '${boardSizeRaw}x$boardSizeRaw');
     }
     if (roundMaps.length < roundsCount) {
       roundMaps = List<String>.from(roundMaps)
@@ -297,7 +316,8 @@ class ArenaRoom {
 
     final currentRound = (raw['currentRound'] as num?)?.toInt() ?? 1;
     final currentRoundIndexRaw = (raw['currentRoundIndex'] as num?)?.toInt();
-    final currentRoundIndex = currentRoundIndexRaw ?? (currentRound - 1).clamp(0, roundsCount - 1).toInt();
+    final currentRoundIndex = currentRoundIndexRaw ??
+        (currentRound - 1).clamp(0, roundsCount - 1).toInt();
 
     final betLocksRaw = raw['betLocks'];
     final betLocks = <String, bool>{};
@@ -338,9 +358,8 @@ class ArenaRoom {
     }
 
     final guestUidRaw = raw['guestUid'];
-    final guestUid = (guestUidRaw is String && guestUidRaw.isNotEmpty)
-        ? guestUidRaw
-        : null;
+    final guestUid =
+        (guestUidRaw is String && guestUidRaw.isNotEmpty) ? guestUidRaw : null;
 
     final prizePool = (raw['prizePool'] as num?)?.toInt() ??
         (raw['potAmount'] as num?)?.toInt() ??
@@ -381,6 +400,10 @@ class ArenaRoom {
       players: players,
       kickedUsers: kickedUsers,
       playersPresence: playersPresence,
+      disconnectUid: raw['disconnectUid'] as String?,
+      disconnectStartedAt: (raw['disconnectStartedAt'] as num?)?.toInt(),
+      disconnectDeadlineAt: (raw['disconnectDeadlineAt'] as num?)?.toInt(),
+      disconnectResolved: raw['disconnectResolved'] == true,
       lastRoundResult: raw['lastRoundResult'] as String?,
       lastRoundEndAt: (raw['lastRoundEndAt'] as num?)?.toInt(),
       roundVersion: (raw['roundVersion'] as num?)?.toInt() ?? 0,
